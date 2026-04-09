@@ -1,0 +1,28 @@
+FROM rust:1.88-bookworm AS builder
+
+WORKDIR /build/core
+
+COPY core/Cargo.toml core/Cargo.lock ./
+COPY core/src ./src
+COPY core/console ./console
+
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /build/core/target/release/core /app/core
+
+RUN mkdir -p /app/data
+
+ENV HUB_SECRET=local_dev_secret
+ENV PHANTOM_DB_URL=sqlite:///app/data/phantom_core.db?mode=rwc
+
+EXPOSE 4000
+
+CMD ["/app/core"]
