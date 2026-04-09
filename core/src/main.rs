@@ -10,6 +10,7 @@ use std::env;
 use axum::{Router, response::{Html, IntoResponse}, Json, routing::{delete, get, post}, http::{HeaderMap, StatusCode, header::CONTENT_TYPE}};
 use axum::extract::{Path, Query};
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use crate::db::DataLake;
 use crate::cloudflare_automation::{CloudflareAutomationManager, CloudflareAutomationRunPayload};
 use crate::parser::{NeuralParser, ParseDepth};
@@ -213,7 +214,12 @@ async fn main() {
         Arc::clone(&stream_hub),
     ));
 
-    // 5. 构建全站 API 网关
+    // 5. 准备前端静态文件服务
+    // 环境优先：支持外部指定前端目录，默认为当前目录下的 web 文件夹
+    let web_dist = std::env::var("WEB_DIST").unwrap_or_else(|_| "web".to_string());
+    println!("🌐 静态资源目录: {}", web_dist);
+
+    // 6. 构建全站 API 网关
     let app = Router::new()
         .route("/", get(console_index))
         .route("/console/style.css", get(console_style))
@@ -770,6 +776,7 @@ async fn main() {
                 }
             }
         }))
+        .fallback_service(ServeDir::new(web_dist).fallback(axum::routing::get(console_index)))
         .route("/ingest", post({
             let dl = Arc::clone(&data_lake);
             let hub = Arc::clone(&stream_hub);

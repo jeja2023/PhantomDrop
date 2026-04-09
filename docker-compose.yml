@@ -1,0 +1,22 @@
+services:
+  phantom-drop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: phantom-drop-app
+    restart: unless-stopped
+    environment:
+      HUB_SECRET: ${HUB_SECRET:-local_dev_secret}
+      PHANTOM_DB_URL: ${PHANTOM_DB_URL:-sqlite:///app/data/phantom_core.db?mode=rwc}
+      # 可以在这里通过环境变量配置 Cloudflare 相关的 Token
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
+    volumes:
+      - ./data:/app/data
+      - ./.automation:/app/.automation
+    ports:
+      - "4000:4000"
+
+volumes:
+  data:
+  automation:
