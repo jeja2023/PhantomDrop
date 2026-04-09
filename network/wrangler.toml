@@ -1,0 +1,8 @@
+﻿name = "phantom-drop-edge"
+main = "src/index.ts"
+compatibility_date = "2024-03-01"
+workers_dev = true
+
+[vars]
+PHANTOM_HUB_URL = "https://your-hub.example.com"
+HUB_SECRET = "local_dev_secret"
