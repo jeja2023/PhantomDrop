@@ -19,6 +19,7 @@ dist/
 # 本地环境文件
 .env
 .env.*
+!.env.example
 
 # 编辑器与系统文件
 .DS_Store
