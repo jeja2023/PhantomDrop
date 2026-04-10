@@ -1,6 +1,5 @@
 .git
 .gitignore
-.automation
 **/.git
 **/.git.local-backup
 **/node_modules
