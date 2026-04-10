@@ -79,7 +79,7 @@ ENV WEB_DIST=/app/web
 ENV SHELL=/usr/bin/pwsh
 
 # 暴露端口 (统一入口)
-EXPOSE 4000
+EXPOSE 9000
 
 # 建立数据持久化目录
 RUN mkdir -p /app/data

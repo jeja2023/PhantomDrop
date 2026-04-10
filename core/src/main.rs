@@ -205,7 +205,7 @@ async fn main() {
         saved_settings
             .get("public_hub_port")
             .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(4000),
+            .unwrap_or(9000),
         saved_settings.get("public_hub_url").cloned(),
     );
 
@@ -221,7 +221,8 @@ async fn main() {
 
     // 6. 构建全站 API 网关
     let app = Router::new()
-        .route("/", get(console_index))
+        .route("/console", get(console_index))
+        .route("/console/", get(console_index))
         .route("/console/style.css", get(console_style))
         .route("/console/app.js", get(console_script))
         .route("/health", get(|| async { "幻影运行正常" }))
@@ -776,7 +777,10 @@ async fn main() {
                 }
             }
         }))
-        .fallback_service(ServeDir::new(web_dist).fallback(axum::routing::get(console_index)))
+        .fallback_service(
+            ServeDir::new(web_dist)
+                .append_index_html_on_directories(true)
+        )
         .route("/ingest", post({
             let dl = Arc::clone(&data_lake);
             let hub = Arc::clone(&stream_hub);
@@ -878,7 +882,7 @@ async fn main() {
         .layer(CorsLayer::permissive());
 
     // 4. 开启监听
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
-    println!("⚡ 监听中枢已就绪: http://0.0.0.0:4000");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await.unwrap();
+    println!("⚡ 监听中枢已就绪: http://0.0.0.0:9000");
     axum::serve(listener, app).await.unwrap();
 }

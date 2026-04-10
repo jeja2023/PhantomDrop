@@ -15,7 +15,7 @@ services:
       - ./data:/app/data
       - ./.automation:/app/.automation
     ports:
-      - "4000:4000"
+      - "9000:9000"
 
 volumes:
   data:
