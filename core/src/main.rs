@@ -205,7 +205,7 @@ async fn main() {
         saved_settings
             .get("public_hub_port")
             .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or(9000),
+            .unwrap_or(9010),
         saved_settings.get("public_hub_url").cloned(),
     );
 
@@ -882,7 +882,7 @@ async fn main() {
         .layer(CorsLayer::permissive());
 
     // 4. 开启监听
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await.unwrap();
-    println!("⚡ 监听中枢已就绪: http://0.0.0.0:9000");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:9010").await.unwrap();
+    println!("⚡ 监听中枢已就绪: http://0.0.0.0:9010");
     axum::serve(listener, app).await.unwrap();
 }
