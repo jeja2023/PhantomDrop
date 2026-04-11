@@ -6,6 +6,7 @@ use serde_json::json;
 use serde::{Deserialize, Serialize};
 use std::env;
 use chrono::Utc;
+use rand::{distributions::Alphanumeric, Rng};
 
 /**
  * 幻影工作流引擎 (Workflow Engine)
@@ -290,8 +291,14 @@ impl WorkflowEngine {
 
         let mut created = 0usize;
         for index in 0..generated_count {
+            let len = rand::thread_rng().gen_range(8..=12);
+            let local_part: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(len)
+                .map(|b| char::from(b).to_ascii_lowercase())
+                .collect();
+            
             let suffix = Uuid::new_v4().simple().to_string();
-            let local_part = format!("pd_{}_{}", Utc::now().timestamp(), &suffix[..8]);
             let password = format!("Pwd{}_{}", Utc::now().timestamp() % 100000, &suffix[8..12]);
             let address = format!("{}@{}", local_part, domain);
 

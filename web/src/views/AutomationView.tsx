@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
@@ -85,13 +85,13 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     return data.items
   }
 
-  const loadSteps = async (runId: string) => {
-    setIsStepsLoading(true)
+  const loadSteps = async (runId: string, silent = false) => {
+    if (!silent) setIsStepsLoading(true)
     try {
       const data = await fetchJson<WorkflowStepRecord[]>(`/api/workflow-runs/${runId}/steps`)
       setSteps(data)
     } finally {
-      setIsStepsLoading(false)
+      if (!silent) setIsStepsLoading(false)
     }
   }
 
@@ -149,7 +149,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     if (!selectedRunId) return
 
     const interval = setInterval(() => {
-      void loadSteps(selectedRunId)
+      void loadSteps(selectedRunId, true)
       void loadAccounts(selectedRunId)
     }, refreshIntervalMs)
 
@@ -467,7 +467,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
 
         {!selectedRunId ? (
           <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">选择一条执行记录后可查看步骤详情。</div>
-        ) : isStepsLoading ? (
+        ) : (isStepsLoading && steps.length === 0) ? (
           <div className="flex min-h-[180px] items-center justify-center text-slate-500">
             <Loader2 size={18} className="mr-3 animate-spin" />
             正在读取步骤详情...
