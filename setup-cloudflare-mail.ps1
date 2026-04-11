@@ -10,7 +10,8 @@ param(
     [string]$CloudflareAccountId = $env:CLOUDFLARE_ACCOUNT_ID,
     [switch]$SkipWorkerDeploy,
     [switch]$SkipRoutingRule,
-    [switch]$SkipPublicIngestTest
+    [switch]$SkipPublicIngestTest,
+    [switch]$UseCatchAll
 )
 
 Set-StrictMode -Version Latest
@@ -410,6 +411,38 @@ function Set-EmailRoutingRule([string]$EmailAddress) {
     return $createdRule.result.id
 }
 
+function Set-EmailCatchAllRule {
+    if ([string]::IsNullOrWhiteSpace($CloudflareZoneId)) {
+        Write-Warn "CLOUDFLARE_ZONE_ID is missing. Skipping catch-all automation."
+        return $null
+    }
+
+    Write-Step "Ensuring Email Catch-all rule points to $workerName"
+    
+    $payload = @{
+        name = "PhantomDrop Catch-all"
+        enabled = $true
+        actions = @(
+            @{
+                type = "worker"
+                value = @($workerName)
+            }
+        )
+    }
+
+    # Catch-all API 使用 PUT 方法直接覆盖
+    try {
+        $null = Invoke-CloudflareApi -Method "PUT" -Path "/zones/$CloudflareZoneId/email/routing/rules/catch_all" -Body $payload
+        Write-Ok "Email Catch-all rule configured successfully."
+        return "catch_all"
+    }
+    catch {
+        $err = $_.Exception.Message
+        Write-Warn "Failed to set Catch-all rule: $err"
+        return $null
+    }
+}
+
 function Invoke-PublicIngestSmokeTest([string]$BaseUrl, [string]$Secret) {
     Write-Step "Running public ingest smoke test through $BaseUrl/ingest"
     $Secret = if ($null -ne $Secret) { $Secret.Trim() } else { $Secret }
@@ -556,7 +589,11 @@ if (-not $SkipRoutingRule) {
     $resolvedZoneDomain = Resolve-ZoneDomain -ExplicitDomain $effectiveZoneDomain -BaseUrl $normalizedPublicUrl
     $emailAddress = "$effectiveRouteLocalPart@$resolvedZoneDomain"
     try {
-        $routingRuleId = Set-EmailRoutingRule -EmailAddress $emailAddress
+        if ($UseCatchAll) {
+            $routingRuleId = Set-EmailCatchAllRule
+        } else {
+            $routingRuleId = Set-EmailRoutingRule -EmailAddress $emailAddress
+        }
     }
     catch {
         $err = $_.Exception.Message
