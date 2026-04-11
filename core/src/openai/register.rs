@@ -71,6 +71,30 @@ pub async fn execute_registration(
     let client = build_client(context.proxy_url.as_deref())?;
     let device_id = &context.device_id;
 
+    // 步骤 0: 环境预检 (IP 检查)
+    if let Some(ref cb) = context.step_callback {
+        cb("info", "[Step 0] 正在探测出口 IP 环境并进行质量评分...");
+    }
+    match sentinel::check_ip_quality(&client).await {
+        Ok(info) => {
+            if let Some(ref cb) = context.step_callback {
+                let msg = format!(
+                    "环境探测成功 | IP: {} | 归属地: {} | 组织: {} | 风险评估: {}",
+                    info.ip,
+                    info.country,
+                    info.org,
+                    if info.is_datacenter { "⚠️ 机房/数据中心 (高风险)" } else { "✅ 住宅/基站 (低风险)" }
+                );
+                cb(if info.is_datacenter { "warn" } else { "success" }, &msg);
+            }
+        }
+        Err(e) => {
+            if let Some(ref cb) = context.step_callback {
+                cb("warn", &format!("环境预检跳过 (第三方 API 暂时不可达): {}", e));
+            }
+        }
+    }
+
     // 步骤 1: 获取 Sentinel 令牌并解算 PoW
     if let Some(ref cb) = context.step_callback {
         cb("info", "[Step 1] 正在获取 Sentinel 令牌并解算 PoW...");

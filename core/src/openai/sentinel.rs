@@ -92,6 +92,51 @@ pub fn solve_pow(seed: &str, difficulty: u32) -> String {
     "0x0000000000000000".to_string()
 }
 
+
+/// IP 质量与归属地信息
+#[derive(serde::Serialize)]
+pub struct IpQualityInfo {
+    pub ip: String,
+    pub country: String,
+    pub city: Option<String>,
+    pub org: String,
+    pub is_datacenter: bool,
+}
+
+/// 环境预检：检测当前出口 IP 的归属地和质量
+pub async fn check_ip_quality(client: &reqwest::Client) -> Result<IpQualityInfo, String> {
+    // 使用 ip-api.com 获取详细的地理位置和组织信息
+    let response = client
+        .get("http://ip-api.com/json/?fields=status,message,country,city,org,as,query,hosting")
+        .send()
+        .await
+        .map_err(|e| format!("环境预检失败 (网络异常): {}", e))?;
+
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("环境预检失败 (解析异常): {}", e))?;
+
+    if data["status"].as_str() != Some("success") {
+        return Err(format!("IP 环境检测服务返回异常: {}", data["message"].as_str().unwrap_or("unknown")));
+    }
+
+    let ip = data["query"].as_str().unwrap_or("Unknown").to_string();
+    let org = data["org"].as_str().or(data["as"].as_str()).unwrap_or("Unknown").to_string();
+    let is_datacenter = data["hosting"].as_bool().unwrap_or(false) 
+        || org.to_lowercase().contains("cloud") 
+        || org.to_lowercase().contains("server")
+        || org.to_lowercase().contains("datacenter");
+
+    Ok(IpQualityInfo {
+        ip,
+        country: data["country"].as_str().unwrap_or("Unknown").to_string(),
+        city: data["city"].as_str().map(|s| s.to_string()),
+        org,
+        is_datacenter,
+    })
+}
+
 fn hex_encode(data: &[u8]) -> String {
     data.iter().map(|b| format!("{:02x}", b)).collect()
 }

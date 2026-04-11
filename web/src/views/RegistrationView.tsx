@@ -29,7 +29,12 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
 
   const loadWorkflows = async () => {
     try {
-      await fetchJson<WorkflowDefinition[]>('/api/workflows')
+      const data = await fetchJson<WorkflowDefinition[]>('/api/workflows')
+      const openaiDef = data.find(w => w.id === 'openai_register_default')
+      if (openaiDef && openaiDef.parameters) {
+        setOpenaiProxy(openaiDef.parameters.proxy_url || '')
+        setOpenaiThreads(openaiDef.parameters.batch_size || 1)
+      }
     } catch (error) {
       console.error('Failed to load workflows:', error)
     }
@@ -38,26 +43,27 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const loadRuns = async (preserveSelection = true) => {
     try {
       const data = await fetchJson<WorkflowRunPageResponse>(`/api/workflow-runs?page=1&page_size=20&status=running`)
-      // 过滤出属于注册类型的工作流运行 (通过标题或标识，这里简单筛选)
       const registerRuns = data.items.filter(run => run.workflow_title.includes('注册') || run.workflow_id.includes('register'))
-      setRuns(registerRuns)
+      
+      let finalRuns = [...registerRuns]
+
+      if (preserveSelection && selectedRunId && !registerRuns.some(r => r.id === selectedRunId)) {
+        const allData = await fetchJson<WorkflowRunPageResponse>(`/api/workflow-runs?page=1&page_size=10`)
+        allData.items.forEach(item => {
+           if (!finalRuns.some(c => c.id === item.id) && (item.workflow_title.includes('注册') || item.workflow_id.includes('register'))) {
+             finalRuns.push(item)
+           }
+        })
+        finalRuns = finalRuns.slice(0, 20)
+      }
+
+      setRuns(prev => {
+        if (JSON.stringify(prev) === JSON.stringify(finalRuns)) return prev
+        return finalRuns
+      })
       
       if (!selectedRunId && registerRuns.length > 0) {
         setSelectedRunId(registerRuns[0].id)
-      } else if (preserveSelection && selectedRunId) {
-        if (!registerRuns.some(r => r.id === selectedRunId)) {
-          // 如果当前选择的不再运行列表中，可能已完成，尝试加载全部记录查询
-          const allData = await fetchJson<WorkflowRunPageResponse>(`/api/workflow-runs?page=1&page_size=10`)
-          setRuns(() => {
-            const combined = [...registerRuns]
-            allData.items.forEach(item => {
-               if (!combined.some(c => c.id === item.id) && (item.workflow_title.includes('注册') || item.workflow_id.includes('register'))) {
-                 combined.push(item)
-               }
-            })
-            return combined.slice(0, 20)
-          })
-        }
       }
     } catch (error) {
       console.error('Failed to load runs:', error)
@@ -68,7 +74,10 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     if (!silent) setIsStepsLoading(true)
     try {
       const data = await fetchJson<WorkflowStepRecord[]>(`/api/workflow-runs/${runId}/steps`)
-      setSteps(data)
+      setSteps(prev => {
+        if (JSON.stringify(prev) === JSON.stringify(data)) return prev
+        return data
+      })
     } finally {
       if (!silent) setIsStepsLoading(false)
     }
@@ -98,15 +107,47 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
 
   const handleTrigger = async (workflowId: string) => {
     setRunningId(workflowId)
+    // 立即清空当前日志和选中状态，实现“清屏”效果
+    setSelectedRunId(null)
+    setSteps([])
+    
     try {
-      await postJson('/api/workflows/trigger', { workflow_id: workflowId })
-      setToastContent({ title: '注册指令已下发', desc: '正在初始化自动化注册引擎...' })
+      // 1. 先保存当前 UI 中的参数到后端定义
+      const workflows = await fetchJson<WorkflowDefinition[]>('/api/workflows')
+      const currentDef = workflows.find(w => w.id === workflowId)
+      
+      if (currentDef) {
+        const updatedParams = {
+          ...currentDef.parameters,
+          proxy_url: openaiProxy,
+          batch_size: openaiThreads,
+        }
+        
+        await postJson<any, any>('/api/workflows/save', {
+          id: currentDef.id,
+          kind: 'openai_register',
+          title: currentDef.title,
+          summary: currentDef.summary,
+          status: 'ready',
+          parameters_json: JSON.stringify(updatedParams)
+        })
+      }
+
+      // 2. 下发触发指令
+      const res = await postJson<{ run_id: string }, { workflow_id: string }>('/api/workflows/trigger', { workflow_id: workflowId })
+      setToastContent({ title: '注册指令已下发', desc: '正在运行实盘注册逻辑...' })
       setShowToast(true)
       setTimeout(() => setShowToast(false), 3000)
+      
+      // 3. 自动选中新生成的任务
+      if (res.run_id) {
+        setSelectedRunId(res.run_id)
+      }
+      
       void loadRuns(false)
     } catch (error) {
       const message = error instanceof Error ? error.message : '启动失败'
-      setToastContent({ title: '启动失败', desc: message })
+      setToastContent({ title: '操作失败', desc: message })
       setShowToast(true)
       setTimeout(() => setShowToast(false), 3000)
     } finally {
