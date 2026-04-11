@@ -17,7 +17,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $projectRoot = $PSScriptRoot
-$coreDir = Join-Path $projectRoot "core"
 $networkDir = Join-Path $projectRoot "network"
 $stateDir = Join-Path $projectRoot ".automation"
 $wranglerTomlPath = Join-Path $networkDir "wrangler.toml"
@@ -26,7 +25,7 @@ $workerName = "phantom-drop-edge"
 
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 
-function Load-AutomationConfig {
+function Import-AutomationConfig {
     if (-not (Test-Path $configPath)) {
         return @{}
     }
@@ -48,7 +47,7 @@ function Save-AutomationConfig([hashtable]$Config) {
     ($Config | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $configPath -Encoding UTF8
 }
 
-function Pick-Value([object[]]$Candidates) {
+function Select-Value([object[]]$Candidates) {
     foreach ($candidate in $Candidates) {
         if ($null -eq $candidate) {
             continue
@@ -89,7 +88,7 @@ function Test-LocalBackend {
     }
 }
 
-function Load-BackendAutomationConfig {
+function Get-BackendAutomationConfig {
     if (-not (Test-LocalBackend)) {
         return @{}
     }
@@ -133,7 +132,7 @@ function Resolve-ModeValue([string]$RequestedMode, [string]$CandidateUrl) {
     return "public_domain"
 }
 
-function Normalize-PublicUrl([string]$ModeValue, [string]$CandidateUrl) {
+function Format-PublicUrl([string]$ModeValue, [string]$CandidateUrl) {
     if ([string]::IsNullOrWhiteSpace($CandidateUrl)) {
         return $null
     }
@@ -246,7 +245,7 @@ function Update-WranglerToml([string]$BaseUrl, [string]$Secret) {
     Write-Ok "wrangler.toml updated."
 }
 
-function Ensure-NetworkDependencies {
+function Initialize-NetworkDependencies {
     if (Test-Path (Join-Path $networkDir "node_modules")) {
         Write-Info "network/node_modules already exists. Skipping npm install."
         return
@@ -265,8 +264,14 @@ function Ensure-NetworkDependencies {
     Write-Ok "network dependencies are ready."
 }
 
-function Invoke-WranglerDeploy {
+function Invoke-WranglerDeploy([string]$ApiToken) {
     Write-Step "Deploying Cloudflare worker"
+    
+    # 注入环境变量以支持非交互式部署
+    if (-not [string]::IsNullOrWhiteSpace($ApiToken)) {
+        $env:CLOUDFLARE_API_TOKEN = $ApiToken
+    }
+
     Push-Location $networkDir
     try {
         $output = (& npx wrangler deploy 2>&1) | Out-String
@@ -295,12 +300,12 @@ function Resolve-ZoneDomain([string]$ExplicitDomain, [string]$BaseUrl) {
         return $ExplicitDomain.Trim().ToLowerInvariant()
     }
 
-    $host = ([Uri]$BaseUrl).Host
-    $parts = $host.Split('.')
+    $urlHost = ([Uri]$BaseUrl).Host
+    $parts = $urlHost.Split('.')
     if ($parts.Length -ge 2) {
         return "$($parts[$parts.Length - 2]).$($parts[$parts.Length - 1])"
     }
-    return $host
+    return $urlHost
 }
 
 function Get-WranglerAccountId([string]$CurrentAccountId) {
@@ -347,7 +352,7 @@ function Invoke-CloudflareApi([string]$Method, [string]$Path, [object]$Body) {
     return Invoke-RestMethod @params
 }
 
-function Ensure-EmailRoutingRule([string]$EmailAddress) {
+function Set-EmailRoutingRule([string]$EmailAddress) {
     if ([string]::IsNullOrWhiteSpace($CloudflareZoneId)) {
         Write-Warn "CLOUDFLARE_ZONE_ID is missing. Skipping routing rule automation."
         return $null
@@ -456,26 +461,26 @@ Write-Host "Project   : $projectRoot"
 Write-Host "Mode      : $Mode"
 Write-Host "========================================================"
 
-$automationConfig = Load-AutomationConfig
-$backendAutomationConfig = Load-BackendAutomationConfig
+$automationConfig = Import-AutomationConfig
+$backendAutomationConfig = Get-BackendAutomationConfig
 
 $effectiveHubSecret = if ($PSBoundParameters.ContainsKey("HubSecret")) {
     $HubSecret
 } else {
-    Pick-Value @($backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $HubSecret)
+    Select-Value @($backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $HubSecret)
 }
 
 $effectiveRouteLocalPart = if ($PSBoundParameters.ContainsKey("RouteLocalPart")) {
     $RouteLocalPart
 } else {
-    Pick-Value @($backendAutomationConfig['cloudflare_route_local_part'], $automationConfig['route_local_part'], $RouteLocalPart, "inbox")
+    Select-Value @($backendAutomationConfig['cloudflare_route_local_part'], $automationConfig['route_local_part'], $RouteLocalPart, "inbox")
 }
-$effectiveZoneDomain = Pick-Value @($ZoneDomain, $backendAutomationConfig['cloudflare_zone_domain'], $automationConfig['zone_domain'])
-$effectiveCloudflareApiToken = Pick-Value @($CloudflareApiToken, $backendAutomationConfig['cloudflare_api_token'], $automationConfig['cloudflare_api_token'])
-$effectiveCloudflareZoneId = Pick-Value @($CloudflareZoneId, $backendAutomationConfig['cloudflare_zone_id'], $automationConfig['cloudflare_zone_id'])
-$effectiveCloudflareAccountId = Pick-Value @($CloudflareAccountId, $backendAutomationConfig['cloudflare_account_id'], $automationConfig['cloudflare_account_id'])
-$configuredDefaultMode = Pick-Value @($backendAutomationConfig['cloudflare_default_mode'], $automationConfig['default_mode'])
-$configuredDefaultPublicUrl = Pick-Value @($backendAutomationConfig['cloudflare_public_url'], $automationConfig['default_public_url'])
+$effectiveZoneDomain = Select-Value @($ZoneDomain, $backendAutomationConfig['cloudflare_zone_domain'], $automationConfig['zone_domain'])
+$effectiveCloudflareApiToken = Select-Value @($CloudflareApiToken, $backendAutomationConfig['cloudflare_api_token'], $automationConfig['cloudflare_api_token'])
+$effectiveCloudflareZoneId = Select-Value @($CloudflareZoneId, $backendAutomationConfig['cloudflare_zone_id'], $automationConfig['cloudflare_zone_id'])
+$effectiveCloudflareAccountId = Select-Value @($CloudflareAccountId, $backendAutomationConfig['cloudflare_account_id'], $automationConfig['cloudflare_account_id'])
+$configuredDefaultMode = Select-Value @($backendAutomationConfig['cloudflare_default_mode'], $automationConfig['default_mode'])
+$configuredDefaultPublicUrl = Select-Value @($backendAutomationConfig['cloudflare_public_url'], $automationConfig['default_public_url'])
 
 if ($Mode -eq "auto" -and -not [string]::IsNullOrWhiteSpace($configuredDefaultMode)) {
     $Mode = [string]$configuredDefaultMode
@@ -495,7 +500,7 @@ if ($resolvedMode -eq "local_trycloudflare" -and [string]::IsNullOrWhiteSpace($P
     Write-Ok "Quick tunnel is ready at $PublicUrl"
 }
 
-$normalizedPublicUrl = Normalize-PublicUrl -ModeValue $resolvedMode -CandidateUrl $PublicUrl
+$normalizedPublicUrl = Format-PublicUrl -ModeValue $resolvedMode -CandidateUrl $PublicUrl
 if ([string]::IsNullOrWhiteSpace($normalizedPublicUrl)) {
     throw "A public URL is required for this mode."
 }
@@ -505,11 +510,10 @@ Save-BackendRegistration -BaseUrl $normalizedPublicUrl
 Update-WranglerToml -BaseUrl $normalizedPublicUrl -Secret $effectiveHubSecret
 
 $deployResult = $null
-$workerDiagnostics = $null
 if (-not $SkipWorkerDeploy) {
-    Ensure-NetworkDependencies
-    $deployResult = Invoke-WranglerDeploy
-    $workerDiagnostics = Invoke-WorkerSmokeTest -WorkerUrl $deployResult.WorkerUrl
+    Initialize-NetworkDependencies
+    $deployResult = Invoke-WranglerDeploy -ApiToken $effectiveCloudflareApiToken
+    Invoke-WorkerSmokeTest -WorkerUrl $deployResult.WorkerUrl
 }
 
 $routingRuleId = $null
@@ -522,7 +526,7 @@ if (-not $SkipRoutingRule) {
     $resolvedZoneDomain = Resolve-ZoneDomain -ExplicitDomain $effectiveZoneDomain -BaseUrl $normalizedPublicUrl
     $emailAddress = "$effectiveRouteLocalPart@$resolvedZoneDomain"
     try {
-        $routingRuleId = Ensure-EmailRoutingRule -EmailAddress $emailAddress
+        $routingRuleId = Set-EmailRoutingRule -EmailAddress $emailAddress
     } catch {
         Write-Warn "Routing rule automation failed: $($_.Exception.Message)"
     }
