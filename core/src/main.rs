@@ -225,7 +225,7 @@ async fn main() {
         .route("/console/", get(console_index))
         .route("/console/style.css", get(console_style))
         .route("/console/app.js", get(console_script))
-        .route("/health", get(|| async { "幻影运行正常" }))
+        .route("/health", get(|| async { Json(serde_json::json!({"status": "ok"})) }))
         .route("/api/emails", get({
             let dl = Arc::clone(&data_lake);
             move |Query(query): Query<EmailQuery>| {
