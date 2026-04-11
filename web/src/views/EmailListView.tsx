@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Mail,
   Search,
@@ -447,12 +447,12 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
       </div>
 
       {selectedEmail || loadingDetail ? (
-        <div className="fixed inset-0 z-[110] bg-slate-900/40 px-4 py-8 backdrop-blur-sm">
-          <div className="mx-auto flex h-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <div>
-                <h3 className="text-lg font-black text-slate-900">邮件详情</h3>
-                <p className="text-[10px] font-mono tracking-widest text-slate-500">详情视图</p>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm sm:p-6">
+          <div className="flex w-full max-w-4xl max-h-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
+              <div className="flex flex-col">
+                <h3 className="text-lg font-black leading-tight text-slate-900">邮件详情</h3>
+                <p className="text-[10px] font-mono tracking-widest text-slate-500 uppercase mt-0.5">详情视图</p>
               </div>
               <button
                 type="button"
@@ -471,18 +471,18 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                 正在读取邮件详情...
               </div>
             ) : selectedEmail ? (
-              <div className="grid flex-1 gap-6 overflow-y-auto p-6 lg:grid-cols-[1.2fr_1fr]">
-                <div className="space-y-4">
+              <div className="grid flex-1 gap-4 overflow-y-auto p-5 lg:grid-cols-[1.2fr_1fr]">
+                <div className="space-y-3">
                   <InfoCard label="发件人" value={selectedEmail.from_addr} />
                   <InfoCard label="收件人" value={selectedEmail.to_addr} />
                   <InfoCard label="主题" value={selectedEmail.subject || '无主题'} />
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="text-xs font-mono text-slate-500">纯文本正文</div>
-                    <pre className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700">{selectedEmail.body_text || '无纯文本内容'}</pre>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+                    <div className="text-[10px] font-mono text-slate-500">纯文本正文</div>
+                    <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-700">{selectedEmail.body_text || '无纯文本内容'}</pre>
                   </div>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <InfoCard label="捕获时间" value={new Date(selectedEmail.created_at * 1000).toLocaleString()} />
                   <InfoCard label="归档状态" value={selectedEmail.is_archived ? '已归档' : '活跃'} />
                   <InfoCard
@@ -503,15 +503,17 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                     }
                     actionLabel={copiedField === 'code' ? '已复制' : undefined}
                   />
-                  <button type="button" onClick={() => void toggleArchive(selectedEmail.id, !selectedEmail.is_archived)} className="phantom-btn phantom-btn--secondary w-full">
-                    {selectedEmail.is_archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
-                    {selectedEmail.is_archived ? '取消归档' : '归档邮件'}
-                  </button>
-                  <button type="button" onClick={() => void deleteEmail(selectedEmail.id)} className="phantom-btn phantom-btn--danger w-full">
-                    <Trash2 size={16} />
-                    删除邮件
-                  </button>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex gap-3">
+                    <button type="button" onClick={() => void toggleArchive(selectedEmail.id, !selectedEmail.is_archived)} className="phantom-btn phantom-btn--sm phantom-btn--secondary flex-1">
+                      {selectedEmail.is_archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+                      {selectedEmail.is_archived ? '取消归档' : '归档邮件'}
+                    </button>
+                    <button type="button" onClick={() => void deleteEmail(selectedEmail.id)} className="phantom-btn phantom-btn--sm phantom-btn--danger flex-1">
+                      <Trash2 size={14} />
+                      删除邮件
+                    </button>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
                     <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-500">
                       <span>提取链接</span>
                       {selectedEmail.extracted_link ? (
@@ -534,8 +536,8 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                       <div className="mt-1 text-sm text-slate-500">未提取到链接</div>
                     )}
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-500">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-500">
                       <span>HTML 片段</span>
                       {selectedEmail.body_html ? (
                         <button
@@ -548,7 +550,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                         </button>
                       ) : null}
                     </div>
-                    <pre className="mt-3 max-h-[240px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-slate-600">{selectedEmail.body_html || '无 HTML 内容'}</pre>
+                    <pre className="mt-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-words text-[10px] leading-relaxed text-slate-500">{selectedEmail.body_html || '无 HTML 内容'}</pre>
                   </div>
                 </div>
               </div>
@@ -574,15 +576,15 @@ function InfoCard({
   actionLabel?: string
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="flex items-center justify-between gap-2 text-xs font-mono text-slate-500">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5">
+      <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-500">
         <span>{label}</span>
         <div className="flex items-center gap-2">
           {actionLabel ? <span className="text-[10px] text-emerald-600">{actionLabel}</span> : null}
           {action}
         </div>
       </div>
-      <div className={`mt-1 break-all ${emphasize ? 'font-mono text-lg font-black tracking-widest text-blue-600' : 'font-bold text-slate-900'}`}>{value}</div>
+      <div className={`mt-0.5 break-all ${emphasize ? 'font-mono text-base font-black tracking-widest text-blue-600' : 'text-sm font-bold text-slate-900'}`}>{value}</div>
     </div>
   )
 }
