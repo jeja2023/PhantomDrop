@@ -377,7 +377,7 @@ function Set-EmailRoutingRule([string]$EmailAddress) {
     Write-Step "Ensuring Email Routing rule for $EmailAddress"
     $rulesResponse = Invoke-CloudflareApi -Method "GET" -Path "/zones/$CloudflareZoneId/email/routing/rules" -Body $null
     $existingRule = $rulesResponse.result | Where-Object {
-        $_.matchers | Where-Object { $_.field -eq "to" -and $_.value -eq $EmailAddress }
+        $_.matchers | Where-Object { $_.PSObject.Properties['field'] -and $_.field -eq "to" -and $_.value -eq $EmailAddress }
     } | Select-Object -First 1
 
     $payload = @{
