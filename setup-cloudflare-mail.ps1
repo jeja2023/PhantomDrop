@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("auto", "local_trycloudflare", "public_ip", "public_domain")]
     [string]$Mode = "auto",
     [string]$PublicUrl,
@@ -289,10 +289,11 @@ function Invoke-WranglerDeploy([string]$ApiToken) {
     }
 
     Write-Ok "Worker deployment finished."
-    return [PSCustomObject]@{
-        Output = $output
+    $result = [PSCustomObject]@{
+        Output    = $output
         WorkerUrl = $workerUrl
     }
+    return $result
 }
 
 function Resolve-ZoneDomain([string]$ExplicitDomain, [string]$BaseUrl) {
@@ -433,31 +434,28 @@ function Invoke-PublicIngestSmokeTest([string]$BaseUrl, [string]$Secret) {
 
 function Invoke-WorkerSmokeTest([string]$WorkerUrl) {
     if ([string]::IsNullOrWhiteSpace($WorkerUrl)) {
-        Write-Warn "未从部署输出中检测到 Worker URL，跳过冒烟测试。"
+        Write-Warn "Worker URL not detected. Skipping smoke test."
         return
     }
 
-    # 健康检查
     Write-Step "Checking deployed worker health at $WorkerUrl/health"
     try {
         $null = Invoke-RestMethod -Uri "$WorkerUrl/health" -TimeoutSec 20
-        Write-Ok "Worker 健康检查通过。"
-    } catch {
-        Write-Warn "Worker 健康检查失败（可能是冷启动延迟）：$($_.Exception.Message)"
+        Write-Ok "Worker health check passed."
+    }
+    catch {
+        $msg = $_.Exception.Message
+        Write-Warn "Worker health check failed: $msg"
     }
 
-    # 中继测试（非关键，失败不阻断流程）
     Write-Step "Running worker relay smoke test at $WorkerUrl/relay-test"
     try {
-        $null = Invoke-RestMethod `
-            -Uri "$WorkerUrl/relay-test" `
-            -Method Post `
-            -ContentType "application/json; charset=utf-8" `
-            -Body "{}" `
-            -TimeoutSec 30
-        Write-Ok "Worker 中继测试通过。"
-    } catch {
-        Write-Warn "Worker 中继测试未通过（错误：$($_.Exception.Message)）。这不影响 Worker 部署，后续真实邮件到达时会自动中继。"
+        $null = Invoke-RestMethod -Uri "$WorkerUrl/relay-test" -Method Post -ContentType "application/json; charset=utf-8" -Body "{}" -TimeoutSec 30
+        Write-Ok "Worker relay test passed."
+    }
+    catch {
+        $msg = $_.Exception.Message
+        Write-Warn "Worker relay test failed: $msg (non-blocking)"
     }
 }
 
