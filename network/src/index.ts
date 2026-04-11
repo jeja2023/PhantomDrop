@@ -8,7 +8,7 @@ export interface Env {
 interface MailMessage {
   from: string;
   to: string;
-  asRaw(): Promise<ArrayBuffer>;
+  raw: ReadableStream;
 }
 
 interface ParsedAttachment {
@@ -134,7 +134,7 @@ export default {
 
   async email(message: MailMessage, env: Env) {
     try {
-      const rawEmail = await message.asRaw();
+      const rawEmail = message.raw;
       const parser = new PostalMime();
       const parsed = (await parser.parse(rawEmail)) as ParsedMail;
 
