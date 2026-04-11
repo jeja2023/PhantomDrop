@@ -1,4 +1,4 @@
-﻿param(
+param(
     [ValidateSet("auto", "local_trycloudflare", "public_ip", "public_domain")]
     [string]$Mode = "auto",
     [string]$PublicUrl,
@@ -531,10 +531,13 @@ if (-not $SkipRoutingRule) {
     $emailAddress = "$effectiveRouteLocalPart@$resolvedZoneDomain"
     try {
         $routingRuleId = Set-EmailRoutingRule -EmailAddress $emailAddress
-    } catch {
-        Write-Warn "Routing rule automation failed: $($_.Exception.Message)"
     }
-} elseif (-not [string]::IsNullOrWhiteSpace($effectiveZoneDomain)) {
+    catch {
+        $err = $_.Exception.Message
+        Write-Warn "Routing rule automation failed: $err"
+    }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($effectiveZoneDomain)) {
     $resolvedZoneDomain = Resolve-ZoneDomain -ExplicitDomain $effectiveZoneDomain -BaseUrl $normalizedPublicUrl
     $emailAddress = "$effectiveRouteLocalPart@$resolvedZoneDomain"
 }
