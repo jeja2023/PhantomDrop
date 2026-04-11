@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { RefreshCw, Command, Activity, RadioTower } from 'lucide-react'
 import Sidebar from './ui/Sidebar'
 import Cmd from './cmd/Cmd'
@@ -296,7 +296,7 @@ function App() {
     return `最近 ${emails.length} 封`
   }, [emails.length])
 
-  const isPageScrollable = activeTab === 'auto'
+  const isPageScrollable = activeTab === 'auto' || activeTab === 'config'
 
   const renderView = () => {
     switch (activeTab) {
