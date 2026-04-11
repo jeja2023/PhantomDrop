@@ -105,13 +105,14 @@ Write-Host "启动模式  : $Mode" -ForegroundColor DarkCyan
 Write-Host "项目目录  : $projectRoot" -ForegroundColor DarkCyan
 Write-Host "授权密钥  : $HubSecret" -ForegroundColor DarkCyan
 Write-Host "数据库地址: $dbUrl" -ForegroundColor DarkCyan
-Write-Host "窗口模式  : $(if ($SeparateWindows) { '多窗口' } else { '单窗口 / 后台' })" -ForegroundColor DarkCyan
+$winMode = if ($SeparateWindows) { "Multi-Window" } else { "Single-Window" }
+if ($winMode -eq "Multi-Window") { Write-Host "窗口模式  : 多窗口" -ForegroundColor DarkCyan } else { Write-Host "窗口模式  : 单窗口 / 后台" -ForegroundColor DarkCyan }
 Write-Host "========================================================"
 
 if ($Mode -eq "console") {
     Write-Host "正在启动 Rust 后端与内建控制台..." -ForegroundColor Yellow
     Start-Sleep -Seconds 1
-    Start-Process "http://127.0.0.1:4000/"
+    Start-Process "http://127.0.0.1:9010/"
     Set-Location $coreDir
     $env:HUB_SECRET = $HubSecret
     $env:PHANTOM_DB_URL = $dbUrl
@@ -119,7 +120,7 @@ if ($Mode -eq "console") {
     exit 0
 }
 
-$corePid = Get-ListeningProcessId -Port 4000
+$corePid = Get-ListeningProcessId -Port 9010
 if ($corePid) {
     Write-Host "检测到后端已在运行，复用进程：$corePid" -ForegroundColor Green
 } else {
@@ -145,7 +146,7 @@ if ($webPid) {
 } else {
     Write-Host "正在启动前端开发服务..." -ForegroundColor Yellow
     $webProcess = Start-PhantomProcess -WorkingDir $webDir -StdoutLog $webStdoutLog -StderrLog $webStderrLog -Visible:$SeparateWindows -Command @"
-`$env:VITE_BACKEND_URL = 'http://127.0.0.1:4000'
+`$env:VITE_BACKEND_URL = 'http://127.0.0.1:9010'
 npm run dev
 "@
 
@@ -159,7 +160,7 @@ npm run dev
 }
 
 Start-Sleep -Seconds 2
-Write-Host "后端地址： http://127.0.0.1:4000/" -ForegroundColor Green
+Write-Host "后端地址： http://127.0.0.1:9010/" -ForegroundColor Green
 Write-Host "前端地址： http://127.0.0.1:5173/" -ForegroundColor Green
 Write-Host "正在打开前端页面..." -ForegroundColor Yellow
 Start-Process "http://127.0.0.1:5173/"

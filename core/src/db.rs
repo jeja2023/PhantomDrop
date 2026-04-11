@@ -75,6 +75,8 @@ pub struct WorkflowStepRecord {
     pub level: String,
     pub message: String,
     pub created_at: i64,
+    pub workflow_id: Option<String>,
+    pub workflow_title: Option<String>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -956,10 +958,13 @@ impl DataLake {
     /// 获取某次工作流的步骤详情
     pub async fn list_workflow_steps(&self, run_id: &str, limit: i64) -> Result<Vec<WorkflowStepRecord>, sqlx::Error> {
         let records = sqlx::query_as::<_, WorkflowStepRecord>(
-            "SELECT id, run_id, step_index, level, message, created_at
-             FROM workflow_run_steps
-             WHERE run_id = ?
-             ORDER BY step_index ASC, created_at ASC
+            "SELECT 
+                s.id, s.run_id, s.step_index, s.level, s.message, s.created_at,
+                r.workflow_id, r.workflow_title
+             FROM workflow_run_steps s
+             JOIN workflow_runs r ON s.run_id = r.id
+             WHERE s.run_id = ?
+             ORDER BY s.step_index ASC, s.created_at ASC
              LIMIT ?"
         )
         .bind(run_id)

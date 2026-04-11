@@ -231,6 +231,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures-util",
+ "rand",
  "regex",
  "reqwest",
  "serde",
