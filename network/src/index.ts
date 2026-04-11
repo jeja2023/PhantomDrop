@@ -1,4 +1,4 @@
-﻿import PostalMime from 'postal-mime';
+import PostalMime from 'postal-mime';
 
 export interface Env {
   PHANTOM_HUB_URL: string;
@@ -59,7 +59,7 @@ async function relayToHub(payload: HubPayload, env: Env): Promise<Response> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Hub-Secret': env.HUB_SECRET,
+      'X-Hub-Secret': env.HUB_SECRET.trim(),
     },
     body: JSON.stringify(payload),
   });

@@ -790,16 +790,17 @@ async fn main() {
                 async move {
                     // 1. 安全层: 令牌校验逻辑
                     let expected_secret = match env::var("HUB_SECRET") {
-                        Ok(value) if !value.trim().is_empty() => value,
-                        _ => dl.get_setting("auth_secret").await.unwrap_or(None).unwrap_or_default(),
+                        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+                        _ => dl.get_setting("auth_secret").await.unwrap_or(None).unwrap_or_default().trim().to_string(),
                     };
                     if !expected_secret.is_empty() {
                         let provided_secret = headers
                             .get("X-Hub-Secret")
                             .and_then(|val| val.to_str().ok())
-                            .unwrap_or("");
+                            .unwrap_or("")
+                            .trim();
                         if provided_secret != expected_secret {
-                            eprintln!("安全拦截：未授权的访问请求");
+                            eprintln!("安全拦截：未授权的访问请求(Secret不匹配)");
                             return (StatusCode::UNAUTHORIZED, "安全验证失败").into_response();
                         }
                     }

@@ -350,7 +350,16 @@ function Invoke-CloudflareApi([string]$Method, [string]$Path, [object]$Body) {
         $params.Body = $Body | ConvertTo-Json -Depth 10
     }
 
-    return Invoke-RestMethod @params
+    try {
+        return Invoke-RestMethod @params
+    }
+    catch {
+        $status = $_.Exception.Response.StatusCode
+        if ($status -eq "Forbidden") {
+            throw "Cloudflare API 返回 403 Forbidden。请检查您的 API Token 是否拥有足够权限（特别是 'Email Routing: Edit'）。"
+        }
+        throw $_
+    }
 }
 
 function Set-EmailRoutingRule([string]$EmailAddress) {
@@ -403,6 +412,7 @@ function Set-EmailRoutingRule([string]$EmailAddress) {
 
 function Invoke-PublicIngestSmokeTest([string]$BaseUrl, [string]$Secret) {
     Write-Step "Running public ingest smoke test through $BaseUrl/ingest"
+    $Secret = if ($null -ne $Secret) { $Secret.Trim() } else { $Secret }
     $subject = "PhantomDrop Auto Ingest Probe $(Get-Date -Format 'yyyyMMdd-HHmmss')"
     $payload = @{
         meta = @{
@@ -417,19 +427,26 @@ function Invoke-PublicIngestSmokeTest([string]$BaseUrl, [string]$Secret) {
         }
     } | ConvertTo-Json -Depth 10
 
-    $response = Invoke-WebRequest `
-        -Uri "$BaseUrl/ingest" `
-        -Method Post `
-        -Headers @{ "X-Hub-Secret" = $Secret } `
-        -ContentType "application/json; charset=utf-8" `
-        -Body $payload
-
-    if ($response.StatusCode -ne 200) {
-        throw "Public ingest smoke test failed with status $($response.StatusCode)."
+    try {
+        $null = Invoke-RestMethod `
+            -Uri "$BaseUrl/ingest" `
+            -Method Post `
+            -Headers @{ "X-Hub-Secret" = $Secret; "User-Agent" = "PhantomDrop-Automation/1.0" } `
+            -ContentType "application/json; charset=utf-8" `
+            -Body $payload
+        
+        Write-Ok "Public ingest smoke test succeeded."
+        return $subject
     }
-
-    Write-Ok "Public ingest smoke test succeeded."
-    return $subject
+    catch {
+        $msg = $_.Exception.Message
+        if ($null -ne $_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $body = $reader.ReadToEnd()
+            $msg = "$msg (Response: $body)"
+        }
+        throw "Public ingest smoke test failed: $msg"
+    }
 }
 
 function Invoke-WorkerSmokeTest([string]$WorkerUrl) {
@@ -471,7 +488,16 @@ $backendAutomationConfig = Get-BackendAutomationConfig
 $effectiveHubSecret = if ($PSBoundParameters.ContainsKey("HubSecret")) {
     $HubSecret
 } else {
-    Select-Value @($backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $HubSecret)
+    Select-Value @($env:HUB_SECRET, $backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $HubSecret)
+}
+
+if ($null -ne $effectiveHubSecret) {
+    $effectiveHubSecret = $effectiveHubSecret.Trim()
+}
+
+if (-not [string]::IsNullOrWhiteSpace($effectiveHubSecret)) {
+    $masked = $effectiveHubSecret.Substring(0, [Math]::Min(3, $effectiveHubSecret.Length)) + "****"
+    Write-Info "Using Hub Secret: $masked"
 }
 
 $effectiveRouteLocalPart = if ($PSBoundParameters.ContainsKey("RouteLocalPart")) {

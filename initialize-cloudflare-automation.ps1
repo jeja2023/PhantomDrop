@@ -44,6 +44,21 @@ function Save-Config([hashtable]$Config) {
     ($Config | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $configPath -Encoding UTF8
 }
 
+function Select-Value([object[]]$Candidates) {
+    foreach ($candidate in $Candidates) {
+        if ($null -ne $candidate) {
+            if ($candidate -is [string]) {
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                    return $candidate
+                }
+                continue
+            }
+            return $candidate
+        }
+    }
+    return $null
+}
+
 function Show-InitializationDialog([hashtable]$Defaults) {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -89,14 +104,21 @@ function Show-InitializationDialog([hashtable]$Defaults) {
             $control = New-Object System.Windows.Forms.ComboBox
             $control.DropDownStyle = "DropDownList"
             [void]$control.Items.AddRange($field.Values)
-            $selected = [string]($Defaults[$field.Key] ?? "")
+            $selected = [string]$Defaults[$field.Key]
+            if ([string]::IsNullOrWhiteSpace($selected)) {
+                $selected = ""
+            }
             if ([string]::IsNullOrWhiteSpace($selected)) {
                 $selected = $field.Values[0]
             }
             $control.SelectedItem = $selected
         } else {
             $control = New-Object System.Windows.Forms.TextBox
-            $control.Text = [string]($Defaults[$field.Key] ?? "")
+            $val = [string]$Defaults[$field.Key]
+            if ([string]::IsNullOrWhiteSpace($val)) {
+                $val = ""
+            }
+            $control.Text = $val
         }
 
         $control.Font = $font
@@ -110,7 +132,7 @@ function Show-InitializationDialog([hashtable]$Defaults) {
     $loginCheckbox = New-Object System.Windows.Forms.CheckBox
     $loginCheckbox.Text = "现在执行 wrangler login"
     $loginCheckbox.Font = $font
-    $loginCheckbox.Checked = [bool]($Defaults["run_wrangler_login"] ?? $false)
+    $loginCheckbox.Checked = [bool]($null -ne $Defaults["run_wrangler_login"] -and $Defaults["run_wrangler_login"])
     $loginCheckbox.Location = New-Object System.Drawing.Point(210, $top - 2)
     $loginCheckbox.Size = New-Object System.Drawing.Size(220, 28)
     $form.Controls.Add($loginCheckbox)
@@ -212,14 +234,14 @@ if ($RunWranglerLogin) {
 
 $config = Load-Config
 $dialogDefaults = @{
-    default_mode = $config.default_mode ?? $DefaultMode
-    default_public_url = $config.default_public_url ?? $DefaultPublicUrl
-    route_local_part = $config.route_local_part ?? $RouteLocalPart
-    zone_domain = $config.zone_domain ?? $ZoneDomain
-    hub_secret = $config.hub_secret ?? $HubSecret
-    cloudflare_api_token = $config.cloudflare_api_token ?? $CloudflareApiToken
-    cloudflare_zone_id = $config.cloudflare_zone_id ?? $CloudflareZoneId
-    cloudflare_account_id = $config.cloudflare_account_id ?? $CloudflareAccountId
+    default_mode = Select-Value @($config.default_mode, $DefaultMode)
+    default_public_url = Select-Value @($config.default_public_url, $DefaultPublicUrl)
+    route_local_part = Select-Value @($config.route_local_part, $RouteLocalPart)
+    zone_domain = Select-Value @($config.zone_domain, $ZoneDomain)
+    hub_secret = Select-Value @($config.hub_secret, $HubSecret)
+    cloudflare_api_token = Select-Value @($config.cloudflare_api_token, $CloudflareApiToken)
+    cloudflare_zone_id = Select-Value @($config.cloudflare_zone_id, $CloudflareZoneId)
+    cloudflare_account_id = Select-Value @($config.cloudflare_account_id, $CloudflareAccountId)
     run_wrangler_login = [bool]$RunWranglerLogin
 }
 
@@ -237,7 +259,7 @@ if (-not $NoDialog) {
 }
 
 $config.default_mode = $DefaultMode
-$config.hub_secret = $HubSecret
+$config.hub_secret = if ($null -ne $HubSecret) { $HubSecret.Trim() } else { $HubSecret }
 $config.route_local_part = $RouteLocalPart
 
 $normalizedPublicUrl = Normalize-PublicUrl -ModeValue $DefaultMode -CandidateUrl $DefaultPublicUrl
