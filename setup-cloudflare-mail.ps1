@@ -484,28 +484,50 @@ function Invoke-PublicIngestSmokeTest([string]$BaseUrl, [string]$Secret) {
 
 function Invoke-WorkerSmokeTest([string]$WorkerUrl) {
     if ([string]::IsNullOrWhiteSpace($WorkerUrl)) {
-        Write-Warn "Worker URL not detected. Skipping smoke test."
+        Write-Warn "未检测到 Worker URL。跳过冒烟测试。"
         return
     }
 
-    Write-Step "Checking deployed worker health at $WorkerUrl/health"
-    try {
-        $null = Invoke-RestMethod -Uri "$WorkerUrl/health" -TimeoutSec 20
-        Write-Ok "Worker health check passed."
-    }
-    catch {
-        $msg = $_.Exception.Message
-        Write-Warn "Worker health check failed: $msg"
+    $MaxRetries = 5
+    $RetryDelaySec = 5
+
+    Write-Step "正在检查已部署 Worker 的健康状态: $WorkerUrl/health"
+    $healthPassed = $false
+    for ($i = 1; $i -le $MaxRetries; $i++) {
+        try {
+            $null = Invoke-RestMethod -Uri "$WorkerUrl/health" -TimeoutSec 10
+            Write-Ok "Worker 健康检查通过。"
+            $healthPassed = $true
+            break
+        }
+        catch {
+            $msg = $_.Exception.Message
+            if ($i -lt $MaxRetries) {
+                Write-Info "Worker 健康检查尝试 $i 失败 ($msg)，正在重试 ($RetryDelaySec 秒后)..."
+                Start-Sleep -Seconds $RetryDelaySec
+            } else {
+                Write-Warn "Worker 健康检查最终失败: $msg"
+            }
+        }
     }
 
-    Write-Step "Running worker relay smoke test at $WorkerUrl/relay-test"
-    try {
-        $null = Invoke-RestMethod -Uri "$WorkerUrl/relay-test" -Method Post -ContentType "application/json; charset=utf-8" -Body "{}" -TimeoutSec 30
-        Write-Ok "Worker relay test passed."
-    }
-    catch {
-        $msg = $_.Exception.Message
-        Write-Warn "Worker relay test failed: $msg (non-blocking)"
+    Write-Step "正在运行 Worker 中继冒烟测试: $WorkerUrl/relay-test"
+    for ($i = 1; $i -le $MaxRetries; $i++) {
+        try {
+            # 为 /relay-test 使用 POST 方法
+            $null = Invoke-RestMethod -Uri "$WorkerUrl/relay-test" -Method Post -ContentType "application/json; charset=utf-8" -Body "{}" -TimeoutSec 20
+            Write-Ok "Worker 中继测试通过。"
+            return
+        }
+        catch {
+            $msg = $_.Exception.Message
+            if ($i -lt $MaxRetries) {
+                Write-Info "Worker 中继测试尝试 $i 失败 ($msg)，正在重试 ($RetryDelaySec 秒后)..."
+                Start-Sleep -Seconds $RetryDelaySec
+            } else {
+                Write-Warn "Worker 中继测试最终失败: $msg (非阻塞)"
+            }
+        }
     }
 }
 
@@ -589,15 +611,16 @@ if (-not $SkipRoutingRule) {
     $resolvedZoneDomain = Resolve-ZoneDomain -ExplicitDomain $effectiveZoneDomain -BaseUrl $normalizedPublicUrl
     $emailAddress = "$effectiveRouteLocalPart@$resolvedZoneDomain"
     try {
-        if ($UseCatchAll) {
-            $routingRuleId = Set-EmailCatchAllRule
-        } else {
-            $routingRuleId = Set-EmailRoutingRule -EmailAddress $emailAddress
-        }
+        # 首先确保特定邮箱地址规则存在 (如 inbox@domain.com)
+        $routingRuleId = Set-EmailRoutingRule -EmailAddress $emailAddress
+        
+        # 随后自动开启 Catch-all 全局转发，确保该域名下所有未匹配地址的邮件均能送达 Worker
+        Write-Info "正在自动同步 Catch-all 规则..."
+        $null = Set-EmailCatchAllRule
     }
     catch {
         $err = $_.Exception.Message
-        Write-Warn "Routing rule automation failed: $err"
+        Write-Warn "路由规则自动化部署部分失败（不影响 Worker 运行）: $err"
     }
 }
 elseif (-not [string]::IsNullOrWhiteSpace($effectiveZoneDomain)) {
