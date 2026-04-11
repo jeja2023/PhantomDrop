@@ -82,7 +82,7 @@ function Write-Warn([string]$Message) {
 
 function Test-LocalBackend {
     try {
-        $null = Invoke-RestMethod -Uri "http://127.0.0.1:4000/health" -TimeoutSec 5
+        $null = Invoke-RestMethod -Uri "http://127.0.0.1:9010/health" -TimeoutSec 5
         return $true
     } catch {
         return $false
@@ -95,7 +95,7 @@ function Load-BackendAutomationConfig {
     }
 
     try {
-        $settings = Invoke-RestMethod -Uri "http://127.0.0.1:4000/api/settings" -TimeoutSec 10
+        $settings = Invoke-RestMethod -Uri "http://127.0.0.1:9010/api/settings" -TimeoutSec 10
         $config = @{}
         foreach ($property in $settings.PSObject.Properties) {
             $config[$property.Name] = $property.Value
@@ -156,7 +156,7 @@ function Start-QuickTunnel {
         throw "cloudflared is not installed or not available in PATH."
     }
     if (-not (Test-LocalBackend)) {
-        throw "Local backend on http://127.0.0.1:4000 is not reachable."
+        throw "Local backend on http://127.0.0.1:9010 is not reachable."
     }
 
     $stdoutPath = Join-Path $stateDir "cloudflared.stdout.log"
@@ -164,7 +164,7 @@ function Start-QuickTunnel {
     Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 
     $process = Start-Process -FilePath "cloudflared" `
-        -ArgumentList @("tunnel", "--url", "http://127.0.0.1:4000", "--protocol", "http2", "--edge-ip-version", "4") `
+        -ArgumentList @("tunnel", "--url", "http://127.0.0.1:9010", "--protocol", "http2", "--edge-ip-version", "4") `
         -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath `
         -PassThru `
@@ -215,18 +215,18 @@ function Save-BackendRegistration([string]$BaseUrl) {
     } | ConvertTo-Json -Depth 5
 
     $null = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:4000/api/settings/save" `
+        -Uri "http://127.0.0.1:9010/api/settings/save" `
         -Method Post `
         -ContentType "application/json; charset=utf-8" `
         -Body $settingsBody
 
     $tunnelBody = @{
-        port = 4000
+        port = 9010
         public_url = $BaseUrl
     } | ConvertTo-Json -Depth 5
 
     $null = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:4000/api/tunnel/start" `
+        -Uri "http://127.0.0.1:9010/api/tunnel/start" `
         -Method Post `
         -ContentType "application/json; charset=utf-8" `
         -Body $tunnelBody
@@ -462,20 +462,20 @@ $backendAutomationConfig = Load-BackendAutomationConfig
 $effectiveHubSecret = if ($PSBoundParameters.ContainsKey("HubSecret")) {
     $HubSecret
 } else {
-    Pick-Value @($backendAutomationConfig.auth_secret, $automationConfig.hub_secret, $HubSecret)
+    Pick-Value @($backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $HubSecret)
 }
 
 $effectiveRouteLocalPart = if ($PSBoundParameters.ContainsKey("RouteLocalPart")) {
     $RouteLocalPart
 } else {
-    Pick-Value @($backendAutomationConfig.cloudflare_route_local_part, $automationConfig.route_local_part, $RouteLocalPart, "inbox")
+    Pick-Value @($backendAutomationConfig['cloudflare_route_local_part'], $automationConfig['route_local_part'], $RouteLocalPart, "inbox")
 }
-$effectiveZoneDomain = Pick-Value @($ZoneDomain, $backendAutomationConfig.cloudflare_zone_domain, $automationConfig.zone_domain)
-$effectiveCloudflareApiToken = Pick-Value @($CloudflareApiToken, $backendAutomationConfig.cloudflare_api_token, $automationConfig.cloudflare_api_token)
-$effectiveCloudflareZoneId = Pick-Value @($CloudflareZoneId, $backendAutomationConfig.cloudflare_zone_id, $automationConfig.cloudflare_zone_id)
-$effectiveCloudflareAccountId = Pick-Value @($CloudflareAccountId, $backendAutomationConfig.cloudflare_account_id, $automationConfig.cloudflare_account_id)
-$configuredDefaultMode = Pick-Value @($backendAutomationConfig.cloudflare_default_mode, $automationConfig.default_mode)
-$configuredDefaultPublicUrl = Pick-Value @($backendAutomationConfig.cloudflare_public_url, $automationConfig.default_public_url)
+$effectiveZoneDomain = Pick-Value @($ZoneDomain, $backendAutomationConfig['cloudflare_zone_domain'], $automationConfig['zone_domain'])
+$effectiveCloudflareApiToken = Pick-Value @($CloudflareApiToken, $backendAutomationConfig['cloudflare_api_token'], $automationConfig['cloudflare_api_token'])
+$effectiveCloudflareZoneId = Pick-Value @($CloudflareZoneId, $backendAutomationConfig['cloudflare_zone_id'], $automationConfig['cloudflare_zone_id'])
+$effectiveCloudflareAccountId = Pick-Value @($CloudflareAccountId, $backendAutomationConfig['cloudflare_account_id'], $automationConfig['cloudflare_account_id'])
+$configuredDefaultMode = Pick-Value @($backendAutomationConfig['cloudflare_default_mode'], $automationConfig['default_mode'])
+$configuredDefaultPublicUrl = Pick-Value @($backendAutomationConfig['cloudflare_public_url'], $automationConfig['default_public_url'])
 
 if ($Mode -eq "auto" -and -not [string]::IsNullOrWhiteSpace($configuredDefaultMode)) {
     $Mode = [string]$configuredDefaultMode
