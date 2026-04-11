@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
@@ -33,6 +33,13 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
   const [isStepsLoading, setIsStepsLoading] = useState(false)
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null)
   const [copiedOutput, setCopiedOutput] = useState(false)
+  const stepsContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (stepsContainerRef.current) {
+      stepsContainerRef.current.scrollTop = stepsContainerRef.current.scrollHeight
+    }
+  }, [steps])
 
   const createDraftWorkflow = (): WorkflowDefinition => ({
     id: `workflow_${Date.now()}`,
@@ -267,9 +274,9 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
       </div>
 
       <PageHeader
-        title="自动化工作流"
-        kicker="自动化工作流"
-        description="统一读取后端工作流定义、执行记录、步骤流和产物清单，前端不再维护漂移配置。"
+        title=""
+        kicker=""
+        description=""
         actions={
           <button type="button" onClick={handleCreateWorkflow} className="phantom-btn phantom-btn--primary">
             <Plus size={16} />
@@ -323,6 +330,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                       className="phantom-select"
                     >
                       <option value="account_generate">账户生成</option>
+                      <option value="openai_register">OpenAI 注册</option>
                       <option value="data_cleanup">数据清理</option>
                       <option value="status_report">状态报告</option>
                       <option value="environment_check">环境巡检</option>
@@ -332,11 +340,21 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                       <option value="active">活跃</option>
                       <option value="idle">空闲</option>
                     </select>
-                    <input type="number" value={workflow.parameters.batch_size ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { batch_size: event.target.value ? Number(event.target.value) : undefined })} disabled={workflow.kind !== 'account_generate'} placeholder="批量数量" className="phantom-input" />
+                    <input type="number" value={workflow.parameters.batch_size ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { batch_size: event.target.value ? Number(event.target.value) : undefined })} disabled={workflow.kind !== 'account_generate' && workflow.kind !== 'openai_register'} placeholder="批量数量" className="phantom-input" />
                   </div>
                   <input value={workflow.parameters.account_domain ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { account_domain: event.target.value || undefined })} disabled={workflow.kind !== 'account_generate'} placeholder="账户域名" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" />
                   {workflow.kind === 'data_cleanup' ? <input type="number" value={workflow.parameters.days_to_keep ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { days_to_keep: event.target.value ? Number(event.target.value) : undefined })} placeholder="保留天数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" /> : null}
                   {workflow.kind === 'status_report' ? <input type="number" value={workflow.parameters.report_window_hours ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { report_window_hours: event.target.value ? Number(event.target.value) : undefined })} placeholder="统计窗口小时数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" /> : null}
+                  {workflow.kind === 'openai_register' ? (
+                    <div className="grid grid-cols-1 gap-3">
+                      <input value={workflow.parameters.proxy_url ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { proxy_url: event.target.value || undefined })} placeholder="全局代理 (如 http://127.0.0.1:10809)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
+                      <input value={workflow.parameters.captcha_key ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { captcha_key: event.target.value || undefined })} placeholder="打码平台 API Key" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
+                      <div className="grid grid-cols-2 gap-3">
+                        <input value={workflow.parameters.cpa_url ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { cpa_url: event.target.value || undefined })} placeholder="账号分发 URL (CPA/NewAPI)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
+                        <input value={workflow.parameters.cpa_key ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { cpa_key: event.target.value || undefined })} placeholder="分发密钥 (可选)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
+                      </div>
+                    </div>
+                  ) : null}
                   {workflow.kind === 'environment_check' ? (
                     <div className="grid grid-cols-1 gap-3">
                       <ToggleField label="检查环境密钥是否一致" checked={workflow.parameters.require_env_secret_match ?? true} onChange={(checked) => updateWorkflowParameters(workflow.id, { require_env_secret_match: checked })} />
@@ -475,17 +493,19 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
         ) : steps.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">当前执行记录暂无步骤详情。</div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {steps.map((step) => (
-              <div key={step.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="font-mono text-[15px] font-bold text-slate-900">第 {step.step_index} 步</div>
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${stepTone(step.level)}`}>{translateStepLevel(step.level)}</span>
+          <div ref={stepsContainerRef} className="max-h-[500px] overflow-y-auto pr-2 rounded-2xl">
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              {steps.map((step) => (
+                <div key={step.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="font-mono text-[15px] font-bold text-slate-900">第 {step.step_index} 步</div>
+                    <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${stepTone(step.level)}`}>{translateStepLevel(step.level)}</span>
+                  </div>
+                  <div className="mt-2 text-[13px] leading-relaxed text-slate-600">{step.message}</div>
+                  <div className="mt-2 text-[10px] font-mono text-slate-500">{new Date(step.created_at * 1000).toLocaleString()}</div>
                 </div>
-                <div className="mt-2 text-[13px] leading-relaxed text-slate-600">{step.message}</div>
-                <div className="mt-2 text-[10px] font-mono text-slate-500">{new Date(step.created_at * 1000).toLocaleString()}</div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </section>
@@ -540,6 +560,14 @@ function normalizeParametersForKind(kind: WorkflowKind, parameters: WorkflowPara
         batch_size: parameters.batch_size ?? 10,
         account_domain: parameters.account_domain ?? 'phantom.local',
       }
+    case 'openai_register':
+      return {
+        batch_size: parameters.batch_size ?? 1,
+        proxy_url: parameters.proxy_url ?? '',
+        captcha_key: parameters.captcha_key ?? '',
+        cpa_url: parameters.cpa_url ?? '',
+        cpa_key: parameters.cpa_key ?? '',
+      }
     case 'data_cleanup':
       return { days_to_keep: parameters.days_to_keep ?? 7 }
     case 'status_report':
@@ -568,6 +596,8 @@ function translateWorkflowKind(kind: WorkflowKind) {
   switch (kind) {
     case 'account_generate':
       return '账户生成'
+    case 'openai_register':
+      return 'OpenAI 注册'
     case 'data_cleanup':
       return '数据清理'
     case 'status_report':

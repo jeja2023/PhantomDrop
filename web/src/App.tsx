@@ -9,6 +9,7 @@ import LogsView from './views/LogsView'
 import AutomationView from './views/AutomationView'
 import SettingsView from './views/SettingsView'
 import TunnelView from './views/TunnelView'
+import RegistrationView from './views/RegistrationView'
 import { createApiEventSource, fetchJson } from './lib/api'
 import type {
   AppLog,
@@ -312,6 +313,8 @@ function App() {
         return <AutomationView refreshIntervalMs={updateRate} />
       case 'config':
         return <SettingsView />
+      case 'register':
+        return <RegistrationView refreshIntervalMs={updateRate} />
       default:
         return <DashboardView emails={emails} logs={logs} stats={stats} />
     }
@@ -372,7 +375,7 @@ function App() {
           </div>
         </header>
 
-        <div className={`relative z-10 flex-grow p-8 scroll-smooth ${isPageScrollable ? 'overflow-y-auto' : 'overflow-hidden'}`}>
+        <div className={`relative z-10 flex-grow px-8 pt-1 pb-8 scroll-smooth ${isPageScrollable ? 'overflow-y-auto' : 'overflow-hidden'}`}>
           <div className={`mx-auto max-w-[1600px] ${isPageScrollable ? 'min-h-full' : 'h-full min-h-0'}`}>{renderView()}</div>
         </div>
 

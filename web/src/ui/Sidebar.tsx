@@ -26,6 +26,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         <SidebarItem icon={<TerminalIcon size={22} />} label="系统流监控" active={activeTab === 'logs'} onClick={() => onTabChange('logs')} />
         <SidebarItem icon={<Globe size={22} />} label="内网穿透助手" active={activeTab === 'tunnel'} onClick={() => onTabChange('tunnel')} />
         <SidebarItem icon={<Zap size={22} />} label="自动化工作流" active={activeTab === 'auto'} onClick={() => onTabChange('auto')} />
+        <SidebarItem icon={<Shield size={22} />} label="网站注册中心" active={activeTab === 'register'} onClick={() => onTabChange('register')} />
       </div>
 
       <div className="mt-auto pt-4 border-t border-slate-200 space-y-4">

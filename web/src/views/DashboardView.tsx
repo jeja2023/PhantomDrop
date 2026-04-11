@@ -72,9 +72,9 @@ export default function DashboardView({ emails, logs, stats }: DashboardViewProp
       </AnimatePresence>
 
       <PageHeader
-        title={`实时态势感知${isExpertMode ? ' · 专家模式' : ''}`}
-        kicker={isExpertMode ? '实时态势感知（专家模式）' : '实时态势感知'}
-        description="统一查看实时邮件摄入、验证码覆盖率、工作流活跃度和原始系统流。"
+        title=""
+        kicker=""
+        description=""
         status={
           <div className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5">
             <span className="relative flex h-1.5 w-1.5">

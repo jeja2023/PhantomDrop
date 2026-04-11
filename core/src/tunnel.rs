@@ -50,7 +50,9 @@ impl TunnelManager {
         let public_url = public_url
             .as_deref()
             .and_then(Self::normalize_url)
-            .ok_or_else(|| "内置 Node localtunnel 已移除，请提供一个可访问当前中枢的公网地址".to_string())?;
+            .ok_or_else(|| {
+                "内置 Node localtunnel 已移除，请提供一个可访问当前中枢的公网地址".to_string()
+            })?;
 
         let mut status = self.status.lock().expect("Failed to lock status");
         status.active = true;

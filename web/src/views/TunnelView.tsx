@@ -107,9 +107,9 @@ export default function TunnelView() {
   return (
     <div className="page-shell page-shell--full space-y-2 animate-in fade-in duration-700 overflow-hidden">
       <PageHeader
-        title="内网穿透助手"
-        kicker="内网穿透引擎"
-        description="登记外部隧道生成的公网地址，供 Cloudflare Email Worker 和本地中枢建立稳定链路。"
+        title=""
+        kicker=""
+        description=""
         status={
           <div
             className={`rounded-full border px-3 py-1.5 text-[10px] font-black tracking-widest ${

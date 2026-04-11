@@ -1,7 +1,7 @@
-use sqlx::{Sqlite, Pool, sqlite::SqlitePoolOptions};
-use std::sync::Arc;
-use std::collections::HashMap;
 use chrono::Utc;
+use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /**
  * 幻影中台 - 数据湖基座 (Data Lake)
@@ -87,6 +87,12 @@ pub struct GeneratedAccountRecord {
     pub password: String,
     pub status: String,
     pub created_at: i64,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub session_token: Option<String>,
+    pub device_id: Option<String>,
+    pub workspace_id: Option<String>,
+    pub upload_status: Option<String>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -145,8 +151,9 @@ impl DataLake {
                 extracted_link TEXT,
                 extracted_text TEXT,
                 is_archived BOOLEAN DEFAULT FALSE
-            )"
-        ).execute(pool)
+            )",
+        )
+        .execute(pool)
         .await
         .expect("数据表初始化失败");
 
@@ -158,7 +165,7 @@ impl DataLake {
                 event_filter TEXT DEFAULT '*',
                 is_active BOOLEAN DEFAULT TRUE,
                 created_at INTEGER NOT NULL
-            )"
+            )",
         )
         .execute(pool)
         .await
@@ -170,7 +177,7 @@ impl DataLake {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
-            )"
+            )",
         )
         .execute(pool)
         .await
@@ -186,7 +193,7 @@ impl DataLake {
                 message TEXT NOT NULL,
                 started_at INTEGER NOT NULL,
                 finished_at INTEGER
-            )"
+            )",
         )
         .execute(pool)
         .await
@@ -202,7 +209,7 @@ impl DataLake {
                 parameters_json TEXT NOT NULL DEFAULT '{}',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
-            )"
+            )",
         )
         .execute(pool)
         .await
@@ -216,7 +223,7 @@ impl DataLake {
                 level TEXT NOT NULL,
                 message TEXT NOT NULL,
                 created_at INTEGER NOT NULL
-            )"
+            )",
         )
         .execute(pool)
         .await
@@ -229,17 +236,49 @@ impl DataLake {
                 address TEXT NOT NULL,
                 password TEXT NOT NULL,
                 status TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            )"
+                created_at INTEGER NOT NULL,
+                access_token TEXT,
+                refresh_token TEXT,
+                session_token TEXT,
+                device_id TEXT,
+                workspace_id TEXT,
+                upload_status TEXT DEFAULT 'pending'
+            )",
         )
         .execute(pool)
         .await
         .expect("生成账号表初始化失败");
 
         // 尝试添加新字段，如果由于表已存在而缺少字段的话 (通过静默忽略错误来简单处理增量更新)
-        let _ = sqlx::query("ALTER TABLE emails ADD COLUMN extracted_link TEXT").execute(pool).await;
-        let _ = sqlx::query("ALTER TABLE emails ADD COLUMN extracted_text TEXT").execute(pool).await;
+        let _ = sqlx::query("ALTER TABLE emails ADD COLUMN extracted_link TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE emails ADD COLUMN extracted_text TEXT")
+            .execute(pool)
+            .await;
         let _ = sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN kind TEXT NOT NULL DEFAULT 'account_generate'").execute(pool).await;
+
+        // 生成账号表增量迁移：补充 Token 及分发字段
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN access_token TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN refresh_token TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN session_token TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN device_id TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN workspace_id TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query(
+            "ALTER TABLE generated_accounts ADD COLUMN upload_status TEXT DEFAULT 'pending'",
+        )
+        .execute(pool)
+        .await;
 
         // 创建索引加速查询 (特别是针对收件地址的实时过滤)
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_to_addr ON emails (to_addr)")
@@ -270,12 +309,12 @@ impl DataLake {
 
     /// 插入一条新解析的原始邮件
     pub async fn record_email(
-        &self, 
-        id: &str, 
-        from: &str, 
-        to: &str, 
-        subject: &str, 
-        text: &str, 
+        &self,
+        id: &str,
+        from: &str,
+        to: &str,
+        subject: &str,
+        text: &str,
         html: &str,
         extracted_code: Option<&str>,
         extracted_link: Option<&str>,
@@ -298,13 +337,17 @@ impl DataLake {
         .bind(extracted_text)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
-    
     /// 获取最新的邮件列表（支持限制条数）
-    pub async fn get_emails(&self, limit: i64, query: Option<&str>, archived: Option<bool>) -> Result<Vec<EmailRecord>, sqlx::Error> {
+    pub async fn get_emails(
+        &self,
+        limit: i64,
+        query: Option<&str>,
+        archived: Option<bool>,
+    ) -> Result<Vec<EmailRecord>, sqlx::Error> {
         let normalized_limit = limit.clamp(1, 500);
         let archived_filter = archived;
 
@@ -387,7 +430,13 @@ impl DataLake {
     }
 
     /// 分页获取邮件列表与总数
-    pub async fn get_emails_page(&self, page: i64, page_size: i64, query: Option<&str>, archived: Option<bool>) -> Result<EmailPage, sqlx::Error> {
+    pub async fn get_emails_page(
+        &self,
+        page: i64,
+        page_size: i64,
+        query: Option<&str>,
+        archived: Option<bool>,
+    ) -> Result<EmailPage, sqlx::Error> {
         let normalized_page = page.max(1);
         let normalized_page_size = page_size.clamp(1, 200);
         let offset = (normalized_page - 1) * normalized_page_size;
@@ -544,7 +593,10 @@ impl DataLake {
     }
 
     /// 获取邮件详情
-    pub async fn get_email_detail(&self, id: &str) -> Result<Option<EmailDetailRecord>, sqlx::Error> {
+    pub async fn get_email_detail(
+        &self,
+        id: &str,
+    ) -> Result<Option<EmailDetailRecord>, sqlx::Error> {
         let record = sqlx::query_as::<_, EmailDetailRecord>(
             "SELECT id, created_at, from_addr, to_addr, subject, body_text, body_html, extracted_code, extracted_link, extracted_text, is_archived
              FROM emails
@@ -580,7 +632,11 @@ impl DataLake {
     }
 
     /// 批量归档或取消归档邮件
-    pub async fn set_emails_archived(&self, ids: &[String], archived: bool) -> Result<u64, sqlx::Error> {
+    pub async fn set_emails_archived(
+        &self,
+        ids: &[String],
+        archived: bool,
+    ) -> Result<u64, sqlx::Error> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -646,7 +702,7 @@ impl DataLake {
             .bind(threshold)
             .execute(&self.pool)
             .await?;
-        
+
         Ok(result.rows_affected())
     }
 
@@ -655,11 +711,14 @@ impl DataLake {
         let rows = sqlx::query("SELECT url, event_filter FROM webhooks WHERE is_active = 1")
             .fetch_all(&self.pool)
             .await?;
-        
-        Ok(rows.into_iter().map(|r: sqlx::sqlite::SqliteRow| {
-            use sqlx::Row;
-            (r.get("url"), r.get("event_filter"))
-        }).collect())
+
+        Ok(rows
+            .into_iter()
+            .map(|r: sqlx::sqlite::SqliteRow| {
+                use sqlx::Row;
+                (r.get("url"), r.get("event_filter"))
+            })
+            .collect())
     }
 
     /// 创建工作流执行记录
@@ -697,7 +756,7 @@ impl DataLake {
         sqlx::query(
             "UPDATE workflow_runs
              SET status = ?, message = ?, finished_at = ?
-             WHERE id = ?"
+             WHERE id = ?",
         )
         .bind(status)
         .bind(message)
@@ -721,7 +780,9 @@ impl DataLake {
         let normalized_page = page.max(1);
         let normalized_page_size = page_size.clamp(1, 100);
         let offset = (normalized_page - 1) * normalized_page_size;
-        let status_filter = status.filter(|value| !value.trim().is_empty()).map(str::trim);
+        let status_filter = status
+            .filter(|value| !value.trim().is_empty())
+            .map(str::trim);
         let workflow_filter = workflow_id
             .filter(|value| !value.trim().is_empty())
             .map(|value| value.trim().to_lowercase());
@@ -832,11 +893,13 @@ impl DataLake {
     }
 
     /// 列出全部工作流定义
-    pub async fn list_workflow_definitions(&self) -> Result<Vec<WorkflowDefinitionRecord>, sqlx::Error> {
+    pub async fn list_workflow_definitions(
+        &self,
+    ) -> Result<Vec<WorkflowDefinitionRecord>, sqlx::Error> {
         let records = sqlx::query_as::<_, WorkflowDefinitionRecord>(
             "SELECT id, kind, title, summary, status, parameters_json, created_at, updated_at
              FROM workflow_definitions
-             ORDER BY updated_at DESC, created_at DESC"
+             ORDER BY updated_at DESC, created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -900,7 +963,7 @@ impl DataLake {
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT INTO workflow_run_steps (id, run_id, step_index, level, message, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(run_id)
@@ -921,12 +984,13 @@ impl DataLake {
         address: &str,
         password: &str,
         status: &str,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<String, sqlx::Error> {
+        let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO generated_accounts (id, run_id, address, password, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)"
+            "INSERT INTO generated_accounts (id, run_id, address, password, status, created_at, upload_status)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending')"
         )
-        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&id)
         .bind(run_id)
         .bind(address)
         .bind(password)
@@ -935,17 +999,64 @@ impl DataLake {
         .execute(&self.pool)
         .await?;
 
+        Ok(id)
+    }
+
+    /// 更新账号的 Token 信息（注册第二阶段产物）
+    pub async fn update_account_tokens(
+        &self,
+        account_id: &str,
+        access_token: Option<&str>,
+        refresh_token: Option<&str>,
+        session_token: Option<&str>,
+        device_id: Option<&str>,
+        workspace_id: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE generated_accounts
+             SET access_token = ?, refresh_token = ?, session_token = ?,
+                 device_id = ?, workspace_id = ?
+             WHERE id = ?",
+        )
+        .bind(access_token)
+        .bind(refresh_token)
+        .bind(session_token)
+        .bind(device_id)
+        .bind(workspace_id)
+        .bind(account_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// 更新账号的上传分发状态
+    pub async fn update_account_upload_status(
+        &self,
+        account_id: &str,
+        upload_status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE generated_accounts SET upload_status = ? WHERE id = ?")
+            .bind(upload_status)
+            .bind(account_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     /// 获取某次运行生成的账号产物
-    pub async fn list_generated_accounts(&self, run_id: &str, limit: i64) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
+    pub async fn list_generated_accounts(
+        &self,
+        run_id: &str,
+        limit: i64,
+    ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
         let records = sqlx::query_as::<_, GeneratedAccountRecord>(
-            "SELECT id, run_id, address, password, status, created_at
+            "SELECT id, run_id, address, password, status, created_at,
+                    access_token, refresh_token, session_token,
+                    device_id, workspace_id, upload_status
              FROM generated_accounts
              WHERE run_id = ?
              ORDER BY created_at DESC
-             LIMIT ?"
+             LIMIT ?",
         )
         .bind(run_id)
         .bind(limit.clamp(1, 500))
@@ -955,8 +1066,57 @@ impl DataLake {
         Ok(records)
     }
 
+    /// 获取全局账号列表（支持分页）
+    pub async fn list_all_accounts(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
+        let records = sqlx::query_as::<_, GeneratedAccountRecord>(
+            "SELECT id, run_id, address, password, status, created_at,
+                    access_token, refresh_token, session_token,
+                    device_id, workspace_id, upload_status
+             FROM generated_accounts
+             ORDER BY created_at DESC
+             LIMIT ? OFFSET ?",
+        )
+        .bind(limit.clamp(1, 500))
+        .bind(offset.max(0))
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
+    /// 内部 OTP 轮询：根据收件地址查询最近的验证码
+    pub async fn poll_otp_by_email(
+        &self,
+        email: &str,
+        since_ts: i64,
+    ) -> Result<Option<String>, sqlx::Error> {
+        use sqlx::Row;
+
+        let row = sqlx::query(
+            "SELECT extracted_code FROM emails
+             WHERE to_addr = ? AND extracted_code IS NOT NULL AND extracted_code != ''
+               AND created_at >= ?
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .bind(email)
+        .bind(since_ts)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get("extracted_code")))
+    }
+
     /// 获取某次工作流的步骤详情
-    pub async fn list_workflow_steps(&self, run_id: &str, limit: i64) -> Result<Vec<WorkflowStepRecord>, sqlx::Error> {
+    pub async fn list_workflow_steps(
+        &self,
+        run_id: &str,
+        limit: i64,
+    ) -> Result<Vec<WorkflowStepRecord>, sqlx::Error> {
         let records = sqlx::query_as::<_, WorkflowStepRecord>(
             "SELECT 
                 s.id, s.run_id, s.step_index, s.level, s.message, s.created_at,
@@ -965,7 +1125,7 @@ impl DataLake {
              JOIN workflow_runs r ON s.run_id = r.id
              WHERE s.run_id = ?
              ORDER BY s.step_index ASC, s.created_at ASC
-             LIMIT ?"
+             LIMIT ?",
         )
         .bind(run_id)
         .bind(limit)
@@ -1055,7 +1215,13 @@ mod tests {
     fn temp_db_url(name: &str) -> (String, std::path::PathBuf) {
         let mut path = std::env::temp_dir();
         path.push(format!("phantomdrop_{name}_{}.db", uuid::Uuid::new_v4()));
-        (format!("sqlite://{}?mode=rwc", path.to_string_lossy().replace('\\', "/")), path)
+        (
+            format!(
+                "sqlite://{}?mode=rwc",
+                path.to_string_lossy().replace('\\', "/")
+            ),
+            path,
+        )
     }
 
     async fn new_test_lake(name: &str) -> (Arc<DataLake>, std::path::PathBuf) {

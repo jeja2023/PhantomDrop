@@ -2,8 +2,9 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 /**
- * 幻影中台 - AI 智能邮件解析器 (模拟形态)
+ * 幻影中台 - AI 智能邮件解析器
  * 职责：从复杂的 HTML/文本邮件中精准提取验证码、链接或操作指令
+ * 增强：OpenAI 注册邮件的精准 OTP 提取能力
  */
 
 // 预热正则表达式，加速提取
@@ -17,9 +18,12 @@ static KEYWORD_ALNUM_CODE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("验证码关键字字母数字正则初始化失败")
 });
 
-static FALLBACK_CODE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b([0-9]{4,8})\b")
-        .expect("验证码兜底正则初始化失败")
+static FALLBACK_CODE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b([0-9]{4,8})\b").expect("验证码兜底正则初始化失败"));
+
+// OpenAI 专用：精准匹配独立的 6 位数字验证码
+static OPENAI_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?<![0-9])([0-9]{6})(?![0-9])").expect("OpenAI OTP 正则初始化失败")
 });
 
 static LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -28,8 +32,7 @@ static LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static RAW_LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)((?:https?://|www\.)[^\s"'<>]+)"#)
-        .expect("链接兜底正则初始化失败")
+    Regex::new(r#"(?i)((?:https?://|www\.)[^\s"'<>]+)"#).expect("链接兜底正则初始化失败")
 });
 
 static HTML_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -37,9 +40,8 @@ static HTML_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("HTML 标签正则初始化失败")
 });
 
-static WHITESPACE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\s+").expect("空白字符正则初始化失败")
-});
+static WHITESPACE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s+").expect("空白字符正则初始化失败"));
 
 pub struct ParsedContent {
     pub code: Option<String>,
@@ -74,35 +76,41 @@ impl NeuralParser {
         };
         let merged_text = Self::merge_sources(text, &normalized_html);
 
-        let code = KEYWORD_NUMERIC_CODE_REGEX.captures(&merged_text)
+        let code = KEYWORD_NUMERIC_CODE_REGEX
+            .captures(&merged_text)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
             .or_else(|| {
-                KEYWORD_ALNUM_CODE_REGEX.captures(&merged_text)
+                KEYWORD_ALNUM_CODE_REGEX
+                    .captures(&merged_text)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
             })
             .or_else(|| {
-                FALLBACK_CODE_REGEX.captures(&merged_text)
+                FALLBACK_CODE_REGEX
+                    .captures(&merged_text)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
             });
-            
-        let link = LINK_REGEX.captures(&merged_text)
+
+        let link = LINK_REGEX
+            .captures(&merged_text)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
             .or_else(|| {
-                (depth == ParseDepth::FullDeepScan).then_some(())
+                (depth == ParseDepth::FullDeepScan)
+                    .then_some(())
                     .and_then(|_| RAW_LINK_REGEX.captures(html))
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
             })
             .or_else(|| {
-                RAW_LINK_REGEX.captures(&merged_text)
+                RAW_LINK_REGEX
+                    .captures(&merged_text)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
             });
-            
+
         // 示例定制文案提取（如果是特定的业务邮件结构可以进一步增强）
         let custom_text = if merged_text.contains("重要通知") {
             Some("发现高优级别通知".to_string())
@@ -142,7 +150,28 @@ impl NeuralParser {
             .replace("&quot;", "\"")
             .replace("&#39;", "'");
 
-        WHITESPACE_REGEX.replace_all(decoded.trim(), " ").to_string()
+        WHITESPACE_REGEX
+            .replace_all(decoded.trim(), " ")
+            .to_string()
+    }
+
+    /// 判断发件人是否来自 OpenAI
+    pub fn is_openai_sender(from: &str) -> bool {
+        let lower = from.to_lowercase();
+        lower.contains("@openai.com")
+            || lower.contains("@email.openai.com")
+            || lower.contains("noreply@tm.openai.com")
+    }
+
+    /// OpenAI 专用 OTP 提取：仅从 OpenAI 发件的邮件中精准提取 6 位验证码
+    pub fn extract_openai_otp(text: &str, html: &str) -> Option<String> {
+        let normalized_html = Self::html_to_text(html);
+        let merged = Self::merge_sources(text, &normalized_html);
+
+        OPENAI_OTP_REGEX
+            .captures(&merged)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().to_string())
     }
 }
 
@@ -187,7 +216,10 @@ mod tests {
     fn extracts_link_from_html() {
         let html = r#"<a href="https://example.com/verify?token=abc">点击验证</a>"#;
         let parsed = NeuralParser::parse_all("", html, ParseDepth::FullDeepScan);
-        assert_eq!(parsed.link.as_deref(), Some("https://example.com/verify?token=abc"));
+        assert_eq!(
+            parsed.link.as_deref(),
+            Some("https://example.com/verify?token=abc")
+        );
     }
 
     #[test]

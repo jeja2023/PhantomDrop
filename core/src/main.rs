@@ -1,23 +1,31 @@
-mod db;
 mod cloudflare_automation;
+mod db;
+mod openai;
 mod parser;
+mod register;
 mod stream;
-mod workflow;
 mod tunnel;
+mod uploader;
+mod workflow;
 
-use std::sync::Arc;
-use std::env;
-use axum::{Router, response::{Html, IntoResponse}, Json, routing::{delete, get, post}, http::{HeaderMap, StatusCode, header::CONTENT_TYPE}};
-use axum::extract::{Path, Query};
-use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir;
-use crate::db::DataLake;
 use crate::cloudflare_automation::{CloudflareAutomationManager, CloudflareAutomationRunPayload};
+use crate::db::DataLake;
 use crate::parser::{NeuralParser, ParseDepth};
 use crate::stream::{StreamHub, StreamPayload};
+use axum::extract::{Path, Query};
+use axum::{
+    Json, Router,
+    http::{HeaderMap, StatusCode, header::CONTENT_TYPE},
+    response::{Html, IntoResponse},
+    routing::{delete, get, post},
+};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::collections::HashMap;
+use std::env;
+use std::sync::Arc;
+use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
+use uuid::Uuid;
 
 /**
  * 幻影中台 (PhantomDrop-Hub) - 核心中枢
@@ -145,19 +153,57 @@ async fn console_script() -> impl IntoResponse {
 
 fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
     SettingsPayload {
-        webhook_url: map.get("webhook_url").cloned().filter(|value| !value.is_empty()),
-        update_rate: map.get("update_rate").and_then(|value| value.parse::<u64>().ok()),
-        auth_secret: map.get("auth_secret").cloned().filter(|value| !value.is_empty()),
-        decode_depth: map.get("decode_depth").cloned().filter(|value| !value.is_empty()),
-        public_hub_url: map.get("public_hub_url").cloned().filter(|value| !value.is_empty()),
-        account_domain: map.get("account_domain").cloned().filter(|value| !value.is_empty()),
-        cloudflare_default_mode: map.get("cloudflare_default_mode").cloned().filter(|value| !value.is_empty()),
-        cloudflare_public_url: map.get("cloudflare_public_url").cloned().filter(|value| !value.is_empty()),
-        cloudflare_route_local_part: map.get("cloudflare_route_local_part").cloned().filter(|value| !value.is_empty()),
-        cloudflare_zone_domain: map.get("cloudflare_zone_domain").cloned().filter(|value| !value.is_empty()),
-        cloudflare_api_token: map.get("cloudflare_api_token").cloned().filter(|value| !value.is_empty()),
-        cloudflare_zone_id: map.get("cloudflare_zone_id").cloned().filter(|value| !value.is_empty()),
-        cloudflare_account_id: map.get("cloudflare_account_id").cloned().filter(|value| !value.is_empty()),
+        webhook_url: map
+            .get("webhook_url")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        update_rate: map
+            .get("update_rate")
+            .and_then(|value| value.parse::<u64>().ok()),
+        auth_secret: map
+            .get("auth_secret")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        decode_depth: map
+            .get("decode_depth")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        public_hub_url: map
+            .get("public_hub_url")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        account_domain: map
+            .get("account_domain")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_default_mode: map
+            .get("cloudflare_default_mode")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_public_url: map
+            .get("cloudflare_public_url")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_route_local_part: map
+            .get("cloudflare_route_local_part")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_zone_domain: map
+            .get("cloudflare_zone_domain")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_api_token: map
+            .get("cloudflare_api_token")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_zone_id: map
+            .get("cloudflare_zone_id")
+            .cloned()
+            .filter(|value| !value.is_empty()),
+        cloudflare_account_id: map
+            .get("cloudflare_account_id")
+            .cloned()
+            .filter(|value| !value.is_empty()),
     }
 }
 
@@ -195,7 +241,7 @@ async fn main() {
     // 3. 初始化自动化工作流引擎
     let workflow_engine = Arc::new(workflow::WorkflowEngine::new(
         Arc::clone(&stream_hub),
-        Arc::clone(&data_lake)
+        Arc::clone(&data_lake),
     ));
     workflow_engine.ensure_builtin_definitions().await;
 
@@ -588,6 +634,99 @@ async fn main() {
             }
         }))
         .route("/stream", get(stream::sse_handler))
+        .route("/api/otp/poll", get({
+            let dl = Arc::clone(&data_lake);
+            move |Query(query): Query<HashMap<String, String>>| {
+                let dl = dl.clone();
+                async move {
+                    let email = query.get("email").cloned().unwrap_or_default();
+                    let since = query.get("since")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(0);
+
+                    if email.trim().is_empty() {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({"status": "error", "message": "缺少 email 参数"}))
+                        ).into_response();
+                    }
+
+                    match dl.poll_otp_by_email(&email, since).await {
+                        Ok(Some(code)) => Json(serde_json::json!({
+                            "status": "found",
+                            "code": code,
+                            "email": email,
+                        })).into_response(),
+                        Ok(None) => Json(serde_json::json!({
+                            "status": "pending",
+                            "email": email,
+                        })).into_response(),
+                        Err(e) => {
+                            eprintln!("OTP 轮询失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "OTP 轮询失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts", get({
+            let dl = Arc::clone(&data_lake);
+            move |Query(query): Query<HashMap<String, String>>| {
+                let dl = dl.clone();
+                async move {
+                    let limit = query.get("limit")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(50);
+                    let offset = query.get("offset")
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(0);
+
+                    match dl.list_all_accounts(limit, offset).await {
+                        Ok(accounts) => Json(serde_json::json!({
+                            "items": accounts,
+                            "limit": limit,
+                            "offset": offset,
+                        })).into_response(),
+                        Err(e) => {
+                            eprintln!("读取全局账号列表失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "读取全局账号列表失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts/:id/tokens", post({
+            let dl = Arc::clone(&data_lake);
+            move |Path(id): Path<String>, Json(payload): Json<HashMap<String, String>>| {
+                let dl = dl.clone();
+                async move {
+                    let access_token = payload.get("access_token").map(|s| s.as_str());
+                    let refresh_token = payload.get("refresh_token").map(|s| s.as_str());
+                    let session_token = payload.get("session_token").map(|s| s.as_str());
+                    let device_id = payload.get("device_id").map(|s| s.as_str());
+                    let workspace_id = payload.get("workspace_id").map(|s| s.as_str());
+
+                    match dl.update_account_tokens(
+                        &id, access_token, refresh_token, session_token, device_id, workspace_id
+                    ).await {
+                        Ok(_) => Json(serde_json::json!({"status": "success"})).into_response(),
+                        Err(e) => {
+                            eprintln!("更新账号 Token 失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "更新账号 Token 失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
         .route("/api/workflows/trigger", post({
             let engine = Arc::clone(&workflow_engine);
             move |Json(payload): Json<WorkflowTrigger>| {

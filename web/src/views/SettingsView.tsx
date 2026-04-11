@@ -159,8 +159,8 @@ export default function SettingsView() {
 
       <div className="flex items-center justify-between gap-4 border-b border-slate-100/60 pb-2">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-xl font-black tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors">系统设置</h1>
-          <span className="text-[9px] font-black tracking-widest text-slate-400 font-mono opacity-60">全局配置</span>
+          <h1 className="text-xl font-black tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors"></h1>
+          <span className="text-[9px] font-black tracking-widest text-slate-400 font-mono opacity-60"></span>
         </div>
         <div className="flex items-center gap-2">
           {automationStatus?.running ? <div className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse mr-1"></div> : null}

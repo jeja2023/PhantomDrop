@@ -1,7 +1,7 @@
 export type LogLevel = 'info' | 'warn' | 'success' | 'error'
 export type LogSource = 'system_log' | 'workflow_step' | 'ui'
 
-export type AppTab = 'dashboard' | 'emails' | 'logs' | 'tunnel' | 'auto' | 'config'
+export type AppTab = 'dashboard' | 'emails' | 'logs' | 'tunnel' | 'auto' | 'config' | 'register'
 
 export interface AppLog {
   id: string
@@ -96,8 +96,8 @@ export interface CloudflareAutomationStatus {
 }
 
 export type WorkflowStatus = 'ready' | 'active' | 'idle'
-export type WorkflowRunStatus = 'running' | 'success' | 'warn'
-export type WorkflowKind = 'account_generate' | 'data_cleanup' | 'status_report' | 'environment_check'
+export type WorkflowRunStatus = 'running' | 'success' | 'warn' | 'error'
+export type WorkflowKind = 'account_generate' | 'data_cleanup' | 'status_report' | 'environment_check' | 'openai_register'
 
 export interface WorkflowDefinition {
   id: string
@@ -117,6 +117,10 @@ export interface WorkflowParameters {
   require_env_secret_match?: boolean
   require_public_hub_url?: boolean
   require_webhook?: boolean
+  proxy_url?: string
+  captcha_key?: string
+  cpa_url?: string
+  cpa_key?: string
 }
 
 export interface WorkflowRunRecord {
@@ -166,6 +170,12 @@ export interface GeneratedAccountRecord {
   password: string
   status: string
   created_at: number
+  access_token?: string | null
+  refresh_token?: string | null
+  session_token?: string | null
+  device_id?: string | null
+  workspace_id?: string | null
+  upload_status?: string | null
 }
 
 export interface EmailPageResponse {

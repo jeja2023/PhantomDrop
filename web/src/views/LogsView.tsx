@@ -28,9 +28,9 @@ export default function LogsView({ logs, stats, workflowRuns, workflowSteps }: L
   return (
     <div className="page-shell page-shell--full min-w-0 animate-in fade-in duration-700">
       <PageHeader
-        title="系统流实时监控"
-        kicker="系统流监控"
-        description="审计系统日志、工作流步骤流和最近运行摘要，定位运行期异常。"
+        title=""
+        kicker=""
+        description=""
         status={
           <>
             <StatusBadge label="内核状态" status="就绪" color="blue" />
@@ -164,20 +164,23 @@ function RuntimeMetric({ icon, label, value }: { icon: ReactNode; label: string;
   )
 }
 
-function StepStateBadge({ level }: { level: 'running' | 'success' | 'warn' | 'info' }) {
+function StepStateBadge({ level }: { level: 'running' | 'success' | 'warn' | 'info' | 'error' }) {
   const tone =
     level === 'success'
       ? 'bg-emerald-500/10 text-emerald-600'
       : level === 'warn'
         ? 'bg-amber-500/10 text-amber-600'
-        : level === 'info'
-          ? 'bg-slate-200 text-slate-600'
-          : 'bg-blue-500/10 text-blue-600'
+        : level === 'error'
+          ? 'bg-rose-500/10 text-rose-600'
+          : level === 'info'
+            ? 'bg-slate-200 text-slate-600'
+            : 'bg-blue-500/10 text-blue-600'
 
   const labelMap = {
     running: '运行中',
     success: '成功',
     warn: '警告',
+    error: '错误',
     info: '信息',
   } as const
 

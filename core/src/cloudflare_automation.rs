@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -54,12 +54,18 @@ impl CloudflareAutomationManager {
     }
 
     pub fn status(&self) -> CloudflareAutomationStatus {
-        self.status.lock().expect("Failed to lock automation status").clone()
+        self.status
+            .lock()
+            .expect("Failed to lock automation status")
+            .clone()
     }
 
     pub fn start(&self, payload: CloudflareAutomationRunPayload) -> Result<(), String> {
         {
-            let mut status = self.status.lock().expect("Failed to lock automation status");
+            let mut status = self
+                .status
+                .lock()
+                .expect("Failed to lock automation status");
             if status.running {
                 return Err("Cloudflare automation is already running".to_string());
             }
@@ -97,7 +103,10 @@ impl CloudflareAutomationManager {
         match self.execute_script(payload).await {
             Ok(result) => {
                 let (logs, worker_url, email_address) = {
-                    let mut status = self.status.lock().expect("Failed to lock automation status");
+                    let mut status = self
+                        .status
+                        .lock()
+                        .expect("Failed to lock automation status");
                     status.running = false;
                     status.current_step = Some("自动化流程完成".to_string());
                     status.last_finished_at = Some(now_ts());
@@ -132,7 +141,10 @@ impl CloudflareAutomationManager {
             }
             Err(error) => {
                 let logs = {
-                    let mut status = self.status.lock().expect("Failed to lock automation status");
+                    let mut status = self
+                        .status
+                        .lock()
+                        .expect("Failed to lock automation status");
                     status.running = false;
                     status.current_step = Some("自动化流程失败".to_string());
                     status.last_finished_at = Some(now_ts());
@@ -141,7 +153,8 @@ impl CloudflareAutomationManager {
                     status.stdout = error.stdout;
                     status.stderr = error.stderr;
                     status.summary = read_summary_file(&self.project_root);
-                    status.logs = build_logs(&status.stdout, &status.stderr, status.error.as_deref());
+                    status.logs =
+                        build_logs(&status.stdout, &status.stderr, status.error.as_deref());
                     status.worker_url = summary_string(status.summary.as_ref(), "worker_url");
                     status.email_address = summary_string(status.summary.as_ref(), "email_address");
                     status.logs.clone()
@@ -177,11 +190,19 @@ impl CloudflareAutomationManager {
 
         command.arg("-File").arg(&script_path);
 
-        if let Some(mode) = payload.mode.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(mode) = payload
+            .mode
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             command.arg("-Mode").arg(mode.trim());
         }
 
-        if let Some(public_url) = payload.public_url.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(public_url) = payload
+            .public_url
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             command.arg("-PublicUrl").arg(public_url.trim());
         }
 
@@ -200,8 +221,16 @@ impl CloudflareAutomationManager {
                     "Automation command failed with exit code {}",
                     output.status.code().unwrap_or(-1)
                 ),
-                stdout: if stdout.trim().is_empty() { None } else { Some(stdout) },
-                stderr: if stderr.trim().is_empty() { None } else { Some(stderr) },
+                stdout: if stdout.trim().is_empty() {
+                    None
+                } else {
+                    Some(stdout)
+                },
+                stderr: if stderr.trim().is_empty() {
+                    None
+                } else {
+                    Some(stderr)
+                },
             });
         }
 
@@ -214,7 +243,10 @@ impl CloudflareAutomationManager {
 
     fn set_step(&self, message: &str) {
         {
-            let mut status = self.status.lock().expect("Failed to lock automation status");
+            let mut status = self
+                .status
+                .lock()
+                .expect("Failed to lock automation status");
             status.current_step = Some(message.to_string());
             status.logs.push(CloudflareAutomationLogEntry {
                 level: "step".to_string(),
@@ -245,7 +277,9 @@ fn shell_program() -> &'static str {
 }
 
 fn read_summary_file(project_root: &Path) -> Option<Value> {
-    let summary_path = project_root.join(".automation").join("cloudflare-mail-last-run.json");
+    let summary_path = project_root
+        .join(".automation")
+        .join("cloudflare-mail-last-run.json");
     let raw = std::fs::read_to_string(summary_path).ok()?;
     serde_json::from_str(&raw).ok()
 }
@@ -261,29 +295,34 @@ fn summary_string(summary: Option<&Value>, key: &str) -> Option<String> {
         .map(|value| value.to_string())
 }
 
-fn build_logs(stdout: &Option<String>, stderr: &Option<String>, error_message: Option<&str>) -> Vec<CloudflareAutomationLogEntry> {
+fn build_logs(
+    stdout: &Option<String>,
+    stderr: &Option<String>,
+    error_message: Option<&str>,
+) -> Vec<CloudflareAutomationLogEntry> {
     let mut logs = Vec::new();
 
-    let push_lines = |logs: &mut Vec<CloudflareAutomationLogEntry>, raw: &str, default_level: &str| {
-        for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
-            let (level, message) = if let Some(message) = line.strip_prefix("[STEP] ") {
-                ("step", message)
-            } else if let Some(message) = line.strip_prefix("[ OK ] ") {
-                ("success", message)
-            } else if let Some(message) = line.strip_prefix("[WARN] ") {
-                ("warn", message)
-            } else if let Some(message) = line.strip_prefix("[INFO] ") {
-                ("info", message)
-            } else {
-                (default_level, line)
-            };
+    let push_lines =
+        |logs: &mut Vec<CloudflareAutomationLogEntry>, raw: &str, default_level: &str| {
+            for line in raw.lines().map(str::trim).filter(|line| !line.is_empty()) {
+                let (level, message) = if let Some(message) = line.strip_prefix("[STEP] ") {
+                    ("step", message)
+                } else if let Some(message) = line.strip_prefix("[ OK ] ") {
+                    ("success", message)
+                } else if let Some(message) = line.strip_prefix("[WARN] ") {
+                    ("warn", message)
+                } else if let Some(message) = line.strip_prefix("[INFO] ") {
+                    ("info", message)
+                } else {
+                    (default_level, line)
+                };
 
-            logs.push(CloudflareAutomationLogEntry {
-                level: level.to_string(),
-                message: message.to_string(),
-            });
-        }
-    };
+                logs.push(CloudflareAutomationLogEntry {
+                    level: level.to_string(),
+                    message: message.to_string(),
+                });
+            }
+        };
 
     if let Some(stdout) = stdout {
         push_lines(&mut logs, stdout, "info");

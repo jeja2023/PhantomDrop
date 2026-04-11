@@ -273,9 +273,9 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
       </div>
 
       <PageHeader
-        title="邮件解析列表"
-        kicker="邮件解析数据库"
-        description="按后端真实分页接口检索邮件、查看详情、归档、删除，并导出当前筛选结果。"
+        title=""
+        kicker=""
+        description=""
         status={
           <div className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5">
             <div className="h-1.5 w-1.5 rounded-full bg-emerald-500"></div>

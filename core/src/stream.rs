@@ -1,11 +1,11 @@
 use axum::{
     extract::State,
-    response::{sse::{Event, Sse, KeepAlive}},
+    response::sse::{Event, KeepAlive, Sse},
 };
 use futures_util::stream::{self, Stream};
+use serde::Serialize;
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
-use serde::Serialize;
 
 /**
  * 幻影中台 - WebSocket/SSE 实时流通道 (Stream)
