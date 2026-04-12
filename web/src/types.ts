@@ -121,6 +121,7 @@ export interface WorkflowParameters {
   captcha_key?: string
   cpa_url?: string
   cpa_key?: string
+  concurrency?: number
 }
 
 export interface WorkflowRunRecord {

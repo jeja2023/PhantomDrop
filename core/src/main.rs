@@ -579,6 +579,28 @@ async fn main() {
                 }
             }
         }))
+        .route("/api/workflow-runs/:run_id/stop", post({
+            let dl = Arc::clone(&data_lake);
+            move |Path(run_id): Path<String>| {
+                let dl = dl.clone();
+                async move {
+                    match dl.stop_workflow_run(&run_id).await {
+                        Ok(count) if count > 0 => Json(serde_json::json!({"status": "success"})).into_response(),
+                        Ok(_) => (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({"status": "error", "message": "工作流未运行或未找到"}))
+                        ).into_response(),
+                        Err(e) => {
+                            eprintln!("停止工作流失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "停止工作流失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
         .route("/api/workflow-runs/:run_id/accounts", get({
             let dl = Arc::clone(&data_lake);
             move |Path(run_id): Path<String>| {

@@ -20,15 +20,27 @@ pub async fn request_sentinel_token(
     device_id: &str,
 ) -> Result<SentinelToken, String> {
     let payload = serde_json::json!({
-        "p": "gAAAAAC",
-        "device_id": device_id,
+        // p 参数是 Fernet 加密的数据，gAAAAAC 是错误占位符，通常需要从真实浏览器获取
+        // 这里更新为一个格式正确但较长的占位令牌，并增加 oai-device-id 字段匹配
+        "p": "gAAAAABmOnOnf-AAVvVf-AAvVf-AAvVf-AAvVf-AAvVf-AAvVf-AAvVf-AAvVf-AAvVf-AAvVf-AAvVf-A",
+        "oai-device-id": device_id,
     });
 
     let response = client
         .post(constants::SENTINEL_ENDPOINT)
+        .header("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+        .header("sec-ch-ua-mobile", "?0")
+        .header("sec-ch-ua-platform", "\"Windows\"")
+        .header("oai-device-id", device_id)
+        .header("oai-language", "en-US")
         .header("user-agent", constants::DEFAULT_USER_AGENT)
-        .header("accept", "application/json")
+        .header("accept", "*/*")
         .header("content-type", "application/json")
+        .header("origin", "https://chatgpt.com")
+        .header("referer", "https://chatgpt.com/")
+        .header("sec-fetch-dest", "empty")
+        .header("sec-fetch-mode", "cors")
+        .header("sec-fetch-site", "same-site")
         .json(&payload)
         .send()
         .await

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, User } from 'lucide-react'
+import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, User, Square } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { fetchJson, postJson } from '../lib/api'
 import PageHeader from '../ui/PageHeader'
@@ -25,15 +25,17 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
 
   // OpenAI 专属配置状态 (模拟)
   const [openaiProxy, setOpenaiProxy] = useState('')
-  const [openaiThreads, setOpenaiThreads] = useState(1)
+  const [concurrency, setConcurrency] = useState(1)
+  const [batchSize, setBatchSize] = useState(1)
 
   const loadWorkflows = async () => {
     try {
       const data = await fetchJson<WorkflowDefinition[]>('/api/workflows')
-      const openaiDef = data.find(w => w.id === 'openai_register_default')
+      const openaiDef = data.find((w) => w.id === 'openai_register_default')
       if (openaiDef && openaiDef.parameters) {
         setOpenaiProxy(openaiDef.parameters.proxy_url || '')
-        setOpenaiThreads(openaiDef.parameters.batch_size || 1)
+        setConcurrency(openaiDef.parameters.concurrency || 1)
+        setBatchSize(openaiDef.parameters.batch_size || 1)
       }
     } catch (error) {
       console.error('Failed to load workflows:', error)
@@ -43,25 +45,25 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const loadRuns = async (preserveSelection = true) => {
     try {
       const data = await fetchJson<WorkflowRunPageResponse>(`/api/workflow-runs?page=1&page_size=20&status=running`)
-      const registerRuns = data.items.filter(run => run.workflow_title.includes('注册') || run.workflow_id.includes('register'))
-      
+      const registerRuns = data.items.filter((run) => run.workflow_title.includes('注册') || run.workflow_id.includes('register'))
+
       let finalRuns = [...registerRuns]
 
-      if (preserveSelection && selectedRunId && !registerRuns.some(r => r.id === selectedRunId)) {
+      if (preserveSelection && selectedRunId && !registerRuns.some((r) => r.id === selectedRunId)) {
         const allData = await fetchJson<WorkflowRunPageResponse>(`/api/workflow-runs?page=1&page_size=10`)
-        allData.items.forEach(item => {
-           if (!finalRuns.some(c => c.id === item.id) && (item.workflow_title.includes('注册') || item.workflow_id.includes('register'))) {
-             finalRuns.push(item)
-           }
+        allData.items.forEach((item) => {
+          if (!finalRuns.some((c) => c.id === item.id) && (item.workflow_title.includes('注册') || item.workflow_id.includes('register'))) {
+            finalRuns.push(item)
+          }
         })
         finalRuns = finalRuns.slice(0, 20)
       }
 
-      setRuns(prev => {
+      setRuns((prev) => {
         if (JSON.stringify(prev) === JSON.stringify(finalRuns)) return prev
         return finalRuns
       })
-      
+
       if (!selectedRunId && registerRuns.length > 0) {
         setSelectedRunId(registerRuns[0].id)
       }
@@ -74,7 +76,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     if (!silent) setIsStepsLoading(true)
     try {
       const data = await fetchJson<WorkflowStepRecord[]>(`/api/workflow-runs/${runId}/steps`)
-      setSteps(prev => {
+      setSteps((prev) => {
         if (JSON.stringify(prev) === JSON.stringify(data)) return prev
         return data
       })
@@ -98,66 +100,86 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   useEffect(() => {
     if (!selectedRunId) return
     void loadSteps(selectedRunId)
-    
+
     const interval = setInterval(() => {
       void loadSteps(selectedRunId, true)
     }, refreshIntervalMs)
     return () => clearInterval(interval)
   }, [selectedRunId, refreshIntervalMs])
 
-  const handleTrigger = async (workflowId: string) => {
-    setRunningId(workflowId)
-    // 立即清空当前日志和选中状态，实现“清屏”效果
-    setSelectedRunId(null)
-    setSteps([])
-    
+  const handleSaveConfig = async () => {
     try {
-      // 1. 先保存当前 UI 中的参数到后端定义
       const workflows = await fetchJson<WorkflowDefinition[]>('/api/workflows')
-      const currentDef = workflows.find(w => w.id === workflowId)
-      
+      const currentDef = workflows.find((w) => w.id === 'openai_register_default')
+
       if (currentDef) {
         const updatedParams = {
           ...currentDef.parameters,
-          proxy_url: openaiProxy,
-          batch_size: openaiThreads,
+          proxy_url: openaiProxy.trim(),
+          batch_size: batchSize,
+          concurrency: concurrency,
         }
-        
+
         await postJson<any, any>('/api/workflows/save', {
           id: currentDef.id,
           kind: 'openai_register',
           title: currentDef.title,
           summary: currentDef.summary,
           status: 'ready',
-          parameters_json: JSON.stringify(updatedParams)
+          parameters_json: JSON.stringify(updatedParams),
         })
+        setToastContent({ title: '配置已同步', desc: '参数已成功持久化。' })
+        setShowToast(true)
+        setTimeout(() => setShowToast(false), 2000)
       }
-
-      // 2. 下发触发指令
-      const res = await postJson<{ run_id: string }, { workflow_id: string }>('/api/workflows/trigger', { workflow_id: workflowId })
-      setToastContent({ title: '注册指令已下发', desc: '正在运行实盘注册逻辑...' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存失败'
+      setToastContent({ title: '保存失败', desc: message })
       setShowToast(true)
       setTimeout(() => setShowToast(false), 3000)
-      
-      // 3. 自动选中新生成的任务
+    }
+  }
+
+  const handleTrigger = async (workflowId: string) => {
+    setRunningId(workflowId)
+    setSelectedRunId(null)
+    setSteps([])
+
+    try {
+      await handleSaveConfig()
+
+      const res = await postJson<{ run_id: string }, { workflow_id: string }>('/api/workflows/trigger', { workflow_id: workflowId })
+      setToastContent({ title: '注册指令已下发', desc: `正在进行 ${batchSize} 个账号的注册流程...` })
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+
       if (res.run_id) {
         setSelectedRunId(res.run_id)
       }
-      
+
       void loadRuns(false)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '启动失败'
-      setToastContent({ title: '操作失败', desc: message })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 3000)
-    } finally {
+    } catch (error) {}
+    finally {
       setRunningId(null)
     }
   }
 
+  const handleStop = async (runId: string) => {
+    try {
+      await postJson<any, any>(`/api/workflow-runs/${runId}/stop`, {})
+      setToastContent({ title: '停止指令已发送', desc: '正在强制终止当前注册流水线...' })
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 2000)
+      void loadRuns(true)
+    } catch (error) {
+      console.error('Failed to stop run:', error)
+    }
+  }
+
+  const activeRun = runs.find(r => r.status === 'running')
+
   return (
     <div className="flex flex-col h-full min-w-0 space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
-      {/* Toast Notification */}
       <div className={`fixed right-10 top-20 z-[100] transform transition-all duration-500 ${showToast ? 'translate-y-0 opacity-100' : '-translate-y-12 pointer-events-none opacity-0'}`}>
         <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-white px-6 py-3 shadow-2xl shadow-blue-500/10">
           <CheckCircle2 className="text-blue-500" size={20} />
@@ -169,13 +191,8 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       </div>
 
       <div className="shrink-0">
-        <PageHeader
-          title=""
-          kicker=""
-          description=""
-        />
+        <PageHeader title="" kicker="" description="" />
 
-        {/* Sub Tabs */}
         <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit mt-2">
           <button
             onClick={() => setActivePlatform('openai')}
@@ -184,10 +201,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
             <User size={14} />
             OpenAI 注册
           </button>
-          <button
-            disabled
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-slate-400 cursor-not-allowed"
-          >
+          <button disabled className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-slate-400 cursor-not-allowed">
             <Globe size={14} />
             更多平台 (开发中)
           </button>
@@ -195,62 +209,106 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       </div>
 
       <div className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0 pb-4">
-        {/* Left Column: Configuration */}
         <div className="lg:col-span-5 flex flex-col gap-4 overflow-y-auto pr-2 scrollbar-thin">
           <section className="glass-panel shrink-0 rounded-3xl border border-slate-200 p-5 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-blue-600/10 flex items-center justify-center text-blue-600">
-                <Shield size={18} />
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-blue-600/10 flex items-center justify-center text-blue-600">
+                  <Shield size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">注册参数配置</h3>
+                  <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Configuration Profile</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-bold text-slate-900">注册参数配置</h3>
-                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Configuration Profile</p>
-              </div>
+              <button onClick={() => void handleSaveConfig()} className="phantom-btn phantom-btn--sm phantom-btn--secondary">
+                <CheckCircle2 size={12} />
+                保存配置
+              </button>
             </div>
 
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-700 ml-1">代理服务器 (Proxy URL)</label>
-                <input
-                  type="text"
-                  placeholder="http://user:pass@host:port"
-                  value={openaiProxy}
-                  onChange={e => setOpenaiProxy(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono outline-none focus:border-blue-500 transition-colors"
-                />
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[11px] font-bold text-slate-700">代理服务器 (Proxy URL)</label>
+                  {openaiProxy && (
+                    <button onClick={() => setOpenaiProxy('')} className="text-[10px] text-slate-400 hover:text-rose-500 transition-colors">
+                      清空输入
+                    </button>
+                  )}
+                </div>
+                <div className="relative group/input">
+                  <input
+                    type="text"
+                    placeholder="http://user:pass@host:port"
+                    value={openaiProxy}
+                    onChange={(e) => setOpenaiProxy(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono outline-none focus:border-blue-500 focus:bg-white transition-all shadow-inner"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-focus-within/input:opacity-100 transition-opacity">
+                    <Globe size={14} className="text-blue-500/50" />
+                  </div>
+                </div>
+                <p className="px-1 text-[9px] text-slate-400 italic">支持 http, https, socks5 协议。</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1">并发线程数</label>
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">注册总量</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    value={batchSize}
+                    onChange={(e) => setBatchSize(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">并发线程</label>
                   <select
-                    value={openaiThreads}
-                    onChange={e => setOpenaiThreads(Number(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors"
+                    value={concurrency}
+                    onChange={(e) => setConcurrency(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors"
                   >
-                    {[1, 2, 5, 10, 20].map(n => (
-                      <option key={n} value={n}>{n} 线程</option>
+                    {[1, 2, 5, 8, 10].map((n) => (
+                      <option key={n} value={n}>
+                        {n} 线程
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-bold text-slate-700 ml-1">注册行为</label>
-                  <select className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-blue-500 transition-colors">
-                    <option>仅创建账号</option>
-                    <option>创建后生成 API Key</option>
-                    <option>开启 Plus 订阅 (需外挂)</option>
+                  <select className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors">
+                    <option>仅创建</option>
+                    <option>创建+Key</option>
+                    <option>开启 Plus</option>
                   </select>
                 </div>
               </div>
+            </div>
 
+            <div className="flex gap-3">
               <button
                 onClick={() => handleTrigger('openai_register_default')}
-                disabled={!!runningId}
-                className="w-full phantom-btn phantom-btn--primary py-3 rounded-2xl font-bold flex items-center justify-center gap-2 group shadow-xl shadow-blue-600/20"
+                disabled={!!runningId || !!activeRun}
+                className={`flex-grow phantom-btn phantom-btn--primary py-3 rounded-2xl font-bold flex items-center justify-center gap-2 group shadow-xl ${!!runningId || !!activeRun ? 'opacity-50 cursor-not-allowed grayscale' : 'shadow-blue-600/20'}`}
               >
                 {runningId ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />}
-                {runningId ? '注册流程初始化中...' : '启动 OpenAI 自动化注册'}
+                {runningId ? '注册流程初始化中...' : activeRun ? '任务运行中' : '启动 OpenAI 自动化注册'}
               </button>
+              
+              {activeRun && (
+                <button
+                  onClick={() => handleStop(activeRun.id)}
+                  className="px-6 rounded-2xl bg-rose-50 border border-rose-100 text-rose-600 hover:bg-rose-100 transition-all flex items-center justify-center group"
+                  title="强制停止当前任务"
+                >
+                  <Square size={18} className="fill-rose-600 group-hover:scale-110 transition-transform" />
+                  <span className="ml-2 font-bold text-sm">停止</span>
+                </button>
+              )}
             </div>
           </section>
 

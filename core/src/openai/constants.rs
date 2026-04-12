@@ -6,15 +6,10 @@
 /// OpenAI 官方 OAuth Client ID
 pub const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-/// Auth0 认证端点基地址
-pub const AUTH0_BASE_URL: &str = "https://auth0.openai.com";
-
 /// OpenAI API 基地址
 pub const OPENAI_API_BASE: &str = "https://api.openai.com";
 
 /// ChatGPT 前端身份认证基地址
-pub const CHATGPT_AUTH_BASE: &str = "https://chatgpt.com/backend-api/accounts";
-
 /// Sentinel 令牌获取端点
 pub const SENTINEL_ENDPOINT: &str = "https://sentinel.openai.com/backend-api/sentinel/req";
 

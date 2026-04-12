@@ -768,6 +768,24 @@ impl DataLake {
         Ok(())
     }
 
+    /// 获取单个工作流运行的状态
+    pub async fn get_workflow_run_status(&self, id: &str) -> Result<String, sqlx::Error> {
+        let status: (String,) = sqlx::query_as("SELECT status FROM workflow_runs WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(status.0)
+    }
+
+    /// 标记工作流为停止/取消
+    pub async fn stop_workflow_run(&self, id: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("UPDATE workflow_runs SET status = 'cancelled', message = '用户手动终止' WHERE id = ? AND status = 'running'")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     /// 分页获取工作流执行记录
     pub async fn get_workflow_runs_page(
         &self,

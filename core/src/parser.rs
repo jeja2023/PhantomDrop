@@ -22,6 +22,7 @@ static FALLBACK_CODE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b([0-9]{4,8})\b").expect("验证码兜底正则初始化失败"));
 
 // OpenAI 专用：精准匹配独立的 6 位数字验证码
+#[allow(dead_code)]
 static OPENAI_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?<![0-9])([0-9]{6})(?![0-9])").expect("OpenAI OTP 正则初始化失败")
 });
@@ -156,6 +157,7 @@ impl NeuralParser {
     }
 
     /// 判断发件人是否来自 OpenAI
+    #[allow(dead_code)]
     pub fn is_openai_sender(from: &str) -> bool {
         let lower = from.to_lowercase();
         lower.contains("@openai.com")
@@ -164,6 +166,7 @@ impl NeuralParser {
     }
 
     /// OpenAI 专用 OTP 提取：仅从 OpenAI 发件的邮件中精准提取 6 位验证码
+    #[allow(dead_code)]
     pub fn extract_openai_otp(text: &str, html: &str) -> Option<String> {
         let normalized_html = Self::html_to_text(html);
         let merged = Self::merge_sources(text, &normalized_html);

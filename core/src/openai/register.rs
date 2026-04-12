@@ -1,6 +1,5 @@
 use crate::db::DataLake;
 use crate::openai::{constants, oauth, sentinel};
-use crate::stream::{StreamHub, StreamPayload};
 use serde_json::json;
 /**
  * OpenAI 两阶段注册状态机
@@ -8,7 +7,6 @@ use serde_json::json;
  * Phase B: 登录捕获 — 登录 → 捕获 Session → 获取 Access Token
  */
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// 单次注册任务的上下文
 pub struct RegisterContext {
@@ -17,6 +15,7 @@ pub struct RegisterContext {
     pub device_id: String,
     pub proxy_url: Option<String>,
     pub captcha_key: Option<String>,
+    #[allow(dead_code)]
     pub run_id: String,
     pub step_callback: Option<StepCallback>,
 }
@@ -110,7 +109,7 @@ pub async fn execute_registration(
         );
     }
     let start_time = std::time::Instant::now();
-    let pow_result = sentinel::solve_pow(&sentinel_result.token, sentinel_result.difficulty);
+    let _pow_result = sentinel::solve_pow(&sentinel_result.token, sentinel_result.difficulty);
     if let Some(ref cb) = context.step_callback {
         cb(
             "success",
@@ -338,7 +337,7 @@ pub async fn execute_registration(
     if let Some(ref cb) = context.step_callback {
         cb("info", "[Step 13] 提交明文凭证至验证网关...");
     }
-    let login_verify_res = client
+    let _login_verify_res = client
         .post(constants::OPENAI_API_BASE.to_owned() + "/api/accounts/password/verify") // 这里用 API_BASE 代替 Auth0 路由以防结构变更
         .json(&json!({
             "username": context.email,

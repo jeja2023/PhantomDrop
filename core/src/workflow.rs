@@ -56,6 +56,8 @@ pub struct WorkflowParameters {
     pub cpa_url: Option<String>,
     /// 账号分发专用：接收平台 API Key
     pub cpa_key: Option<String>,
+    /// 对并发执行任务的支持
+    pub concurrency: Option<usize>,
 }
 
 struct WorkflowRunContext {
@@ -731,6 +733,14 @@ impl WorkflowEngine {
         let mut fail_count = 0usize;
 
         for index in 0..batch_size {
+            // 实时检查是否已被用户手动停止
+            if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
+                if current_status == "cancelled" {
+                    Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
+                    return Ok("工作流已由用户取消".to_string());
+                }
+            }
+
             // 生成随机邮箱和密码
             let len = rand::thread_rng().gen_range(8..=12);
             let local_part: String = rand::thread_rng()
@@ -739,8 +749,11 @@ impl WorkflowEngine {
                 .map(|b| char::from(b).to_ascii_lowercase())
                 .collect();
             let email = format!("{}@{}", local_part, domain);
-            let suffix = Uuid::new_v4().simple().to_string();
-            let password = format!("Pd!{}_{}", Utc::now().timestamp() % 100000, &suffix[..6]);
+            let password: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(12)
+                .map(char::from)
+                .collect();
             let device_id = crate::openai::oauth::generate_device_id();
 
             Self::log_step(

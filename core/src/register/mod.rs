@@ -6,16 +6,19 @@ use std::sync::Arc;
  * 提供账号持久化、状态同步及多平台分发逻辑的抽象
  */
 
+#[allow(dead_code)]
 pub struct RegistrationManager {
     dl: Arc<DataLake>,
 }
 
 impl RegistrationManager {
+    #[allow(dead_code)]
     pub fn new(dl: Arc<DataLake>) -> Self {
         Self { dl }
     }
 
     /// 将注册成功的产物统一写入生成的账号表
+    #[allow(dead_code)]
     pub async fn persist_account(
         &self,
         run_id: &str,
@@ -31,6 +34,7 @@ impl RegistrationManager {
     }
 
     /// 标记注册任务的中间状态
+    #[allow(dead_code)]
     pub async fn update_registration_status(
         &self,
         _run_id: &str,
