@@ -5,18 +5,21 @@ services:
       dockerfile: Dockerfile
     container_name: phantom-drop-app
     restart: unless-stopped
+    # 使用 xvfb-run 提供虚拟显示环境，添加 -a 自动分配显示端口，确保日志实时可见
+    command: ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24", "/app/phantom-core"]
+    tty: true
+    stdin_open: true
     environment:
-      HUB_SECRET: ${HUB_SECRET:-local_dev_secret}
-      PHANTOM_DB_URL: ${PHANTOM_DB_URL:-sqlite:///app/data/phantom_core.db?mode=rwc}
-      # 可以在这里通过环境变量配置 Cloudflare 相关的 Token
-      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
-      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID}
+      - HUB_SECRET=${HUB_SECRET:-local_dev_secret}
+      - PHANTOM_DB_URL=${PHANTOM_DB_URL:-sqlite:///app/data/phantom_core.db?mode=rwc}
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID}
+      - RUST_BACKTRACE=1
     volumes:
       - ./data:/app/data
       - ./.automation:/app/.automation
     ports:
       - "9010:9010"
-
     logging:
       driver: "json-file"
       options:
