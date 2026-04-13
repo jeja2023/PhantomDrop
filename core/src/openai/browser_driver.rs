@@ -38,7 +38,16 @@ impl BrowserDriver {
             "--allow-running-insecure-content".to_string(),
             "--disable-gpu".to_string(), // 虚拟显示环境建议禁用 GPU
             "--hide-scrollbars".to_string(),
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36".to_string(),
+            "--mute-audio".to_string(),
+            "--disable-background-networking".to_string(),
+            "--disable-background-timer-throttling".to_string(),
+            "--disable-backgrounding-occluded-windows".to_string(),
+            "--disable-breakpad".to_string(),
+            "--disable-client-side-phishing-detection".to_string(),
+            "--disable-default-apps".to_string(),
+            "--disable-extensions".to_string(),
+            "--use-fake-ui-for-media-stream".to_string(),
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36".to_string(),
         ];
 
         if let Some(ref proxy) = self.context.proxy_url {
@@ -56,9 +65,48 @@ impl BrowserDriver {
         let browser = Browser::new(options).map_err(|e| format!("无法连接到 Chrome 实例: {}", e))?;
         let tab = browser.new_tab().map_err(|e| format!("打开标签页失败: {}", e))?;
 
-        // 注入脚本绕过 WebDriver 检测 (根据 1.0.21 版本协议规范)
+        // 注入增强型指纹伪装脚本 (极致风控过级)
+        let stealth_script = r#"
+            // 1. 隐藏 WebDriver
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+            // 2. 伪造 WebGL 指纹 (使用更真实的显卡信息)
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+                if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                return getParameter.apply(this, arguments);
+            };
+
+            // 3. 注入 Chrome Runtime 模拟 (无头模式通常缺失)
+            window.chrome = { runtime: {} };
+
+            // 4. 修复 Permissions 状态
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+            );
+
+            // 5. 伪造 Plugins, Languages 和 Timezone
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            
+            // 6. 随机化 Canvas 噪音 (轻微改动以混淆唯一的 Canvas ID)
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function(type) {
+                const res = originalToDataURL.apply(this, arguments);
+                return res; // 目前仅做钩子留存，可根据需要加盐
+            };
+
+            // 7. 伪造硬件并发数和设备内存 (避免默认的 0 或极端值)
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+        "#;
+
         let _ = tab.call_method(headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument {
-            source: "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})".to_string(),
+            source: stealth_script.to_string(),
             world_name: None,
             include_command_line_api: None,
             run_immediately: None,
@@ -90,6 +138,17 @@ impl BrowserDriver {
 
         if is_cf_page {
             take_shot("cloudflare_blocked", &tab);
+            let page_content = tab.evaluate("document.body.innerText", false)
+                .map(|r| r.value.and_then(|v| v.as_str()).unwrap_or(""))
+                .unwrap_or("");
+            
+            if page_content.contains("Access denied") || page_content.contains("Reference #") {
+                 if let Some(cb) = callback {
+                    cb("error", "🚫 OpenAI 拒绝了你的 IP 访问 (Access Denied)。建议更换高质量 Proxy。");
+                }
+                return Err("IP 被封锁 (Access Denied)".to_string());
+            }
+
             if let Some(cb) = callback {
                 cb("error", "🛡️ 遭遇 Cloudflare 强力拦截，无头模式暂无法自动过白，已存入截图 debug_cloudflare_blocked.png");
             }
