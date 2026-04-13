@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: phantom-drop-app
     restart: unless-stopped
-    # 使用 xvfb-run 提供虚拟显示环境，添加 -a 自动分配显示端口，确保日志实时可见
-    command: ["xvfb-run", "-a", "--server-args=-screen 0 1920x1080x24", "/app/phantom-core"]
+    # 针对低内存 VPS 优化：弃用 xvfb-run，直接运行后端程序
+    command: ["/app/phantom-core"]
     tty: true
     stdin_open: true
     environment:
