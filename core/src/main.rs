@@ -938,6 +938,22 @@ async fn main() {
                 }
             }
         }))
+        .route("/debug/:name", get(|axum::extract::Path(name): axum::extract::Path<String>| async move {
+            let path = std::path::Path::new("./data").join(name);
+            if !path.exists() || !path.is_file() {
+                return (axum::http::StatusCode::NOT_FOUND, "Screenshot not found").into_response();
+            }
+            
+            let content = match std::fs::read(&path) {
+                Ok(c) => c,
+                Err(_) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Read error").into_response(),
+            };
+
+            axum::response::Response::builder()
+                .header("Content-Type", "image/png")
+                .body(axum::body::Body::from(content))
+                .unwrap()
+        }))
         .fallback_service(
             ServeDir::new(web_dist)
                 .append_index_html_on_directories(true)
