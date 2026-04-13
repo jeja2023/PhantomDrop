@@ -97,7 +97,7 @@ export interface CloudflareAutomationStatus {
 
 export type WorkflowStatus = 'ready' | 'active' | 'idle'
 export type WorkflowRunStatus = 'running' | 'success' | 'warn' | 'error'
-export type WorkflowKind = 'account_generate' | 'data_cleanup' | 'status_report' | 'environment_check' | 'openai_register'
+export type WorkflowKind = 'account_generate' | 'data_cleanup' | 'status_report' | 'environment_check' | 'openai_register' | 'openai_register_browser'
 
 export interface WorkflowDefinition {
   id: string
@@ -125,6 +125,8 @@ export interface WorkflowParameters {
   account_type?: string
   full_name?: string
   age?: number
+  sms_key?: string
+  headless?: boolean
 }
 
 export interface WorkflowRunRecord {
