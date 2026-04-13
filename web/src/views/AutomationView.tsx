@@ -330,7 +330,8 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                       className="phantom-select"
                     >
                       <option value="account_generate">账户生成</option>
-                      <option value="openai_register">OpenAI 注册</option>
+                      <option value="openai_register">OpenAI 协议注册</option>
+                      <option value="openai_register_browser">OpenAI 浏览器模拟注册</option>
                       <option value="data_cleanup">数据清理</option>
                       <option value="status_report">状态报告</option>
                       <option value="environment_check">环境巡检</option>
@@ -567,6 +568,8 @@ function normalizeParametersForKind(kind: WorkflowKind, parameters: WorkflowPara
         captcha_key: parameters.captcha_key ?? '',
         cpa_url: parameters.cpa_url ?? '',
         cpa_key: parameters.cpa_key ?? '',
+        full_name: parameters.full_name ?? '',
+        age: parameters.age,
       }
     case 'data_cleanup':
       return { days_to_keep: parameters.days_to_keep ?? 7 }

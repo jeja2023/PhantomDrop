@@ -1,7 +1,7 @@
 export type LogLevel = 'info' | 'warn' | 'success' | 'error'
 export type LogSource = 'system_log' | 'workflow_step' | 'ui'
 
-export type AppTab = 'dashboard' | 'emails' | 'logs' | 'tunnel' | 'auto' | 'config' | 'register'
+export type AppTab = 'dashboard' | 'emails' | 'logs' | 'tunnel' | 'auto' | 'config' | 'register' | 'accounts'
 
 export interface AppLog {
   id: string
@@ -122,6 +122,9 @@ export interface WorkflowParameters {
   cpa_url?: string
   cpa_key?: string
   concurrency?: number
+  account_type?: string
+  full_name?: string
+  age?: number
 }
 
 export interface WorkflowRunRecord {
@@ -177,6 +180,7 @@ export interface GeneratedAccountRecord {
   device_id?: string | null
   workspace_id?: string | null
   upload_status?: string | null
+  account_type?: string | null
 }
 
 export interface EmailPageResponse {

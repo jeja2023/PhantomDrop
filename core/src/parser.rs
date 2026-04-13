@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 
 // 预热正则表达式，加速提取
 static KEYWORD_NUMERIC_CODE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:verification\s*code|code|otp|验证码)\s*(?::|is|为)?\s*([0-9]{4,8})\b")
+    Regex::new(r"(?i)(?:verification\s*code|code|otp|验证码)\s*(?::|is|为)?\s*([0-9]{3}\s*[0-9]{3}|[0-9]{4,8})\b")
         .expect("验证码关键字数字正则初始化失败")
 });
 
@@ -77,16 +77,25 @@ impl NeuralParser {
         };
         let merged_text = Self::merge_sources(text, &normalized_html);
 
+        // 优先尝试关键字匹配（带空格支持）
         let code = KEYWORD_NUMERIC_CODE_REGEX
             .captures(&merged_text)
             .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())
+            .map(|m| m.as_str().replace(" ", ""))
             .or_else(|| {
                 KEYWORD_ALNUM_CODE_REGEX
                     .captures(&merged_text)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
             })
+            // 针对 OpenAI 风格的独立 6 位验证码进行二次扫描
+            .or_else(|| {
+                OPENAI_OTP_REGEX
+                    .captures(&merged_text)
+                    .and_then(|caps| caps.get(1))
+                    .map(|m| m.as_str().to_string())
+            })
+            // 最后兜底通用正则
             .or_else(|| {
                 FALLBACK_CODE_REGEX
                     .captures(&merged_text)
@@ -98,18 +107,21 @@ impl NeuralParser {
             .captures(&merged_text)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
+            .filter(|l| !Self::is_asset_link(l))
             .or_else(|| {
                 (depth == ParseDepth::FullDeepScan)
                     .then_some(())
                     .and_then(|_| RAW_LINK_REGEX.captures(html))
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
+                    .filter(|l| !Self::is_asset_link(l))
             })
             .or_else(|| {
                 RAW_LINK_REGEX
                     .captures(&merged_text)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
+                    .filter(|l| !Self::is_asset_link(l))
             });
 
         // 示例定制文案提取（如果是特定的业务邮件结构可以进一步增强）
@@ -135,6 +147,22 @@ impl NeuralParser {
             (true, false) => html_text.to_string(),
             (true, true) => String::new(),
         }
+    }
+
+    fn is_asset_link(url: &str) -> bool {
+        let lower = url.to_lowercase();
+        lower.ends_with(".woff2")
+            || lower.ends_with(".woff")
+            || lower.ends_with(".ttf")
+            || lower.ends_with(".otf")
+            || lower.ends_with(".css")
+            || lower.ends_with(".js")
+            || lower.ends_with(".svg")
+            || lower.ends_with(".png")
+            || lower.ends_with(".jpg")
+            || lower.ends_with(".jpeg")
+            || lower.ends_with(".gif")
+            || lower.contains(".woff2") // 处理带查询参数的情况
     }
 
     fn html_to_text(html: &str) -> String {
@@ -195,6 +223,12 @@ mod tests {
     #[test]
     fn extracts_code_from_plain_text() {
         let parsed = NeuralParser::parse_all("您的验证码: 123456", "", ParseDepth::FullDeepScan);
+        assert_eq!(parsed.code.as_deref(), Some("123456"));
+    }
+
+    #[test]
+    fn extracts_code_with_spaces() {
+        let parsed = NeuralParser::parse_all("Your code is 123 456", "", ParseDepth::FullDeepScan);
         assert_eq!(parsed.code.as_deref(), Some("123456"));
     }
 

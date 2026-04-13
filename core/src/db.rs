@@ -93,6 +93,7 @@ pub struct GeneratedAccountRecord {
     pub device_id: Option<String>,
     pub workspace_id: Option<String>,
     pub upload_status: Option<String>,
+    pub account_type: Option<String>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -242,7 +243,8 @@ impl DataLake {
                 session_token TEXT,
                 device_id TEXT,
                 workspace_id TEXT,
-                upload_status TEXT DEFAULT 'pending'
+                upload_status TEXT DEFAULT 'pending',
+                account_type TEXT
             )",
         )
         .execute(pool)
@@ -279,6 +281,9 @@ impl DataLake {
         )
         .execute(pool)
         .await;
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN account_type TEXT")
+            .execute(pool)
+            .await;
 
         // 创建索引加速查询 (特别是针对收件地址的实时过滤)
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_to_addr ON emails (to_addr)")
@@ -1002,11 +1007,12 @@ impl DataLake {
         address: &str,
         password: &str,
         status: &str,
+        account_type: Option<&str>,
     ) -> Result<String, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO generated_accounts (id, run_id, address, password, status, created_at, upload_status)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending')"
+        let res = sqlx::query(
+            "INSERT INTO generated_accounts (id, run_id, address, password, status, created_at, upload_status, account_type)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)"
         )
         .bind(&id)
         .bind(run_id)
@@ -1014,8 +1020,14 @@ impl DataLake {
         .bind(password)
         .bind(status)
         .bind(Utc::now().timestamp())
+        .bind(account_type)
         .execute(&self.pool)
-        .await?;
+        .await;
+
+        if let Err(ref e) = res {
+            eprintln!("🔴 [数据库错误] 无法插入生成的账号: {:?}", e);
+        }
+        res?;
 
         Ok(id)
     }
@@ -1067,19 +1079,31 @@ impl DataLake {
         run_id: &str,
         limit: i64,
     ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
-        let records = sqlx::query_as::<_, GeneratedAccountRecord>(
+        let sql = if run_id == "all" {
             "SELECT id, run_id, address, password, status, created_at,
                     access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status
+                    device_id, workspace_id, upload_status, account_type
+             FROM generated_accounts
+             ORDER BY created_at DESC
+             LIMIT ?"
+        } else {
+            "SELECT id, run_id, address, password, status, created_at,
+                    access_token, refresh_token, session_token,
+                    device_id, workspace_id, upload_status, account_type
              FROM generated_accounts
              WHERE run_id = ?
              ORDER BY created_at DESC
-             LIMIT ?",
-        )
-        .bind(run_id)
-        .bind(limit.clamp(1, 500))
-        .fetch_all(&self.pool)
-        .await?;
+             LIMIT ?"
+        };
+
+        let mut query = sqlx::query_as::<_, GeneratedAccountRecord>(sql);
+        if run_id != "all" {
+            query = query.bind(run_id);
+        }
+        let records = query
+            .bind(limit.clamp(1, 10000))
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(records)
     }
@@ -1093,7 +1117,7 @@ impl DataLake {
         let records = sqlx::query_as::<_, GeneratedAccountRecord>(
             "SELECT id, run_id, address, password, status, created_at,
                     access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status
+                    device_id, workspace_id, upload_status, account_type
              FROM generated_accounts
              ORDER BY created_at DESC
              LIMIT ? OFFSET ?",
@@ -1127,6 +1151,29 @@ impl DataLake {
         .await?;
 
         Ok(row.map(|r| r.get("extracted_code")))
+    }
+
+    /// 内部链接轮询：根据收件地址查询最近的验证链接
+    pub async fn poll_link_by_email(
+        &self,
+        email: &str,
+        since_ts: i64,
+    ) -> Result<Option<String>, sqlx::Error> {
+        use sqlx::Row;
+
+        let row = sqlx::query(
+            "SELECT extracted_link FROM emails
+             WHERE to_addr = ? AND extracted_link IS NOT NULL AND extracted_link != ''
+               AND created_at >= ?
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .bind(email)
+        .bind(since_ts)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get("extracted_link")))
     }
 
     /// 获取某次工作流的步骤详情

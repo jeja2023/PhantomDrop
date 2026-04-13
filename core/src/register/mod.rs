@@ -25,9 +25,10 @@ impl RegistrationManager {
         address: &str,
         password: &str,
         status: &str,
+        account_type: Option<&str>,
     ) -> Result<(), String> {
         self.dl
-            .create_generated_account(run_id, address, password, status)
+            .create_generated_account(run_id, address, password, status, account_type)
             .await
             .map(|_| ())
             .map_err(|e| format!("账号持久化失败: {:?}", e))

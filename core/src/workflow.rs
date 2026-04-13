@@ -37,6 +37,7 @@ pub enum WorkflowKind {
     StatusReport,
     EnvironmentCheck,
     OpenAIRegister,
+    OpenAIRegisterBrowser,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -52,12 +53,20 @@ pub struct WorkflowParameters {
     pub proxy_url: Option<String>,
     /// OpenAI 注册专用：打码平台 API Key
     pub captcha_key: Option<String>,
+    /// OpenAI 注册专用：接码平台 API Key (SMS-Activate)
+    pub sms_key: Option<String>,
     /// 账号分发专用：接收平台 URL
     pub cpa_url: Option<String>,
     /// 账号分发专用：接收平台 API Key
     pub cpa_key: Option<String>,
     /// 对并发执行任务的支持
     pub concurrency: Option<usize>,
+    /// 用户个人资料：全名
+    pub full_name: Option<String>,
+    /// 用户个人资料：年龄
+    pub age: Option<i32>,
+    /// 注册类型：Free, Plus, API 等
+    pub account_type: Option<String>,
 }
 
 struct WorkflowRunContext {
@@ -134,6 +143,15 @@ impl WorkflowEngine {
                 builtin: true,
                 parameters: WorkflowParameters::default(),
             },
+            WorkflowDefinition {
+                id: "openai_browser_register".to_string(),
+                kind: WorkflowKind::OpenAIRegisterBrowser,
+                title: "OpenAI 浏览器模拟注册".to_string(),
+                summary: "使用有头/无头浏览器仿真操作，绕过高级协议检测".to_string(),
+                status: "ready".to_string(),
+                builtin: true,
+                parameters: WorkflowParameters::default(),
+            },
         ]
     }
 
@@ -144,6 +162,7 @@ impl WorkflowEngine {
             "负载报告",
             "环境变量",
             "openai_register_default",
+            "openai_browser_register",
         ]
     }
 
@@ -363,6 +382,28 @@ impl WorkflowEngine {
                         }
                     }
                 }
+                WorkflowKind::OpenAIRegisterBrowser => {
+                    match Self::openai_browser_register_flow(
+                        &hub,
+                        &dl,
+                        &mut context,
+                        &definition_for_task.parameters,
+                    )
+                    .await
+                    {
+                        Ok(message) => {
+                            let _ = dl
+                                .finish_workflow_run(&run_id_for_task, "success", &message)
+                                .await;
+                        }
+                        Err(message) => {
+                            Self::log_step(&hub, &dl, &mut context, "error", &message).await;
+                            let _ = dl
+                                .finish_workflow_run(&run_id_for_task, "error", &message)
+                                .await;
+                        }
+                    }
+                }
             }
         });
 
@@ -414,31 +455,39 @@ impl WorkflowEngine {
             let password = format!("Pwd{}_{}", Utc::now().timestamp() % 100000, &suffix[8..12]);
             let address = format!("{}@{}", local_part, domain);
 
-            if dl
-                .create_generated_account(&context.run_id, &address, &password, "ready")
+            match dl
+                .create_generated_account(
+                    &context.run_id, 
+                    &address, 
+                    &password, 
+                    "ready", 
+                    parameters.account_type.as_deref()
+                )
                 .await
-                .is_ok()
             {
-                created += 1;
-                if index < 3 {
+                Ok(_) => {
+                    created += 1;
+                    if index < 3 {
+                        Self::log_step(
+                            hub,
+                            dl,
+                            context,
+                            "info",
+                            &format!("已生成账号产物: {}", address),
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
                     Self::log_step(
                         hub,
                         dl,
                         context,
-                        "info",
-                        &format!("已生成账号产物: {}", address),
+                        "warn",
+                        &format!("账号产物写入失败: {} ({})", address, e),
                     )
                     .await;
                 }
-            } else {
-                Self::log_step(
-                    hub,
-                    dl,
-                    context,
-                    "warn",
-                    &format!("账号产物写入失败: {}", address),
-                )
-                .await;
             }
         }
 
@@ -761,7 +810,7 @@ impl WorkflowEngine {
                 dl,
                 context,
                 "info",
-                &format!("[{}/{}] 开始注册: {}", index + 1, batch_size, email),
+                &format!("[{}/{}] 开始注册: {} | 密令: {}", index + 1, batch_size, email, password),
             )
             .await;
 
@@ -773,6 +822,9 @@ impl WorkflowEngine {
                 device_id: device_id.clone(),
                 proxy_url: proxy_url.clone(),
                 captcha_key: parameters.captcha_key.clone(),
+                sms_key: parameters.sms_key.clone(),
+                full_name: parameters.full_name.clone(),
+                age: parameters.age,
                 run_id: context.run_id.clone(),
                 step_callback: Some(Box::new(move |level, msg| {
                     let _ = tx.send((level.to_string(), msg.to_string()));
@@ -809,6 +861,7 @@ impl WorkflowEngine {
                             &result.email,
                             &result.password,
                             "openai_registered",
+                            parameters.account_type.as_deref(),
                         )
                         .await
                     {
@@ -905,6 +958,7 @@ impl WorkflowEngine {
                             &email,
                             &password,
                             "register_failed",
+                            parameters.account_type.as_deref(),
                         )
                         .await;
                     fail_count += 1;
@@ -924,6 +978,7 @@ impl WorkflowEngine {
                             &email,
                             &password,
                             "register_failed",
+                            parameters.account_type.as_deref(),
                         )
                         .await;
                     fail_count += 1;
@@ -946,6 +1001,102 @@ impl WorkflowEngine {
             Ok(summary)
         } else {
             Err(format!("全部 {} 个账号注册失败", batch_size))
+        }
+    }
+
+    async fn openai_browser_register_flow(
+        hub: &Arc<StreamHub>,
+        dl: &Arc<DataLake>,
+        context: &mut WorkflowRunContext,
+        parameters: &WorkflowParameters,
+    ) -> Result<String, String> {
+        let batch_size = parameters.batch_size.unwrap_or(1);
+        let mut success_count = 0;
+        let mut fail_count = 0;
+
+        for index in 0..batch_size {
+            Self::log_step(hub, dl, context, "info", &format!("[{}/{}] 正在初始化浏览器仿真环境...", index + 1, batch_size)).await;
+            
+            let domain = dl.get_setting("account_domain").await.ok().flatten().unwrap_or_else(|| "phantom.local".to_string());
+            let len = rand::thread_rng().gen_range(8..=12);
+            let local_part: String = rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(len).map(|b| char::from(b).to_ascii_lowercase()).collect();
+            let email = format!("{}@{}", local_part, domain);
+            let password: String = rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(12).map(char::from).collect();
+            
+            Self::log_step(hub, dl, context, "info", &format!("🚀 准备注册: {} | 密码: {}", email, password)).await;
+            
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
+
+            let register_ctx = crate::openai::register::RegisterContext {
+                email: email.clone(),
+                password: password.clone(),
+                device_id: crate::openai::oauth::generate_device_id(),
+                proxy_url: parameters.proxy_url.clone(),
+                captcha_key: parameters.captcha_key.clone(),
+                sms_key: parameters.sms_key.clone(),
+                full_name: parameters.full_name.clone(),
+                age: parameters.age,
+                run_id: context.run_id.clone(),
+                step_callback: Some(Box::new(move |level, msg| {
+                    let _ = tx.send((level.to_string(), msg.to_string()));
+                })),
+            };
+
+            let driver = crate::openai::browser_driver::BrowserDriver::new(register_ctx);
+            
+            // 运行驱动
+            let driver_task = tokio::spawn(async move {
+                driver.run().await
+            });
+
+            // 监听回调
+            while let Some((level, msg)) = rx.recv().await {
+                Self::log_step(hub, dl, context, &level, &msg).await;
+            }
+
+            match driver_task.await {
+                Ok(Ok(_msg)) => {
+                    success_count += 1;
+                    if let Err(e) = dl.create_generated_account(
+                        &context.run_id, 
+                        &email, 
+                        &password, 
+                        "browser_registered",
+                        parameters.account_type.as_deref()
+                    ).await {
+                        Self::log_step(hub, dl, context, "error", &format!("账号入库失败: {}", e)).await;
+                    } else {
+                        Self::log_step(hub, dl, context, "success", &format!("✅ 账号已保存至数据库: {}", email)).await;
+                    }
+                },
+                Ok(Err(e)) => {
+                    fail_count += 1;
+                    Self::log_step(hub, dl, context, "error", &format!("单次注册失败: {}", e)).await;
+                },
+                Err(e) => {
+                    fail_count += 1;
+                    Self::log_step(hub, dl, context, "error", &format!("任务意外崩溃: {:?}", e)).await;
+                }
+            }
+
+            // 批量间隔，防止操作过快被检测
+            if index + 1 < batch_size {
+                let sleep_secs = rand::thread_rng().gen_range(5..15);
+                Self::log_step(hub, dl, context, "info", &format!("💤 等待 {} 秒后开始下一个任务...", sleep_secs)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
+            }
+        }
+
+        let summary = format!(
+            "OpenAI 浏览器模拟注册批量完成 | 成功: {} | 失败: {} | 总计: {}",
+            success_count, fail_count, batch_size
+        );
+        Self::log_step(hub, dl, context, "success", &summary).await;
+
+        if success_count > 0 {
+            Ok(summary)
+        } else {
+            Err(format!("全部 {} 个浏览器注册任务均失败", batch_size))
         }
     }
 
@@ -1027,6 +1178,7 @@ impl WorkflowKind {
             WorkflowKind::StatusReport => "status_report",
             WorkflowKind::EnvironmentCheck => "environment_check",
             WorkflowKind::OpenAIRegister => "openai_register",
+            WorkflowKind::OpenAIRegisterBrowser => "openai_register_browser",
         }
     }
 
@@ -1036,6 +1188,7 @@ impl WorkflowKind {
             "status_report" => WorkflowKind::StatusReport,
             "environment_check" => WorkflowKind::EnvironmentCheck,
             "openai_register" => WorkflowKind::OpenAIRegister,
+            "openai_register_browser" => WorkflowKind::OpenAIRegisterBrowser,
             _ => WorkflowKind::AccountGenerate,
         }
     }
@@ -1047,6 +1200,7 @@ impl WorkflowKind {
             "status_report" => Ok(WorkflowKind::StatusReport),
             "environment_check" => Ok(WorkflowKind::EnvironmentCheck),
             "openai_register" => Ok(WorkflowKind::OpenAIRegister),
+            "openai_register_browser" => Ok(WorkflowKind::OpenAIRegisterBrowser),
             _ => Err(format!("不支持的工作流类型: {}", value)),
         }
     }

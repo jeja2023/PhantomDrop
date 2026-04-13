@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, User, Square } from 'lucide-react'
+import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, Square } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { fetchJson, postJson } from '../lib/api'
-import PageHeader from '../ui/PageHeader'
 import type {
   WorkflowDefinition,
   WorkflowRunPageResponse,
@@ -27,6 +26,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const [openaiProxy, setOpenaiProxy] = useState('')
   const [concurrency, setConcurrency] = useState(1)
   const [batchSize, setBatchSize] = useState(1)
+  const [accountType, setAccountType] = useState('free')
+  const [fullName, setFullName] = useState('')
+  const [age, setAge] = useState<number | ''>('')
 
   const loadWorkflows = async () => {
     try {
@@ -36,6 +38,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
         setOpenaiProxy(openaiDef.parameters.proxy_url || '')
         setConcurrency(openaiDef.parameters.concurrency || 1)
         setBatchSize(openaiDef.parameters.batch_size || 1)
+        setAccountType(openaiDef.parameters.account_type || 'free')
+        setFullName(openaiDef.parameters.full_name || '')
+        setAge(openaiDef.parameters.age || '')
       }
     } catch (error) {
       console.error('Failed to load workflows:', error)
@@ -118,6 +123,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
           proxy_url: openaiProxy.trim(),
           batch_size: batchSize,
           concurrency: concurrency,
+          account_type: accountType,
+          full_name: fullName.trim(),
+          age: age === '' ? undefined : age,
         }
 
         await postJson<any, any>('/api/workflows/save', {
@@ -140,15 +148,18 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     }
   }
 
-  const handleTrigger = async (workflowId: string) => {
-    setRunningId(workflowId)
+  const handleTrigger = async () => {
+    // 自动适配选中的模式
+    const actualWorkflowId = activePlatform === 'custom' ? 'openai_browser_register' : 'openai_register_default'
+    
+    setRunningId(actualWorkflowId)
     setSelectedRunId(null)
     setSteps([])
 
     try {
       await handleSaveConfig()
 
-      const res = await postJson<{ run_id: string }, { workflow_id: string }>('/api/workflows/trigger', { workflow_id: workflowId })
+      const res = await postJson<{ run_id: string }, { workflow_id: string }>('/api/workflows/trigger', { workflow_id: actualWorkflowId })
       setToastContent({ title: '注册指令已下发', desc: `正在进行 ${batchSize} 个账号的注册流程...` })
       setShowToast(true)
       setTimeout(() => setShowToast(false), 3000)
@@ -190,24 +201,6 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
         </div>
       </div>
 
-      <div className="shrink-0">
-        <PageHeader title="" kicker="" description="" />
-
-        <div className="flex gap-2 p-1 bg-slate-100 rounded-2xl w-fit mt-2">
-          <button
-            onClick={() => setActivePlatform('openai')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${activePlatform === 'openai' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            <User size={14} />
-            OpenAI 注册
-          </button>
-          <button disabled className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-slate-400 cursor-not-allowed">
-            <Globe size={14} />
-            更多平台 (开发中)
-          </button>
-        </div>
-      </div>
-
       <div className="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-0 pb-4">
         <div className="lg:col-span-5 flex flex-col gap-4 overflow-y-auto pr-2 scrollbar-thin">
           <section className="glass-panel shrink-0 rounded-3xl border border-slate-200 p-5 space-y-4">
@@ -231,11 +224,6 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between px-1">
                   <label className="text-[11px] font-bold text-slate-700">代理服务器 (Proxy URL)</label>
-                  {openaiProxy && (
-                    <button onClick={() => setOpenaiProxy('')} className="text-[10px] text-slate-400 hover:text-rose-500 transition-colors">
-                      清空输入
-                    </button>
-                  )}
                 </div>
                 <div className="relative group/input">
                   <input
@@ -249,12 +237,13 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                     <Globe size={14} className="text-blue-500/50" />
                   </div>
                 </div>
-                <p className="px-1 text-[9px] text-slate-400 italic">支持 http, https, socks5 协议。</p>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {/* 资料姓名和年龄由后台自动随机生成 */}
+
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1">注册总量</label>
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">注册总量 (Total)</label>
                   <input
                     type="number"
                     min="1"
@@ -265,25 +254,50 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1">并发线程</label>
-                  <select
+                   <label className="text-[11px] font-bold text-slate-700 ml-1">并发线程 (Threads)</label>
+                   <select
                     value={concurrency}
                     onChange={(e) => setConcurrency(Number(e.target.value))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors"
                   >
                     {[1, 2, 5, 8, 10].map((n) => (
                       <option key={n} value={n}>
-                        {n} 线程
+                        {n} 线程 (Async Mode)
                       </option>
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1">注册行为</label>
-                  <select className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors">
-                    <option>仅创建</option>
-                    <option>创建+Key</option>
-                    <option>开启 Plus</option>
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">执行引擎 (Engine)</label>
+                  <div className="flex p-1 bg-slate-100 rounded-xl gap-1">
+                      <button 
+                        onClick={() => setActivePlatform('openai')}
+                        className={`flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${activePlatform === 'openai' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                      >
+                         Protocol
+                      </button>
+                      <button 
+                         onClick={() => setActivePlatform('custom')}
+                         className={`flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${activePlatform === 'custom' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                      >
+                         Browser
+                      </button>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">注册行为 (Behavior)</label>
+                  <select 
+                    value={accountType}
+                    onChange={(e) => setAccountType(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors text-blue-600 font-bold"
+                  >
+                      <option value="free">普通账号 (Free Tier)</option>
+                      <option value="plus">Plus 订阅号 (Premium)</option>
+                      <option value="api">API 独享号 (Platform)</option>
+                      <option value="plus_gift">Plus 礼品卡号 (Gift Card)</option>
                   </select>
                 </div>
               </div>
@@ -291,7 +305,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
 
             <div className="flex gap-3">
               <button
-                onClick={() => handleTrigger('openai_register_default')}
+                onClick={() => handleTrigger()}
                 disabled={!!runningId || !!activeRun}
                 className={`flex-grow phantom-btn phantom-btn--primary py-3 rounded-2xl font-bold flex items-center justify-center gap-2 group shadow-xl ${!!runningId || !!activeRun ? 'opacity-50 cursor-not-allowed grayscale' : 'shadow-blue-600/20'}`}
               >

@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { Shield, Activity, Mail, Terminal as TerminalIcon, Zap, Settings, Globe } from 'lucide-react'
+import { Shield, Activity, Mail, Terminal as TerminalIcon, Zap, Settings, Globe, Users } from 'lucide-react'
 import type { AppTab } from '../types'
 
 interface SidebarProps {
@@ -27,6 +27,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         <SidebarItem icon={<Globe size={22} />} label="内网穿透助手" active={activeTab === 'tunnel'} onClick={() => onTabChange('tunnel')} />
         <SidebarItem icon={<Zap size={22} />} label="自动化工作流" active={activeTab === 'auto'} onClick={() => onTabChange('auto')} />
         <SidebarItem icon={<Shield size={22} />} label="网站注册中心" active={activeTab === 'register'} onClick={() => onTabChange('register')} />
+        <SidebarItem icon={<Users size={22} />} label="账号管理中心" active={activeTab === 'accounts'} onClick={() => onTabChange('accounts')} />
       </div>
 
       <div className="mt-auto pt-4 border-t border-slate-200 space-y-4">

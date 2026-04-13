@@ -7,7 +7,6 @@
 pub const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 /// OpenAI API 基地址
-pub const OPENAI_API_BASE: &str = "https://api.openai.com";
 
 /// ChatGPT 前端身份认证基地址
 /// Sentinel 令牌获取端点
@@ -27,6 +26,12 @@ pub const AUTH_PASSWORD_URL: &str = "https://auth0.openai.com/u/signup/password"
 
 /// 提交 OTP 验证端点
 pub const AUTH_OTP_VALIDATE_URL: &str = "https://chatgpt.com/backend-api/accounts/email-otp/validate";
+
+/// 请求手机号验证码端点
+pub const AUTH_SMS_OTP_REQUEST_URL: &str = "https://chatgpt.com/backend-api/accounts/sms-otp/request";
+
+/// 提交手机号验证码端点
+pub const AUTH_SMS_OTP_VALIDATE_URL: &str = "https://chatgpt.com/backend-api/accounts/sms-otp/validate";
 
 /// 创建用户信息端点
 pub const AUTH_CREATE_USER_URL: &str = "https://chatgpt.com/backend-api/accounts/user/register";

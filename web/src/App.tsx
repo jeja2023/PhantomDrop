@@ -10,6 +10,7 @@ import AutomationView from './views/AutomationView'
 import SettingsView from './views/SettingsView'
 import TunnelView from './views/TunnelView'
 import RegistrationView from './views/RegistrationView'
+import AccountListView from './views/AccountListView'
 import { createApiEventSource, fetchJson } from './lib/api'
 import type {
   AppLog,
@@ -315,6 +316,8 @@ function App() {
         return <SettingsView />
       case 'register':
         return <RegistrationView refreshIntervalMs={updateRate} />
+      case 'accounts':
+        return <AccountListView />
       default:
         return <DashboardView emails={emails} logs={logs} stats={stats} />
     }

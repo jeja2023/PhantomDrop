@@ -451,13 +451,16 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
       {selectedEmail || loadingDetail ? (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md sm:p-6 pl-16 md:pl-64">
           <div className="flex w-full max-w-5xl max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-white/20 bg-white shadow-2xl animate-in zoom-in-95 duration-400">
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/50 px-8 py-5">
-              <div className="flex flex-col">
-                <h3 className="text-xl font-black leading-tight text-slate-900">邮件深度详情</h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] font-mono tracking-widest text-slate-500 uppercase">IN-DEPTH VIEW</span>
-                  <div className="h-1 w-1 rounded-full bg-slate-300"></div>
-                  <span className="text-[10px] font-mono text-slate-400">ID: {selectedEmail?.id}</span>
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-6 py-4">
+              <div className="flex items-center gap-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Mail size={20} />
+                </div>
+                <div className="flex flex-col">
+                  <h3 className="text-lg font-black leading-tight text-slate-900">邮件深度详情</h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[9px] font-mono tracking-widest text-slate-400 uppercase">TRACE ID: {selectedEmail?.id?.slice(0, 8)}</span>
+                  </div>
                 </div>
               </div>
               <button
@@ -474,13 +477,13 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
             {loadingDetail ? (
               <div className="flex flex-1 items-center justify-center py-24 text-slate-500">
                 <Loader2 size={24} className="mr-3 animate-spin text-blue-500" />
-                <span className="font-bold tracking-widest">正在解析深度上下文...</span>
+                <span className="font-bold tracking-widest text-xs">正在解析深度上下文...</span>
               </div>
             ) : selectedEmail ? (
-              <div className="grid flex-1 overflow-hidden lg:grid-cols-[1.1fr_1.5fr]">
+              <div className="grid flex-1 overflow-hidden lg:grid-cols-[1fr_1.4fr]">
                 {/* 左侧：邮件主体信息 */}
                 <div className="flex flex-col gap-4 overflow-y-auto border-r border-slate-100 bg-slate-50/30 p-8 custom-scrollbar">
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     <InfoCard label="发件人" value={selectedEmail.from_addr} />
                     <InfoCard label="收件人" value={selectedEmail.to_addr} />
                     <InfoCard label="主题" value={selectedEmail.subject || '无主题'} />
@@ -496,8 +499,8 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                           <Copy size={12} />
                         </button>
                       </div>
-                      <div className="mt-4 max-h-[400px] overflow-auto custom-scrollbar">
-                        <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed font-medium text-slate-700 selection:bg-blue-100">
+                      <div className="mt-2 max-h-[220px] overflow-auto custom-scrollbar">
+                        <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed font-medium text-slate-700 selection:bg-blue-100">
                           {selectedEmail.body_text || '无纯文本内容'}
                         </pre>
                       </div>
@@ -509,7 +512,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                 </div>
 
                 {/* 右侧：提取结果与源代码 */}
-                <div className="flex flex-col gap-6 overflow-y-auto p-8 custom-scrollbar">
+                <div className="flex flex-col gap-5 overflow-y-auto p-6 custom-scrollbar">
                   <div className="grid grid-cols-2 gap-4">
                     <InfoCard label="捕获时间" value={new Date(selectedEmail.created_at * 1000).toLocaleString()} />
                     <InfoCard 
@@ -519,10 +522,10 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                     />
                   </div>
 
-                  <div className="relative overflow-hidden rounded-2xl border-2 border-blue-100 bg-blue-50/30 p-6">
+                  <div className="relative overflow-hidden rounded-2xl border border-blue-100 bg-blue-50/30 p-5">
                     <div className="relative z-10">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="text-[11px] font-black tracking-widest text-blue-500 uppercase">核心提取内容</div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="text-[10px] font-black tracking-widest text-blue-500 uppercase">核心提取内容 (Core Data)</div>
                         <div className="flex gap-2">
                           <button type="button" onClick={() => void toggleArchive(selectedEmail.id, !selectedEmail.is_archived)} className="phantom-btn phantom-btn--sm phantom-btn--secondary">
                             {selectedEmail.is_archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
@@ -539,7 +542,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                         <div className="flex items-center justify-between rounded-xl bg-white p-4 border border-blue-100">
                           <div>
                             <div className="text-[9px] font-bold text-blue-400 uppercase tracking-tighter">验证码 / OTP CODE</div>
-                            <div className="text-3xl font-black tracking-[0.2em] text-blue-600 mt-1 font-mono">
+                            <div className="text-[30px] font-black tracking-[0.2em] text-blue-600 mt-1 font-mono">
                               {selectedEmail.extracted_code || '------'}
                             </div>
                           </div>
@@ -572,9 +575,9 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                               href={selectedEmail.extracted_link} 
                               target="_blank" 
                               rel="noreferrer" 
-                              className="group flex items-center justify-between gap-3 text-sm font-bold text-slate-800 hover:text-blue-600 transition-colors break-all"
+                              className="group flex items-center justify-between gap-3 text-xs font-bold text-slate-800 hover:text-blue-600 transition-colors break-all"
                             >
-                              <span className="line-clamp-2">{selectedEmail.extracted_link}</span>
+                              <span className="line-clamp-1">{selectedEmail.extracted_link}</span>
                               <ExternalLink size={16} className="shrink-0 opacity-40 group-hover:opacity-100 transition-opacity" />
                             </a>
                           ) : (
@@ -588,31 +591,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                     </div>
                   </div>
 
-                  <div className="flex flex-col flex-1 min-h-0 rounded-2xl border border-slate-200 bg-slate-900 p-5 shadow-inner">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex gap-1">
-                          <div className="h-2 w-2 rounded-full bg-rose-500/80"></div>
-                          <div className="h-2 w-2 rounded-full bg-amber-500/80"></div>
-                          <div className="h-2 w-2 rounded-full bg-emerald-500/80"></div>
-                        </div>
-                        <span className="text-[10px] font-mono font-bold text-slate-500 uppercase ml-2 tracking-widest">HTML SOURCE VIEW</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void copyField('html', selectedEmail.body_html)}
-                        className="text-slate-500 hover:text-white transition-colors"
-                        title="复制源码"
-                      >
-                        <Copy size={14} />
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-auto custom-scrollbar rounded-lg bg-slate-950/50 p-4 border border-white/5">
-                      <pre className="text-[11px] font-mono leading-relaxed text-slate-400 selection:bg-blue-500/30">
-                        {selectedEmail.body_html || '<!-- 无 HTML 内容 -->'}
-                      </pre>
-                    </div>
-                  </div>
+                  {/* 原 HTML 源码视图已根据用户要求移除 */}
                 </div>
               </div>
             ) : null}

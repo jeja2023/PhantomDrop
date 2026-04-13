@@ -7,3 +7,5 @@ pub mod constants;
 pub mod oauth;
 pub mod register;
 pub mod sentinel;
+pub mod sms;
+pub mod browser_driver;
