@@ -48,6 +48,7 @@ RUN wget -q "https://packages.microsoft.com/config/debian/12/packages-microsoft-
     chromium \
     chromium-sandbox \
     xvfb \
+    xauth \
     libnss3 \
     libxss1 \
     libasound2 \
