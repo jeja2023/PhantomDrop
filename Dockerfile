@@ -38,13 +38,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. 安装 PowerShell (pwsh)
+# 2. 安装 PowerShell (pwsh) 及 Chromium (用于无头浏览器注册方案)
 RUN wget -q "https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb" \
     && dpkg -i packages-microsoft-prod.deb \
     && rm packages-microsoft-prod.deb \
     && apt-get update \
-    && apt-get install -y powershell \
+    && apt-get install -y --no-install-recommends \
+       powershell \
+       chromium \
+       chromium-sandbox \
+       fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-freefont-ttf \
     && rm -rf /var/lib/apt/lists/*
+
+# 设置环境变量，指向 Chromium 路径 (headless-chrome 会自动寻找，但指定更稳)
+ENV CHROME_BIN=/usr/bin/chromium
+ENV CHROME_PATH=/usr/lib/chromium/
 
 # 3. 安装 Node.js (用于 wrangler)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \

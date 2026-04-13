@@ -67,6 +67,8 @@ pub struct WorkflowParameters {
     pub age: Option<i32>,
     /// 注册类型：Free, Plus, API 等
     pub account_type: Option<String>,
+    /// 浏览器专用：是否开启无头模式
+    pub headless: Option<bool>,
 }
 
 struct WorkflowRunContext {
@@ -825,6 +827,7 @@ impl WorkflowEngine {
                 sms_key: parameters.sms_key.clone(),
                 full_name: parameters.full_name.clone(),
                 age: parameters.age,
+                headless: true, // 协议模式下强行设定为 true
                 run_id: context.run_id.clone(),
                 step_callback: Some(Box::new(move |level, msg| {
                     let _ = tx.send((level.to_string(), msg.to_string()));
@@ -1036,6 +1039,7 @@ impl WorkflowEngine {
                 sms_key: parameters.sms_key.clone(),
                 full_name: parameters.full_name.clone(),
                 age: parameters.age,
+                headless: parameters.headless.unwrap_or(true),
                 run_id: context.run_id.clone(),
                 step_callback: Some(Box::new(move |level, msg| {
                     let _ = tx.send((level.to_string(), msg.to_string()));

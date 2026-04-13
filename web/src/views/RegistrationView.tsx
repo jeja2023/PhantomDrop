@@ -29,6 +29,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const [accountType, setAccountType] = useState('free')
   const [fullName, setFullName] = useState('')
   const [age, setAge] = useState<number | ''>('')
+  const [headless, setHeadless] = useState(true) // 默认开启无头模式
 
   const loadWorkflows = async () => {
     try {
@@ -41,6 +42,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
         setAccountType(openaiDef.parameters.account_type || 'free')
         setFullName(openaiDef.parameters.full_name || '')
         setAge(openaiDef.parameters.age || '')
+        setHeadless(openaiDef.parameters.headless !== undefined ? openaiDef.parameters.headless : true)
       }
     } catch (error) {
       console.error('Failed to load workflows:', error)
@@ -126,6 +128,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
           account_type: accountType,
           full_name: fullName.trim(),
           age: age === '' ? undefined : age,
+          headless: headless,
         }
 
         await postJson<any, any>('/api/workflows/save', {
@@ -275,31 +278,45 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                   <div className="flex p-1 bg-slate-100 rounded-xl gap-1">
                       <button 
                         onClick={() => setActivePlatform('openai')}
-                        className={`flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${activePlatform === 'openai' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                        className={`flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all ${activePlatform === 'openai' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                       >
-                         Protocol
+                         协议模式
                       </button>
                       <button 
                          onClick={() => setActivePlatform('custom')}
-                         className={`flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg transition-all ${activePlatform === 'custom' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                         className={`flex-1 py-1.5 text-[10px] font-black rounded-lg transition-all ${activePlatform === 'custom' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                       >
-                         Browser
+                         浏览器模式
                       </button>
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-700 ml-1">注册行为 (Behavior)</label>
-                  <select 
-                    value={accountType}
-                    onChange={(e) => setAccountType(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors text-blue-600 font-bold"
-                  >
-                      <option value="free">普通账号 (Free Tier)</option>
-                      <option value="plus">Plus 订阅号 (Premium)</option>
-                      <option value="api">API 独享号 (Platform)</option>
-                      <option value="plus_gift">Plus 礼品卡号 (Gift Card)</option>
-                  </select>
+                  <label className="text-[11px] font-bold text-slate-700 ml-1">交互配置 (Advanced)</label>
+                  <div className="flex items-center justify-between h-[36px] bg-slate-50 border border-slate-200 rounded-xl px-3 group/headless">
+                    <span className="text-[10px] font-bold text-slate-500 group-hover/headless:text-blue-500 transition-colors">无头模式 (Headless)</span>
+                    <button 
+                      onClick={() => setHeadless(!headless)}
+                      disabled={activePlatform === 'openai'}
+                      className={`relative w-8 h-4 rounded-full transition-all ${activePlatform === 'openai' ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'} ${headless ? 'bg-blue-600' : 'bg-slate-300'}`}
+                    >
+                      <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform ${headless ? 'translate-x-[16px]' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-700 ml-1">注册行为 (Behavior)</label>
+                <select 
+                  value={accountType}
+                  onChange={(e) => setAccountType(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-500 transition-colors text-blue-600 font-bold"
+                >
+                    <option value="free">普通账号 (Free Tier)</option>
+                    <option value="plus">Plus 订阅号 (Premium)</option>
+                    <option value="api">API 独享号 (Platform)</option>
+                    <option value="plus_gift">Plus 礼品卡号 (Gift Card)</option>
+                </select>
               </div>
             </div>
 

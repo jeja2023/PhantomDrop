@@ -22,18 +22,20 @@ impl BrowserDriver {
         let callback = &self.context.step_callback;
         
         if let Some(cb) = callback {
-            cb("info", "🚀 正在初始化 PhantomBrowser 仿真容器...");
+            cb("info", "🚀 正在初始化 PhantomBrowser 仿真容器 (无头模式)...");
         }
 
-        // 1. 启动浏览器 (开启隐身模式以绕过 Cloudflare 检测)
+        // 1. 启动浏览器 (极致伪装以绕过检测)
         let mut launch_args = vec![
             "--disable-blink-features=AutomationControlled".to_string(),
             "--no-sandbox".to_string(),
+            "--disable-dev-shm-usage".to_string(), // Docker 必备，防止内存在容器内溢出
             "--disable-infobars".to_string(),
             "--window-position=0,0".to_string(),
             "--ignore-certificate-errors".to_string(),
             "--disable-web-security".to_string(),
             "--allow-running-insecure-content".to_string(),
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36".to_string(),
         ];
 
         if let Some(ref proxy) = self.context.proxy_url {
@@ -41,8 +43,8 @@ impl BrowserDriver {
         }
 
         let options = LaunchOptions::default_builder()
-            .headless(false) 
-            .window_size(Some((1280, 800)))
+            .headless(self.context.headless)  // 根据配置决定是否开启无头模式
+            .window_size(Some((1920, 1080)))
             .idle_browser_timeout(Duration::from_secs(300))
             .args(launch_args.iter().map(|s| std::ffi::OsStr::new(s)).collect())
             .build()
@@ -51,96 +53,91 @@ impl BrowserDriver {
         let browser = Browser::new(options).map_err(|e| format!("无法连接到 Chrome 实例: {}", e))?;
         let tab = browser.new_tab().map_err(|e| format!("打开标签页失败: {}", e))?;
 
+        // 注入脚本绕过 WebDriver 检测 (根据 1.0.21 版本协议规范)
+        let _ = tab.call_method(headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument {
+            source: "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})".to_string(),
+            world_name: None,
+            include_command_line_api: None,
+            run_immediately: None,
+        });
+
         // 2. 导航至 OpenAI 注册入口
         if let Some(cb) = callback {
-            cb("info", "🌐 正在导航至 OpenAI 注册中心 (chatgpt.com/signup)...");
+            cb("info", "🌐 正在隐身访问 OpenAI 注册中心 (chatgpt.com/signup)...");
         }
         
         tab.navigate_to("https://chatgpt.com/signup").map_err(|e| format!("导航失败: {}", e))?;
         tab.wait_until_navigated().map_err(|e| format!("页面加载超时: {}", e))?;
 
+        // 调试截图辅助
+        let take_shot = |name: &str, tab: &std::sync::Arc<headless_chrome::Tab>| {
+            if let Ok(png) = tab.capture_screenshot(headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png, None, None, true) {
+                let path = format!("./data/debug_{}.png", name);
+                let _ = std::fs::write(&path, png);
+                return Some(path);
+            }
+            None
+        };
+
         // 2.5 处理可能出现的 Cloudflare Turnstile 验证
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(8)).await;
         let is_cf_page = tab.evaluate("document.title.includes('请稍候') || !!document.querySelector('#turnstile-wrapper') || document.body.innerText.includes('Verify you are human')", false)
             .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
             .unwrap_or(false);
 
         if is_cf_page {
+            take_shot("cloudflare_blocked", &tab);
             if let Some(cb) = callback {
-                cb("warn", "🛡️ 检测到 Cloudflare 验证屏障，建议在浏览器窗口中手动点击验证码...");
+                cb("error", "🛡️ 遭遇 Cloudflare 强力拦截，无头模式暂无法自动过白，已存入截图 debug_cloudflare_blocked.png");
             }
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            return Err("Cloudflare 验证拦截".to_string());
         }
 
         // 3. 进入注册表单并输入邮箱
         if let Some(cb) = callback {
-            cb("info", &format!("📧 正在核对入口状态并输入注册邮箱: {}", self.context.email));
+            cb("info", &format!("📧 正在输入邮箱并核验表单: {}", self.context.email));
         }
 
-        // 兼容多种选择器
         let email_selectors = "input#email, input#username, input[name='email'], input[type='email']";
-        let continue_selectors = "button[type='submit'], button[data-action-button-primary='true'], button.ext-btn-primary";
+        let continue_selectors = "button[type='submit'], button[data-action-button-primary='true']";
 
-        // 某些情况下需要点击“Sign up”按钮才能展示表单
-        if tab.find_element(email_selectors).is_err() {
-            if let Ok(signup_btn) = tab.find_element("button[data-testid='signup-button'], a[href*='signup'], button.btn-primary") {
-                signup_btn.click().ok();
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-        }
-        
         let email_input = tab.wait_for_element_with_custom_timeout(email_selectors, Duration::from_secs(30))
-            .map_err(|_| "未找到邮箱输入框 (可能由于人机验证拦截或页面结构变更)")?;
+            .map_err(|_| {
+                take_shot("email_not_found", &tab);
+                "未找到邮箱输入框，环境检测可能未通过"
+            })?;
         
         email_input.click().ok();
         tab.type_str(&self.context.email).map_err(|e| format!("邮箱输入失败: {}", e))?;
-        
+        take_shot("after_email_input", &tab);
+
         if let Ok(btn) = tab.find_element(continue_selectors) {
             btn.click().ok();
         } else {
-            tab.press_key("Enter").map_err(|e| format!("提交邮箱失败: {}", e))?;
+            tab.press_key("Enter").ok();
         }
 
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         // 4. 输入密码
         if let Some(cb) = callback {
-            cb("info", &format!("🔐 正在设置安全密令 (Password: {})...", self.context.password));
+            cb("info", "🔐 正在注入安全密码...");
         }
         
-        // 兼容多种密码选择器并增加超时
         let pwd_selectors = "input#password, input[name='password'], input[type='password']";
-        let pwd_input_res = tab.wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(45));
+        let pwd_input_res = tab.wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(30));
         
         if pwd_input_res.is_err() {
-            // 额外检查错误提示
-            let body_text = tab.evaluate("document.body.innerText", false)
-                .map(|r| {
-                    r.value
-                        .and_then(|v| v.as_str().map(|s| s.to_string()))
-                        .unwrap_or_default()
-                })
-                .unwrap_or_default();
-            
-            if body_text.contains("User already exists") || body_text.contains("already has an account") {
-                return Err("邮箱已被注册，请更换邮箱后重试".to_string());
-            }
-            if body_text.contains("Verify you are human") || body_text.contains("Cloudflare") {
-                return Err("触发了人机验证，请在浏览器中手动解决后再继续".to_string());
-            }
-            
-            return Err("未找到密码输入框 (可能触发了人机验证、邮箱冲突或页面加载缓慢)".to_string());
+            take_shot("password_not_found", &tab);
+            return Err("进入密码设置页失败，可能邮箱已被黑名单或需邮箱验证".to_string());
         }
 
         let pwd_input = pwd_input_res.unwrap();
-        pwd_input.click().map_err(|e| format!("点击密码框失败: {}", e))?;
-        tab.type_str(&self.context.password).map_err(|e| format!("密码输入失败: {}", e))?;
+        pwd_input.click().ok();
+        tab.type_str(&self.context.password).ok();
+        take_shot("after_password_input", &tab);
         
-        if let Ok(btn) = tab.find_element(continue_selectors) {
-             btn.click().ok();
-        } else {
-             tab.press_key("Enter").map_err(|e| format!("提交密码失败: {}", e))?;
-        }
+        tab.press_key("Enter").ok();
 
         // 5. 等待验证邮件
         if let Some(cb) = callback {

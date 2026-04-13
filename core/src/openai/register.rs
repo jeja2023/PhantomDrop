@@ -22,6 +22,7 @@ pub struct RegisterContext {
     pub step_callback: Option<StepCallback>,
     pub full_name: Option<String>,
     pub age: Option<i32>,
+    pub headless: bool,
 }
 
 /// 步骤回调函数签名
