@@ -21,20 +21,23 @@ impl BrowserDriver {
     pub async fn run(&self) -> Result<String, String> {
         let callback = &self.context.step_callback;
         
+        let mode_text = if self.context.headless { "无头模式" } else { "有头模式 (Xvfb)" };
         if let Some(cb) = callback {
-            cb("info", "🚀 正在初始化 PhantomBrowser 仿真容器 (无头模式)...");
+            cb("info", &format!("🚀 正在初始化 PhantomBrowser 仿真容器 ({})...", mode_text));
         }
 
         // 1. 启动浏览器 (极致伪装以绕过检测)
         let mut launch_args = vec![
             "--disable-blink-features=AutomationControlled".to_string(),
             "--no-sandbox".to_string(),
-            "--disable-dev-shm-usage".to_string(), // Docker 必备，防止内存在容器内溢出
+            "--disable-dev-shm-usage".to_string(), 
             "--disable-infobars".to_string(),
             "--window-position=0,0".to_string(),
             "--ignore-certificate-errors".to_string(),
             "--disable-web-security".to_string(),
             "--allow-running-insecure-content".to_string(),
+            "--disable-gpu".to_string(), // 虚拟显示环境建议禁用 GPU
+            "--hide-scrollbars".to_string(),
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36".to_string(),
         ];
 

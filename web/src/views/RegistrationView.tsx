@@ -114,10 +114,11 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     return () => clearInterval(interval)
   }, [selectedRunId, refreshIntervalMs])
 
-  const handleSaveConfig = async () => {
+  const handleSaveConfig = async (targetId?: string) => {
     try {
       const workflows = await fetchJson<WorkflowDefinition[]>('/api/workflows')
-      const currentDef = workflows.find((w) => w.id === 'openai_register_default')
+      const workflowId = targetId || (activePlatform === 'custom' ? 'openai_browser_register' : 'openai_register_default')
+      const currentDef = workflows.find((w) => w.id === workflowId)
 
       if (currentDef) {
         const updatedParams = {
@@ -133,7 +134,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
 
         await postJson<any, any>('/api/workflows/save', {
           id: currentDef.id,
-          kind: 'openai_register',
+          kind: currentDef.kind === 'openai_register' ? 'openai_register' : 'openai_register_browser',
           title: currentDef.title,
           summary: currentDef.summary,
           status: 'ready',
