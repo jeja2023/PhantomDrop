@@ -120,27 +120,44 @@ impl BrowserDriver {
         tab.navigate_to("https://chatgpt.com/auth/login?screen_hint=signup").map_err(|e| format!("导航失败: {}", e))?;
         tab.wait_until_navigated().map_err(|e| format!("页面加载超时: {}", e))?;
 
+        // 记录导航后的状态
+        let current_url = tab.get_url();
+        let page_title = tab.evaluate("document.title", false)
+            .ok().and_then(|r| r.value.and_then(|v| v.as_str().map(|s| s.to_string())))
+            .unwrap_or_else(|| "未知标题".to_string());
+            
+        if let Some(cb) = callback {
+            cb("info", &format!("📍 页面已加载 | 标题: {} | URL: {}", page_title, current_url));
+        }
+
         // 2.2 首页中转处理：如果跳转到了首页而非注册页，尝试点击“Sign up”按钮
         tokio::time::sleep(Duration::from_secs(4)).await;
-        let is_home_page = tab.evaluate("document.body.innerText.includes('Where should we begin?')", false)
+        // 增加对中文落地页“开始使用”的识别
+        let is_home_page = tab.evaluate("document.body.innerText.includes('Where should we begin?') || document.body.innerText.includes('开始使用') || (document.body.innerText.includes('ChatGPT') && document.querySelectorAll('button, a').length < 50)", false)
             .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
             .unwrap_or(false);
 
         if is_home_page {
             if let Some(cb) = callback {
-                cb("info", "📍 识别到首页中转，正在点击 'Sign up' 按钮进入注册流程...");
+                cb("info", "📍 识别到落地页中转，正在寻找注册入口...");
             }
-            // 尝试多种可能的注册按钮选择器
-            let signup_btn_selectors = "a[href*='signup'], button[data-testid*='signup'], a:contains('Sign up'), button:contains('Sign up')";
+            // 尝试多种可能的注册按钮选择器，增加“免费注册”文案支持
             let _ = tab.evaluate(&format!("(function(){{ 
-                const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.includes('Sign up'));
-                if(btn) btn.click();
+                const keywords = ['Sign up', '免费注册', '注册', 'Get started', '开始使用', 'Sign Up'];
+                const btn = Array.from(document.querySelectorAll('a, button')).find(el => 
+                    keywords.some(k => el.innerText.includes(k)) || 
+                    (el.getAttribute('href') && el.getAttribute('href').includes('signup'))
+                );
+                if(btn) {{
+                    btn.click();
+                }}
             }})()"), false);
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
 
         // 调试截图辅助
         let take_shot = |name: &str, tab: &std::sync::Arc<headless_chrome::Tab>| {
+            let _ = std::fs::create_dir_all("./data");
             if let Ok(png) = tab.capture_screenshot(headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png, None, None, true) {
                 let path = format!("./data/debug_{}.png", name);
                 let _ = std::fs::write(&path, png);
@@ -185,8 +202,9 @@ impl BrowserDriver {
 
         let email_input = tab.wait_for_element_with_custom_timeout(email_selectors, Duration::from_secs(30))
             .map_err(|_| {
+                let current_url = tab.get_url();
                 take_shot("email_not_found", &tab);
-                "未找到邮箱输入框，环境检测可能未通过"
+                format!("未找到邮箱输入框，环境检测可能未通过 (当前 URL: {})", current_url)
             })?;
         
         email_input.click().ok();
