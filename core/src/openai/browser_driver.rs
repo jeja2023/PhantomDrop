@@ -139,8 +139,9 @@ impl BrowserDriver {
         if is_cf_page {
             take_shot("cloudflare_blocked", &tab);
             let page_content = tab.evaluate("document.body.innerText", false)
-                .map(|r| r.value.and_then(|v| v.as_str()).unwrap_or(""))
-                .unwrap_or("");
+                .ok()
+                .and_then(|r| r.value.and_then(|v| v.as_str().map(|s| s.to_string())))
+                .unwrap_or_default();
             
             if page_content.contains("Access denied") || page_content.contains("Reference #") {
                  if let Some(cb) = callback {
