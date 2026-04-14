@@ -112,13 +112,32 @@ impl BrowserDriver {
             run_immediately: None,
         });
 
-        // 2. 导航至 OpenAI 注册入口
+        // 2. 导航至 OpenAI 注册入口 (使用 screen_hint 强制跳转至注册页)
         if let Some(cb) = callback {
             cb("info", "🌐 正在隐身访问 OpenAI 注册中心 (chatgpt.com/signup)...");
         }
         
-        tab.navigate_to("https://chatgpt.com/signup").map_err(|e| format!("导航失败: {}", e))?;
+        tab.navigate_to("https://chatgpt.com/auth/login?screen_hint=signup").map_err(|e| format!("导航失败: {}", e))?;
         tab.wait_until_navigated().map_err(|e| format!("页面加载超时: {}", e))?;
+
+        // 2.2 首页中转处理：如果跳转到了首页而非注册页，尝试点击“Sign up”按钮
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let is_home_page = tab.evaluate("document.body.innerText.includes('Where should we begin?')", false)
+            .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+            .unwrap_or(false);
+
+        if is_home_page {
+            if let Some(cb) = callback {
+                cb("info", "📍 识别到首页中转，正在点击 'Sign up' 按钮进入注册流程...");
+            }
+            // 尝试多种可能的注册按钮选择器
+            let signup_btn_selectors = "a[href*='signup'], button[data-testid*='signup'], a:contains('Sign up'), button:contains('Sign up')";
+            let _ = tab.evaluate(&format!("(function(){{ 
+                const btn = Array.from(document.querySelectorAll('a, button')).find(el => el.innerText.includes('Sign up'));
+                if(btn) btn.click();
+            }})()"), false);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
 
         // 调试截图辅助
         let take_shot = |name: &str, tab: &std::sync::Arc<headless_chrome::Tab>| {
