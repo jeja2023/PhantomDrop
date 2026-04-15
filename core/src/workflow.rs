@@ -36,7 +36,9 @@ pub enum WorkflowKind {
     DataCleanup,
     StatusReport,
     EnvironmentCheck,
+    #[serde(rename = "openai_register")]
     OpenAIRegister,
+    #[serde(rename = "openai_register_browser")]
     OpenAIRegisterBrowser,
 }
 

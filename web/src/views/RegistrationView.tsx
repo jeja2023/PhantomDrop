@@ -31,10 +31,12 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const [age, setAge] = useState<number | ''>('')
   const [headless, setHeadless] = useState(true) // 默认开启无头模式
 
-  const loadWorkflows = async () => {
+  const loadWorkflows = async (platform: RegistrationPlatform) => {
     try {
       const data = await fetchJson<WorkflowDefinition[]>('/api/workflows')
-      const openaiDef = data.find((w) => w.id === 'openai_register_default')
+      const targetId = platform === 'custom' ? 'openai_browser_register' : 'openai_register_default'
+      const openaiDef = data.find((w) => w.id === targetId)
+      
       if (openaiDef && openaiDef.parameters) {
         setOpenaiProxy(openaiDef.parameters.proxy_url || '')
         setConcurrency(openaiDef.parameters.concurrency || 1)
@@ -93,9 +95,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   }
 
   useEffect(() => {
-    void loadWorkflows()
+    void loadWorkflows(activePlatform)
     void loadRuns(false)
-  }, [])
+  }, [activePlatform])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -121,24 +123,32 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       const currentDef = workflows.find((w) => w.id === workflowId)
 
       if (currentDef) {
-        const updatedParams = {
-          ...currentDef.parameters,
-          proxy_url: openaiProxy.trim(),
-          batch_size: batchSize,
-          concurrency: concurrency,
-          account_type: accountType,
-          full_name: fullName.trim(),
-          age: age === '' ? undefined : age,
-          headless: headless,
-        }
+        const cleanParameters = (params: any) => {
+          const cleaned: any = { ...params };
+          // 确保数值类参数绝对是整数
+          cleaned.batch_size = Math.floor(Number(batchSize) || 1);
+          cleaned.concurrency = Math.floor(Number(concurrency) || 1);
+          cleaned.proxy_url = openaiProxy.trim() || undefined;
+          cleaned.full_name = fullName.trim() || undefined;
+          cleaned.account_type = accountType;
+          cleaned.headless = !!headless;
+          
+          if (age !== '' && !isNaN(Number(age))) {
+            cleaned.age = Math.floor(Number(age));
+          } else {
+            cleaned.age = undefined;
+          }
+          
+          return cleaned;
+        };
 
         await postJson<any, any>('/api/workflows/save', {
           id: currentDef.id,
-          kind: currentDef.kind === 'openai_register' ? 'openai_register' : 'openai_register_browser',
+          kind: currentDef.kind,
           title: currentDef.title,
           summary: currentDef.summary,
           status: 'ready',
-          parameters_json: JSON.stringify(updatedParams),
+          parameters_json: JSON.stringify(cleanParameters(currentDef.parameters || {})),
         })
         setToastContent({ title: '配置已同步', desc: '参数已成功持久化。' })
         setShowToast(true)
@@ -442,7 +452,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 hover:bg-blue-600/40 transition-colors mx-1"
-                          onClick={(e) => {
+                          onClick={(_e) => {
                              // 如果是 /debug 路由，尝试在当前项目范围内打开
                              if (url.startsWith('/debug/')) {
                                // 可以在这里实现一个预览模态框，或者直接跳转

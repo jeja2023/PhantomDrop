@@ -480,6 +480,10 @@ async fn main() {
                         &payload.status,
                         &payload.parameters_json,
                     ) {
+                        eprintln!("❌ 工作流保存预校验失败:");
+                        eprintln!(" - ID: {}", payload.id);
+                        eprintln!(" - Kind: {}", payload.kind);
+                        eprintln!(" - 原因: {}", message);
                         return (
                             StatusCode::BAD_REQUEST,
                             Json(serde_json::json!({"status": "error", "message": message}))

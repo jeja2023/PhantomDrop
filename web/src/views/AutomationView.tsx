@@ -341,12 +341,12 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                       <option value="active">活跃</option>
                       <option value="idle">空闲</option>
                     </select>
-                    <input type="number" value={workflow.parameters.batch_size ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { batch_size: event.target.value ? Number(event.target.value) : undefined })} disabled={workflow.kind !== 'account_generate' && workflow.kind !== 'openai_register'} placeholder="批量数量" className="phantom-input" />
+                    <input type="number" value={workflow.parameters.batch_size ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { batch_size: event.target.value ? Number(event.target.value) : undefined })} disabled={workflow.kind !== 'account_generate' && workflow.kind !== 'openai_register' && workflow.kind !== 'openai_register_browser'} placeholder="批量数量" className="phantom-input" />
                   </div>
                   <input value={workflow.parameters.account_domain ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { account_domain: event.target.value || undefined })} disabled={workflow.kind !== 'account_generate'} placeholder="账户域名" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" />
                   {workflow.kind === 'data_cleanup' ? <input type="number" value={workflow.parameters.days_to_keep ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { days_to_keep: event.target.value ? Number(event.target.value) : undefined })} placeholder="保留天数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" /> : null}
                   {workflow.kind === 'status_report' ? <input type="number" value={workflow.parameters.report_window_hours ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { report_window_hours: event.target.value ? Number(event.target.value) : undefined })} placeholder="统计窗口小时数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" /> : null}
-                  {workflow.kind === 'openai_register' ? (
+                  {workflow.kind === 'openai_register' || workflow.kind === 'openai_register_browser' ? (
                     <div className="grid grid-cols-1 gap-3">
                       <input value={workflow.parameters.proxy_url ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { proxy_url: event.target.value || undefined })} placeholder="全局代理 (如 http://127.0.0.1:10809)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
                       <input value={workflow.parameters.captcha_key ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { captcha_key: event.target.value || undefined })} placeholder="打码平台 API Key" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
@@ -581,6 +581,12 @@ function normalizeParametersForKind(kind: WorkflowKind, parameters: WorkflowPara
         require_public_hub_url: parameters.require_public_hub_url ?? true,
         require_webhook: parameters.require_webhook ?? false,
       }
+    case 'openai_register_browser':
+      return {
+        batch_size: parameters.batch_size ?? 1,
+        proxy_url: parameters.proxy_url ?? '',
+        headless: parameters.headless ?? true,
+      }
     default:
       return {}
   }
@@ -600,7 +606,9 @@ function translateWorkflowKind(kind: WorkflowKind) {
     case 'account_generate':
       return '账户生成'
     case 'openai_register':
-      return 'OpenAI 注册'
+      return 'OpenAI 协议注册'
+    case 'openai_register_browser':
+      return 'OpenAI 浏览器模拟注册'
     case 'data_cleanup':
       return '数据清理'
     case 'status_report':
