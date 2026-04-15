@@ -422,24 +422,67 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                   等待首个事件上报...
                 </div>
               ) : (
-                steps.map((step) => (
-                  <motion.div
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    key={step.id}
-                    className="flex gap-4 group items-baseline"
-                  >
-                    <span className="shrink-0 text-slate-700 w-12 text-[10px]">{new Date(step.created_at * 1000).toLocaleTimeString([], { hour12: false })}</span>
-                    <span className={`shrink-0 font-black text-[10px] ${
-                      step.level === 'success' ? 'text-emerald-500' : 
-                      step.level === 'warn' ? 'text-amber-500' : 
-                      step.level === 'error' ? 'text-rose-500' : 'text-blue-400'
-                    }`}>
-                      [{step.level.toUpperCase()}]
-                    </span>
-                    <span className="text-slate-300 leading-relaxed group-hover:text-white transition-colors antialiased">{step.message}</span>
-                  </motion.div>
-                ))
+                steps.map((step) => {
+                  // 解析简单的 Markdown 链接 [text](url)
+                  const renderMessage = (msg: string) => {
+                    const linkRegex = /\[(.*?)\]\((.*?)\)/g;
+                    const parts = [];
+                    let lastIndex = 0;
+                    let match;
+
+                    while ((match = linkRegex.exec(msg)) !== null) {
+                      if (match.index > lastIndex) {
+                        parts.push(msg.substring(lastIndex, match.index));
+                      }
+                      const [_, text, url] = match;
+                      parts.push(
+                        <a 
+                          key={match.index} 
+                          href={url.startsWith('/') ? url : url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 hover:bg-blue-600/40 transition-colors mx-1"
+                          onClick={(e) => {
+                             // 如果是 /debug 路由，尝试在当前项目范围内打开
+                             if (url.startsWith('/debug/')) {
+                               // 可以在这里实现一个预览模态框，或者直接跳转
+                             }
+                          }}
+                        >
+                          {text}
+                        </a>
+                      );
+                      lastIndex = linkRegex.lastIndex;
+                    }
+
+                    if (lastIndex < msg.length) {
+                      parts.push(msg.substring(lastIndex));
+                    }
+
+                    return parts.length > 0 ? parts : msg;
+                  };
+
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      key={step.id}
+                      className="flex gap-4 group items-baseline"
+                    >
+                      <span className="shrink-0 text-slate-700 w-12 text-[10px]">{new Date(step.created_at * 1000).toLocaleTimeString([], { hour12: false })}</span>
+                      <span className={`shrink-0 font-black text-[10px] ${
+                        step.level === 'success' ? 'text-emerald-500' : 
+                        step.level === 'warn' ? 'text-amber-500' : 
+                        step.level === 'error' ? 'text-rose-500' : 'text-blue-400'
+                      }`}>
+                        [{step.level.toUpperCase()}]
+                      </span>
+                      <span className="text-slate-300 leading-relaxed group-hover:text-white transition-colors antialiased">
+                        {renderMessage(step.message)}
+                      </span>
+                    </motion.div>
+                  );
+                })
               )}
             </div>
 

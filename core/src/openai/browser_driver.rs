@@ -159,37 +159,56 @@ impl BrowserDriver {
         let take_shot = |name: &str, tab: &std::sync::Arc<headless_chrome::Tab>| {
             let _ = std::fs::create_dir_all("./data");
             if let Ok(png) = tab.capture_screenshot(headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png, None, None, true) {
-                let path = format!("./data/debug_{}.png", name);
+                let filename = format!("debug_{}.png", name);
+                let path = format!("./data/{}", filename);
                 let _ = std::fs::write(&path, png);
+                if let Some(cb) = callback {
+                    cb("warn", &format!("📸 自动抓拍已保存: [点击查看](/debug/{})", filename));
+                }
                 return Some(path);
             }
             None
         };
 
         // 2.5 处理可能出现的 Cloudflare Turnstile 验证
-        tokio::time::sleep(Duration::from_secs(8)).await;
-        let is_cf_page = tab.evaluate("document.title.includes('请稍候') || !!document.querySelector('#turnstile-wrapper') || document.body.innerText.includes('Verify you are human')", false)
-            .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
-            .unwrap_or(false);
+        let mut cf_retry = 0;
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let is_cf_page = tab.evaluate("document.title.includes('请稍候') || !!document.querySelector('#turnstile-wrapper') || document.body.innerText.includes('Verify you are human')", false)
+                .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                .unwrap_or(false);
 
-        if is_cf_page {
-            take_shot("cloudflare_blocked", &tab);
-            let page_content = tab.evaluate("document.body.innerText", false)
-                .ok()
-                .and_then(|r| r.value.and_then(|v| v.as_str().map(|s| s.to_string())))
-                .unwrap_or_default();
-            
-            if page_content.contains("Access denied") || page_content.contains("Reference #") {
+            if !is_cf_page {
+                break;
+            }
+
+            if cf_retry >= 5 {
+                take_shot("cloudflare_blocked", &tab);
                  if let Some(cb) = callback {
-                    cb("error", "🚫 OpenAI 拒绝了你的 IP 访问 (Access Denied)。建议更换高质量 Proxy。");
+                    cb("error", "🛡️ 遭遇 Cloudflare 持续拦截，已尝试点击但未能通过，建议检查 Proxy 质量。");
                 }
-                return Err("IP 被封锁 (Access Denied)".to_string());
+                return Err("Cloudflare 验证拦截超时".to_string());
             }
 
             if let Some(cb) = callback {
-                cb("error", "🛡️ 遭遇 Cloudflare 强力拦截，无头模式暂无法自动过白，已存入截图 debug_cloudflare_blocked.png");
+                cb("warn", &format!("🛡️ 正在尝试通过 Cloudflare 验证 (第 {}/5 次尝试)...", cf_retry + 1));
             }
-            return Err("Cloudflare 验证拦截".to_string());
+
+            // 1. 尝试将验证框滚动到视野中心
+            let _ = tab.evaluate(r#"
+                (function() {
+                    const el = document.querySelector('#turnstile-wrapper') || document.querySelector('iframe[src*="cloudflare"]');
+                    if (el) { el.scrollIntoView({block: "center"}); }
+                })()
+            "#, false);
+
+            // 2. 模拟物理点击
+            if let Ok(el) = tab.find_element("#turnstile-wrapper, iframe[src*='cloudflare']") {
+                let _ = el.click();
+            }
+
+            cf_retry += 1;
+            tokio::time::sleep(Duration::from_secs(8)).await;
         }
 
         // 3. 进入注册表单并输入邮箱
