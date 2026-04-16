@@ -32,6 +32,7 @@ export interface EmailDetailApi extends EmailRecordApi {
 export interface EmailItem {
   id: string
   from: string
+  to: string
   subject: string
   time: string
   code: string
@@ -76,6 +77,8 @@ export interface SettingsPayload {
   cloudflare_api_token?: string | null
   cloudflare_zone_id?: string | null
   cloudflare_account_id?: string | null
+  cpa_url?: string | null
+  cpa_key?: string | null
 }
 
 export interface CloudflareAutomationStatus {

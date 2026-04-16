@@ -29,6 +29,7 @@ function formatEmail(record: EmailRecordApi): EmailItem {
   return {
     id: record.id,
     from: record.from_addr,
+    to: record.to_addr,
     subject: record.subject || '无主题',
     time: new Date(record.created_at * 1000).toLocaleString(),
     code: record.extracted_code || '',
@@ -346,11 +347,12 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                   <th className="w-[56px] text-center text-[10px] font-bold">
                     <input type="checkbox" aria-label="全选当前页邮件" title="全选当前页邮件" checked={allVisibleSelected} onChange={toggleSelectAll} />
                   </th>
-                  <th className="w-[120px] text-center text-[10px] font-bold">状态</th>
-                  <th className="w-[240px] text-left text-[10px] font-bold">发件人</th>
-                  <th className="text-left text-[10px] font-bold">摘要</th>
-                  <th className="w-[180px] text-left text-[10px] font-bold">捕获时间</th>
-                  <th className="w-[140px] text-right text-[10px] font-bold">验证码</th>
+                  <th className="w-[80px] text-center text-[10px] font-bold">状态</th>
+                  <th className="w-[200px] text-left text-[10px] font-bold">发件人</th>
+                  <th className="w-[200px] text-left text-[10px] font-bold">收件人</th>
+                  <th className="w-[240px] text-left text-[10px] font-bold">摘要</th>
+                  <th className="w-[160px] text-left text-[10px] font-bold flex-grow">捕获时间</th>
+                  <th className="w-[120px] text-right text-[10px] font-bold">验证码</th>
                 </tr>
               </thead>
               <tbody>
@@ -373,8 +375,9 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                           {email.isArchived ? '已归档' : '已解析'}
                         </span>
                       </td>
-                      <td className="font-mono text-xs font-bold text-slate-800">{email.from}</td>
-                      <td className="text-xs font-medium text-slate-600">{email.subject}</td>
+                      <td className="font-mono text-[11px] font-bold text-slate-800 truncate max-w-[200px]" title={email.from}>{email.from}</td>
+                      <td className="font-mono text-[11px] font-bold text-blue-600 truncate max-w-[200px]" title={email.to}>{email.to}</td>
+                      <td className="text-[11px] font-medium text-slate-600 truncate max-w-[240px]" title={email.subject}>{email.subject}</td>
                       <td className="text-[10px] font-mono text-slate-500">{email.time}</td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2">

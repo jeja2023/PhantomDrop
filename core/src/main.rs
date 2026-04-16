@@ -102,6 +102,8 @@ struct SettingsPayload {
     cloudflare_api_token: Option<String>,
     cloudflare_zone_id: Option<String>,
     cloudflare_account_id: Option<String>,
+    cpa_url: Option<String>,
+    cpa_key: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -153,57 +155,21 @@ async fn console_script() -> impl IntoResponse {
 
 fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
     SettingsPayload {
-        webhook_url: map
-            .get("webhook_url")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        update_rate: map
-            .get("update_rate")
-            .and_then(|value| value.parse::<u64>().ok()),
-        auth_secret: map
-            .get("auth_secret")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        decode_depth: map
-            .get("decode_depth")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        public_hub_url: map
-            .get("public_hub_url")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        account_domain: map
-            .get("account_domain")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_default_mode: map
-            .get("cloudflare_default_mode")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_public_url: map
-            .get("cloudflare_public_url")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_route_local_part: map
-            .get("cloudflare_route_local_part")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_zone_domain: map
-            .get("cloudflare_zone_domain")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_api_token: map
-            .get("cloudflare_api_token")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_zone_id: map
-            .get("cloudflare_zone_id")
-            .cloned()
-            .filter(|value| !value.is_empty()),
-        cloudflare_account_id: map
-            .get("cloudflare_account_id")
-            .cloned()
-            .filter(|value| !value.is_empty()),
+        webhook_url: map.get("webhook_url").cloned().filter(|v| !v.is_empty()),
+        update_rate: map.get("update_rate").and_then(|v| v.parse::<u64>().ok()),
+        auth_secret: map.get("auth_secret").cloned().filter(|v| !v.is_empty()),
+        decode_depth: map.get("decode_depth").cloned().filter(|v| !v.is_empty()),
+        public_hub_url: map.get("public_hub_url").cloned().filter(|v| !v.is_empty()),
+        account_domain: map.get("account_domain").cloned().filter(|v| !v.is_empty()),
+        cloudflare_default_mode: map.get("cloudflare_default_mode").cloned().filter(|v| !v.is_empty()),
+        cloudflare_public_url: map.get("cloudflare_public_url").cloned().filter(|v| !v.is_empty()),
+        cloudflare_route_local_part: map.get("cloudflare_route_local_part").cloned().filter(|v| !v.is_empty()),
+        cloudflare_zone_domain: map.get("cloudflare_zone_domain").cloned().filter(|v| !v.is_empty()),
+        cloudflare_api_token: map.get("cloudflare_api_token").cloned().filter(|v| !v.is_empty()),
+        cloudflare_zone_id: map.get("cloudflare_zone_id").cloned().filter(|v| !v.is_empty()),
+        cloudflare_account_id: map.get("cloudflare_account_id").cloned().filter(|v| !v.is_empty()),
+        cpa_url: map.get("cpa_url").cloned().filter(|v| !v.is_empty()),
+        cpa_key: map.get("cpa_key").cloned().filter(|v| !v.is_empty()),
     }
 }
 
@@ -630,16 +596,19 @@ async fn main() {
                 async move {
                     match dl.list_generated_accounts(&run_id, 1000).await {
                         Ok(accounts) => {
-                            let mut csv = String::from("address,password,status,created_at\n");
+                            let mut csv = String::from("address,password,status,created_at,access_token,session_token,refresh_token\n");
                             for account in accounts {
                                 let line = format!(
-                                    "\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                                    "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
                                     account.address.replace('"', "\"\""),
                                     account.password.replace('"', "\"\""),
                                     account.status.replace('"', "\"\""),
                                     chrono::DateTime::from_timestamp(account.created_at, 0)
                                         .map(|dt| dt.naive_utc().to_string())
                                         .unwrap_or_else(|| account.created_at.to_string()),
+                                    account.access_token.as_deref().unwrap_or("").replace('"', "\"\""),
+                                    account.session_token.as_deref().unwrap_or("").replace('"', "\"\""),
+                                    account.refresh_token.as_deref().unwrap_or("").replace('"', "\"\""),
                                 );
                                 csv.push_str(&line);
                             }
@@ -754,6 +723,160 @@ async fn main() {
                             ).into_response()
                         }
                     }
+                }
+            }
+        }))
+        .route("/api/accounts/:id", delete({
+            let dl = Arc::clone(&data_lake);
+            move |Path(id): Path<String>| {
+                let dl = dl.clone();
+                async move {
+                    match dl.delete_generated_account(&id).await {
+                        Ok(count) if count > 0 => Json(serde_json::json!({"status": "success"})).into_response(),
+                        Ok(_) => (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({"status": "error", "message": "账号不存在"}))
+                        ).into_response(),
+                        Err(e) => {
+                            eprintln!("删除账号失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "删除账号失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts/:id/check-status", post({
+            let dl = Arc::clone(&data_lake);
+            move |Path(id): Path<String>| {
+                let dl = dl.clone();
+                async move {
+                    match openai::checker::check_account_status(dl, &id).await {
+                        Ok(status) => Json(serde_json::json!({"status": "success", "account_status": status})).into_response(),
+                        Err(e) => {
+                            eprintln!("检查账号状态失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": e}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts/batch/check-status", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<HashMap<String, Vec<String>>>| {
+                let dl = dl.clone();
+                async move {
+                    let ids = payload.get("ids").cloned().unwrap_or_default();
+                    let mut results = Vec::new();
+                    for id in ids {
+                        // 串行检查以避免触发 OpenAI 并发封禁
+                        let res = openai::checker::check_account_status(dl.clone(), &id).await;
+                        results.push(serde_json::json!({
+                            "id": id,
+                            "status": match res {
+                                Ok(s) => s,
+                                Err(e) => format!("Error: {}", e),
+                            }
+                        }));
+                    }
+                    Json(serde_json::json!({"status": "success", "results": results})).into_response()
+                }
+            }
+        }))
+        .route("/api/accounts/batch", delete({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<HashMap<String, Vec<String>>>| {
+                let dl = dl.clone();
+                async move {
+                    let ids = payload.get("ids").cloned().unwrap_or_default();
+                    match dl.delete_generated_accounts(&ids).await {
+                        Ok(count) => Json(serde_json::json!({"status": "success", "deleted": count})).into_response(),
+                        Err(e) => {
+                            eprintln!("批量删除账号失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "批量删除账号失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts/cleanup-failures", post({
+            let dl = Arc::clone(&data_lake);
+            move || {
+                let dl = dl.clone();
+                async move {
+                    match dl.delete_failed_accounts().await {
+                        Ok(count) => Json(serde_json::json!({"status": "success", "deleted": count})).into_response(),
+                        Err(e) => {
+                            eprintln!("清理失败账号失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "清理失败账号失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts/batch/upload-cpa", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<HashMap<String, Vec<String>>>| {
+                let dl = dl.clone();
+                async move {
+                    let ids = payload.get("ids").cloned().unwrap_or_default();
+                    
+                    // 获取设置
+                    let settings = match dl.list_settings().await {
+                        Ok(s) => s,
+                        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "无法读取设置").into_response(),
+                    };
+                    
+                    let cpa_url = match settings.get("cpa_url") {
+                         Some(u) if !u.trim().is_empty() => u.clone(),
+                         _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 CPA 接口地址").into_response(),
+                    };
+                    
+                    let cpa_key = settings.get("cpa_key").cloned().unwrap_or_default();
+                    let client = reqwest::Client::new();
+                    
+                    let mut success_count = 0;
+                    let mut fail_count = 0;
+                    
+                    for id in ids {
+                        if let Ok(Some(acc)) = dl.get_generated_account(&id).await {
+                             match crate::uploader::upload_account(
+                                 &client,
+                                 &cpa_url,
+                                 &cpa_key,
+                                 &acc.address,
+                                 &acc.password,
+                                 acc.access_token.as_deref(),
+                                 acc.refresh_token.as_deref(),
+                                 acc.session_token.as_deref()
+                             ).await {
+                                 Ok(_) => {
+                                     let _ = dl.update_account_upload_status(&id, "uploaded").await;
+                                     success_count += 1;
+                                 },
+                                 Err(e) => {
+                                     eprintln!("CPA 上传失败 ({}): {}", id, e);
+                                     fail_count += 1;
+                                 }
+                             }
+                        }
+                    }
+                    
+                    Json(serde_json::json!({
+                        "status": "success", 
+                        "message": format!("同步完成: 成功 {} 条, 失败 {} 条", success_count, fail_count)
+                    })).into_response()
                 }
             }
         }))
@@ -916,6 +1039,20 @@ async fn main() {
                         let trimmed = cloudflare_account_id.trim();
                         if !trimmed.is_empty() {
                             let _ = dl.upsert_setting("cloudflare_account_id", trimmed).await;
+                        }
+                    }
+
+                    if let Some(cpa_url) = payload.cpa_url.as_deref() {
+                        let trimmed = cpa_url.trim();
+                        if !trimmed.is_empty() {
+                            let _ = dl.upsert_setting("cpa_url", trimmed).await;
+                        }
+                    }
+
+                    if let Some(cpa_key) = payload.cpa_key.as_deref() {
+                        let trimmed = cpa_key.trim();
+                        if !trimmed.is_empty() {
+                            let _ = dl.upsert_setting("cpa_key", trimmed).await;
                         }
                     }
 

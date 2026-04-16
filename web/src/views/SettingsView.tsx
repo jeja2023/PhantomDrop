@@ -33,7 +33,10 @@ export default function SettingsView() {
   const [cloudflareApiToken, setCloudflareApiToken] = useState('')
   const [cloudflareZoneId, setCloudflareZoneId] = useState('')
   const [cloudflareAccountId, setCloudflareAccountId] = useState('')
+  const [cpaUrl, setCpaUrl] = useState('')
+  const [cpaKey, setCpaKey] = useState('')
   const [showCloudflareToken, setShowCloudflareToken] = useState(false)
+  const [showCpaKey, setShowCpaKey] = useState(false)
   const [automationStatus, setAutomationStatus] = useState<CloudflareAutomationStatus | null>(null)
 
   useEffect(() => {
@@ -52,6 +55,8 @@ export default function SettingsView() {
         setCloudflareApiToken(settings.cloudflare_api_token || '')
         setCloudflareZoneId(settings.cloudflare_zone_id || '')
         setCloudflareAccountId(settings.cloudflare_account_id || '')
+        setCpaUrl(settings.cpa_url || '')
+        setCpaKey(settings.cpa_key || '')
         const status = await fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status')
         setAutomationStatus(status)
       } finally {
@@ -82,6 +87,8 @@ export default function SettingsView() {
       cloudflare_api_token: cloudflareApiToken || null,
       cloudflare_zone_id: cloudflareZoneId || null,
       cloudflare_account_id: cloudflareAccountId || null,
+      cpa_url: cpaUrl || null,
+      cpa_key: cpaKey || null,
     })
 
     window.dispatchEvent(
@@ -303,6 +310,7 @@ export default function SettingsView() {
             />
           </SettingsSectionCard>
 
+
           <SettingsSectionCard icon={<Activity size={14} />} title="链路结果">
             <div className="space-y-2">
               <div className="grid gap-1.5 sm:grid-cols-2">
@@ -480,6 +488,49 @@ export default function SettingsView() {
                 control={<input value={cloudflareAccountId} onChange={(e) => setCloudflareAccountId(e.target.value)} disabled={isLoading} className="phantom-input w-full" placeholder="请输入账户编号" />}
               />
             </div>
+          </SettingsSectionCard>
+          
+          <SettingsSectionCard icon={<ExternalLink size={14} />} title="账号分发 (CPA)">
+            <SettingsRow
+              title="CPA 接口地址"
+              hint="推送产物的 API 端点"
+              control={
+                <input
+                  aria-label="CPA 接口地址"
+                  title="CPA 接口地址"
+                  value={cpaUrl}
+                  onChange={(e) => setCpaUrl(e.target.value)}
+                  placeholder="https://cpa.chat/api/openai/import"
+                  disabled={isLoading}
+                  className="phantom-input w-full"
+                />
+              }
+            />
+            <SettingsRow
+              title="CPA 认证密钥"
+              hint="分发平台令牌"
+              control={
+                <div className="relative">
+                  <input
+                    aria-label="CPA 认证密钥"
+                    title="CPA 认证密钥"
+                    type={showCpaKey ? 'text' : 'password'}
+                    value={cpaKey}
+                    onChange={(e) => setCpaKey(e.target.value)}
+                    disabled={isLoading}
+                    placeholder="请输入 CPA Key"
+                    className="phantom-input w-full pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCpaKey(!showCpaKey)}
+                    className="absolute right-0 top-0 bottom-0 px-3 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors"
+                  >
+                    <Lock size={14} className={showCpaKey ? 'text-blue-500' : ''} />
+                  </button>
+                </div>
+              }
+            />
           </SettingsSectionCard>
         </div>
       </div>

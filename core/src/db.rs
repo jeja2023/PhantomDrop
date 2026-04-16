@@ -1139,6 +1139,77 @@ impl DataLake {
         Ok(count)
     }
 
+    /// 删除指定的已生成账号产物
+    pub async fn delete_generated_account(&self, id: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM generated_accounts WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 批量删除已生成的账号产物
+    pub async fn delete_generated_accounts(&self, ids: &[String]) -> Result<u64, sqlx::Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        let sql = format!("DELETE FROM generated_accounts WHERE id IN ({placeholders})");
+        let mut query = sqlx::query(&sql);
+        for id in ids {
+            query = query.bind(id);
+        }
+
+        let result = query.execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+    /// 清理所有注册失败（状态不包含 registered 或 success）的账号记录
+    pub async fn delete_failed_accounts(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "DELETE FROM generated_accounts 
+             WHERE status NOT LIKE '%registered%' 
+             AND LOWER(status) NOT LIKE '%success%'"
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 更新账号状态
+    pub async fn update_account_status(
+        &self,
+        id: &str,
+        status: &str,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("UPDATE generated_accounts SET status = ? WHERE id = ?")
+            .bind(status)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 获取单个生成的账号产物
+    pub async fn get_generated_account(
+        &self,
+        id: &str,
+    ) -> Result<Option<GeneratedAccountRecord>, sqlx::Error> {
+        let record = sqlx::query_as::<_, GeneratedAccountRecord>(
+            "SELECT id, run_id, address, password, status, created_at,
+                    access_token, refresh_token, session_token,
+                    device_id, workspace_id, upload_status, account_type
+             FROM generated_accounts
+             WHERE id = ?
+             LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
     /// 内部 OTP 轮询：根据收件地址查询最近的验证码
     pub async fn poll_otp_by_email(
         &self,

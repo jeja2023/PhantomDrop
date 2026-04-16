@@ -35,6 +35,7 @@ function formatEmail(record: EmailRecordApi): EmailItem {
   return {
     id: record.id,
     from: record.from_addr,
+    to: record.to_addr,
     subject: record.subject || '无主题',
     time: new Date(record.created_at * 1000).toLocaleString(),
     code: record.extracted_code || '',
@@ -166,6 +167,7 @@ function App() {
         {
           id: data.id,
           from: data.from,
+          to: data.to,
           subject: data.subject || '无主题',
           time: '刚刚',
           code: data.code || '',

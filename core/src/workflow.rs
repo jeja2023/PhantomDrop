@@ -171,9 +171,20 @@ impl WorkflowEngine {
     }
 
     pub async fn ensure_builtin_definitions(&self) {
+        // 先获取现有定义以检查是否需要保留参数
+        let existing = self.dl.list_workflow_definitions().await.unwrap_or_default();
+
         for definition in Self::builtin_definitions() {
-            let parameters_json =
+            let mut parameters_json =
                 serde_json::to_string(&definition.parameters).unwrap_or_else(|_| "{}".to_string());
+
+            // 如果数据库中已经存在该 ID 的定义，则保留原有的参数配置，防止被内置默认值覆盖
+            if let Some(record) = existing.iter().find(|r| r.id == definition.id) {
+                if !record.parameters_json.is_empty() && record.parameters_json != "{}" {
+                    parameters_json = record.parameters_json.clone();
+                }
+            }
+
             let _ = self
                 .dl
                 .upsert_workflow_definition(
