@@ -40,7 +40,7 @@ pub struct RegisterResult {
 }
 
 /// 构建 HTTP 客户端（可选代理）
-fn build_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
+pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .user_agent(constants::DEFAULT_USER_AGENT)
         .timeout(std::time::Duration::from_secs(30))

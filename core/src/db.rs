@@ -1109,34 +1109,97 @@ impl DataLake {
         Ok(records)
     }
 
-    /// 获取全局账号列表（支持分页）
+    /// 获取全局账号列表（支持分页与搜索）
     pub async fn list_all_accounts(
         &self,
         limit: i64,
         offset: i64,
+        query: Option<&str>,
     ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
-        let records = sqlx::query_as::<_, GeneratedAccountRecord>(
-            "SELECT id, run_id, address, password, status, created_at,
-                    access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type
-             FROM generated_accounts
-             ORDER BY created_at DESC
-             LIMIT ? OFFSET ?",
-        )
-        .bind(limit.clamp(1, 500))
-        .bind(offset.max(0))
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
+        if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
+            let like = format!("%{}%", q.trim().to_lowercase());
+            let records = sqlx::query_as::<_, GeneratedAccountRecord>(
+                "SELECT id, run_id, address, password, status, created_at,
+                        access_token, refresh_token, session_token,
+                        device_id, workspace_id, upload_status, account_type
+                 FROM generated_accounts
+                 WHERE lower(address) LIKE ? OR lower(status) LIKE ? OR lower(run_id) LIKE ?
+                 ORDER BY created_at DESC
+                 LIMIT ? OFFSET ?",
+            )
+            .bind(&like)
+            .bind(&like)
+            .bind(&like)
+            .bind(limit.clamp(1, 1000))
+            .bind(offset.max(0))
+            .fetch_all(&self.pool)
+            .await?;
+            Ok(records)
+        } else {
+            let records = sqlx::query_as::<_, GeneratedAccountRecord>(
+                "SELECT id, run_id, address, password, status, created_at,
+                        access_token, refresh_token, session_token,
+                        device_id, workspace_id, upload_status, account_type
+                 FROM generated_accounts
+                 ORDER BY created_at DESC
+                 LIMIT ? OFFSET ?",
+            )
+            .bind(limit.clamp(1, 1000))
+            .bind(offset.max(0))
+            .fetch_all(&self.pool)
+            .await?;
+            Ok(records)
+        }
     }
 
-    /// 获取全局账号总数
-    pub async fn count_all_accounts(&self) -> Result<i64, sqlx::Error> {
-        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM generated_accounts")
+    /// 获取全局账号总数（支持搜索）
+    pub async fn count_all_accounts(&self, query: Option<&str>) -> Result<i64, sqlx::Error> {
+        let count = if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
+            let like = format!("%{}%", q.trim().to_lowercase());
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM generated_accounts WHERE lower(address) LIKE ? OR lower(status) LIKE ? OR lower(run_id) LIKE ?"
+            )
+            .bind(&like)
+            .bind(&like)
+            .bind(&like)
             .fetch_one(&self.pool)
-            .await?;
+            .await?
+        } else {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM generated_accounts")
+                .fetch_one(&self.pool)
+                .await?
+        };
         Ok(count)
+    }
+
+    /// 获取所有符合条件的账号 ID
+    pub async fn list_all_account_ids(&self, query: Option<&str>) -> Result<Vec<String>, sqlx::Error> {
+        let ids = if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
+            let like = format!("%{}%", q.trim().to_lowercase());
+            let rows = sqlx::query(
+                "SELECT id FROM generated_accounts WHERE lower(address) LIKE ? OR lower(status) LIKE ? OR lower(run_id) LIKE ? ORDER BY created_at DESC"
+            )
+            .bind(&like)
+            .bind(&like)
+            .bind(&like)
+            .fetch_all(&self.pool)
+            .await?;
+            
+            rows.into_iter().map(|r| {
+                use sqlx::Row;
+                r.get::<String, _>("id")
+            }).collect()
+        } else {
+            let rows = sqlx::query("SELECT id FROM generated_accounts ORDER BY created_at DESC")
+                .fetch_all(&self.pool)
+                .await?;
+                
+            rows.into_iter().map(|r| {
+                use sqlx::Row;
+                r.get::<String, _>("id")
+            }).collect()
+        };
+        Ok(ids)
     }
 
     /// 删除指定的已生成账号产物

@@ -678,9 +678,10 @@ async fn main() {
                     let offset = query.get("offset")
                         .and_then(|v| v.parse::<i64>().ok())
                         .unwrap_or(0);
+                    let q = query.get("q").cloned();
 
-                    let items = dl.list_all_accounts(limit, offset).await;
-                    let total = dl.count_all_accounts().await;
+                    let items = dl.list_all_accounts(limit, offset, q.as_deref()).await;
+                    let total = dl.count_all_accounts(q.as_deref()).await;
 
                     match (items, total) {
                         (Ok(items), Ok(total)) => Json(serde_json::json!({
@@ -694,6 +695,28 @@ async fn main() {
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取全局账号列表失败"}))
+                            ).into_response()
+                        }
+                    }
+                }
+            }
+        }))
+        .route("/api/accounts/ids", get({
+            let dl = Arc::clone(&data_lake);
+            move |Query(query): Query<HashMap<String, String>>| {
+                let dl = dl.clone();
+                async move {
+                    let q = query.get("q").cloned();
+                    match dl.list_all_account_ids(q.as_deref()).await {
+                        Ok(ids) => Json(serde_json::json!({
+                            "status": "success",
+                            "ids": ids
+                        })).into_response(),
+                        Err(e) => {
+                            eprintln!("读取全部账号 ID 失败: {:?}", e);
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "读取全部账号 ID 失败"}))
                             ).into_response()
                         }
                     }

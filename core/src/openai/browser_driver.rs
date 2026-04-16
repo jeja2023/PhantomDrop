@@ -1,6 +1,7 @@
 use headless_chrome::{Browser, LaunchOptions};
 use std::time::Duration;
-use crate::openai::register::RegisterContext;
+use crate::openai::register::{RegisterContext, build_client};
+use crate::openai::sentinel;
 use anyhow::Result;
 
 /**
@@ -24,6 +25,32 @@ impl BrowserDriver {
         let mode_text = if self.context.headless { "无头模式" } else { "有头模式 (Xvfb)" };
         if let Some(cb) = callback {
             cb("info", &format!("🚀 正在初始化 PhantomBrowser 仿真容器 ({})...", mode_text));
+        }
+
+        // --- 核心增强：环境预检 (IP 检查) ---
+        if let Some(cb) = callback {
+            cb("info", "[EnvCheck] 正在探测浏览器出口 IP 环境...");
+        }
+
+        let pre_client = build_client(self.context.proxy_url.as_deref())?;
+        match sentinel::check_ip_quality(&pre_client).await {
+            Ok(info) => {
+                if let Some(cb) = callback {
+                    let msg = format!(
+                        "环境探测成功 | IP: {} | 归属地: {} | 组织: {} | 风险评估: {}",
+                        info.ip,
+                        info.country,
+                        info.org,
+                        if info.is_datacenter { "⚠️ 机房/数据中心 (高风险)" } else { "✅ 住宅/基站 (低风险)" }
+                    );
+                    cb(if info.is_datacenter { "warn" } else { "success" }, &msg);
+                }
+            }
+            Err(e) => {
+                if let Some(cb) = callback {
+                    cb("warn", &format!("环境预检跳过 (检测服务暂时不可达): {}", e));
+                }
+            }
         }
 
         // 1. 启动浏览器 (极致伪装以绕过检测)

@@ -46,7 +46,8 @@ const AccountListView: React.FC = () => {
     setLoading(true);
     try {
       const offset = (page - 1) * pageSize;
-      const data = await fetchJson<AccountPageResponse>(`/api/accounts?limit=${pageSize}&offset=${offset}`);
+      const queryParam = search ? `&q=${encodeURIComponent(search)}` : '';
+      const data = await fetchJson<AccountPageResponse>(`/api/accounts?limit=${pageSize}&offset=${offset}${queryParam}`);
       setAccounts(data.items);
       setTotal(data.total);
     } catch (error) {
@@ -58,7 +59,7 @@ const AccountListView: React.FC = () => {
 
   useEffect(() => {
     loadAccounts();
-  }, [page]);
+  }, [page, search]);
 
   const handleExport = () => {
     window.open('/api/workflow-runs/all/accounts/export', '_blank');
@@ -119,10 +120,31 @@ const AccountListView: React.FC = () => {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === filteredAccounts.length) {
+    const allOnPageSelected = accounts.length > 0 && accounts.every(acc => selectedIds.includes(acc.id));
+    if (allOnPageSelected) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(filteredAccounts.map(acc => acc.id));
+      const pageIds = accounts.map(acc => acc.id);
+      setSelectedIds(prev => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
+
+  const handleSelectAllAcrossPages = async () => {
+    setLoading(true);
+    try {
+      const queryParam = search ? `?q=${encodeURIComponent(search)}` : '';
+      const res = await fetchJson<{ status: string, ids: string[] }>(`/api/accounts/ids${queryParam}`);
+      if (res.status === 'success') {
+        setSelectedIds(res.ids);
+        const event = new CustomEvent('phantom-log', { 
+            detail: { msg: `已选中全部 ${res.ids.length} 个账号`, level: 'info' } 
+        });
+        window.dispatchEvent(event);
+      }
+    } catch (error) {
+      console.error('Failed to select all IDs:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -229,11 +251,7 @@ const AccountListView: React.FC = () => {
     }
   };
 
-  const filteredAccounts = accounts.filter(acc => 
-    acc.address.toLowerCase().includes(search.toLowerCase()) ||
-    acc.status.toLowerCase().includes(search.toLowerCase()) ||
-    acc.run_id.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredAccounts = accounts;
 
   return (
     <div className="h-full flex flex-col space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -360,7 +378,7 @@ const AccountListView: React.FC = () => {
                     <input 
                       type="checkbox" 
                       className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      checked={selectedIds.length > 0 && selectedIds.length === filteredAccounts.length}
+                      checked={accounts.length > 0 && accounts.every(acc => selectedIds.includes(acc.id))}
                       onChange={toggleSelectAll}
                     />
                   </th>
@@ -373,6 +391,19 @@ const AccountListView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
+                {selectedIds.length > 0 && selectedIds.length === accounts.length && total > accounts.length && (
+                  <tr className="bg-indigo-50/50 border-b border-indigo-100">
+                    <td colSpan={7} className="px-6 py-2 text-center text-xs font-medium text-indigo-700">
+                       已选择本页所有条目。
+                       <button 
+                        onClick={handleSelectAllAcrossPages}
+                        className="ml-2 font-black underline hover:text-indigo-900 transition-colors"
+                       >
+                         选择系统内全部 {total} 个匹配账号
+                       </button>
+                    </td>
+                  </tr>
+                )}
                 {loading && accounts.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-20 text-center">
