@@ -671,6 +671,8 @@ function translateStepLevel(level: WorkflowStepRecord['level']) {
       return '警告'
     case 'info':
       return '信息'
+    case 'cancelled':
+      return '已取消'
   }
 }
 
@@ -697,5 +699,7 @@ function stepTone(level: WorkflowStepRecord['level']) {
       return 'bg-blue-500/10 text-blue-600'
     case 'info':
       return 'bg-slate-200 text-slate-600'
+    case 'cancelled':
+      return 'bg-neutral-500/10 text-neutral-600'
   }
 }

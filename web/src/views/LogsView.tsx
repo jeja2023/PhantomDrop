@@ -164,7 +164,7 @@ function RuntimeMetric({ icon, label, value }: { icon: ReactNode; label: string;
   )
 }
 
-function StepStateBadge({ level }: { level: 'running' | 'success' | 'warn' | 'info' | 'error' }) {
+function StepStateBadge({ level }: { level: 'running' | 'success' | 'warn' | 'info' | 'error' | 'cancelled' }) {
   const tone =
     level === 'success'
       ? 'bg-emerald-500/10 text-emerald-600'
@@ -174,7 +174,9 @@ function StepStateBadge({ level }: { level: 'running' | 'success' | 'warn' | 'in
           ? 'bg-rose-500/10 text-rose-600'
           : level === 'info'
             ? 'bg-slate-200 text-slate-600'
-            : 'bg-blue-500/10 text-blue-600'
+            : level === 'cancelled'
+              ? 'bg-neutral-500/10 text-neutral-600'
+              : 'bg-blue-500/10 text-blue-600'
 
   const labelMap = {
     running: '运行中',
@@ -182,6 +184,7 @@ function StepStateBadge({ level }: { level: 'running' | 'success' | 'warn' | 'in
     warn: '警告',
     error: '错误',
     info: '信息',
+    cancelled: '已取消',
   } as const
 
   return <span className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black tracking-widest ${tone}`}>{labelMap[level]}</span>
