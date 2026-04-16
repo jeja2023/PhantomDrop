@@ -239,7 +239,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
 
   const handleStopRun = async (runId: string) => {
     try {
-      await postJson<{ status: string }>(`/api/workflow-runs/${runId}/stop`, {})
+      await postJson<{ status: string }, Record<string, never>>(`/api/workflow-runs/${runId}/stop`, {})
       setToastContent({ title: '已发送终止指令', desc: '正在尝试安全停止工作流执行。' })
       setShowToast(true)
       setTimeout(() => setShowToast(false), 2000)
