@@ -73,6 +73,7 @@ export default function Cmd({ isOpen, onClose }: CmdProps) {
           records.map((record) => ({
             id: record.id,
             from: record.from_addr,
+            to: record.to_addr,
             subject: record.subject || '无主题',
             time: new Date(record.created_at * 1000).toLocaleString(),
             code: record.extracted_code || '',
