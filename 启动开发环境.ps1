@@ -105,8 +105,8 @@ Write-Host "启动模式  : $Mode" -ForegroundColor DarkCyan
 Write-Host "项目目录  : $projectRoot" -ForegroundColor DarkCyan
 Write-Host "授权密钥  : $HubSecret" -ForegroundColor DarkCyan
 Write-Host "数据库地址: $dbUrl" -ForegroundColor DarkCyan
-$winMode = if ($SeparateWindows) { "Multi-Window" } else { "Single-Window" }
-if ($winMode -eq "Multi-Window") { Write-Host "窗口模式  : 多窗口" -ForegroundColor DarkCyan } else { Write-Host "窗口模式  : 单窗口 / 后台" -ForegroundColor DarkCyan }
+$winMode = if ($SeparateWindows) { '多窗口' } else { '单窗口 / 后台' }
+Write-Host "窗口模式  : $winMode" -ForegroundColor DarkCyan
 Write-Host "========================================================"
 
 if ($Mode -eq "console") {
@@ -123,7 +123,8 @@ if ($Mode -eq "console") {
 $corePid = Get-ListeningProcessId -Port 9010
 if ($corePid) {
     Write-Host "检测到后端已在运行，复用进程：$corePid" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "正在启动 Rust 后端..." -ForegroundColor Yellow
     $coreProcess = Start-PhantomProcess -WorkingDir $coreDir -StdoutLog $coreStdoutLog -StderrLog $coreStderrLog -Visible:$SeparateWindows -Command @"
 `$env:HUB_SECRET = '$HubSecret'
@@ -133,7 +134,8 @@ cargo run
 
     if ($SeparateWindows) {
         Write-Host "后端已在独立窗口启动。" -ForegroundColor DarkYellow
-    } else {
+    }
+    else {
         Write-Host "后端已在后台启动，进程号：$($coreProcess.Id)" -ForegroundColor DarkYellow
         Write-Host "后端日志：$coreStdoutLog" -ForegroundColor DarkGray
         Write-Host "错误日志：$coreStderrLog" -ForegroundColor DarkGray
@@ -143,7 +145,8 @@ cargo run
 $webPid = Get-ListeningProcessId -Port 5173
 if ($webPid) {
     Write-Host "检测到前端已在运行，复用进程：$webPid" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "正在启动前端开发服务..." -ForegroundColor Yellow
     $webProcess = Start-PhantomProcess -WorkingDir $webDir -StdoutLog $webStdoutLog -StderrLog $webStderrLog -Visible:$SeparateWindows -Command @"
 `$env:VITE_BACKEND_URL = 'http://127.0.0.1:9010'
@@ -152,7 +155,8 @@ npm run dev
 
     if ($SeparateWindows) {
         Write-Host "前端已在独立窗口启动。" -ForegroundColor DarkYellow
-    } else {
+    }
+    else {
         Write-Host "前端已在后台启动，进程号：$($webProcess.Id)" -ForegroundColor DarkYellow
         Write-Host "前端日志：$webStdoutLog" -ForegroundColor DarkGray
         Write-Host "错误日志：$webStderrLog" -ForegroundColor DarkGray

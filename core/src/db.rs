@@ -782,9 +782,10 @@ impl DataLake {
         Ok(status.0)
     }
 
-    /// 标记工作流为停止/取消
     pub async fn stop_workflow_run(&self, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("UPDATE workflow_runs SET status = 'cancelled', message = '用户手动终止' WHERE id = ? AND status = 'running'")
+        let now = Utc::now().timestamp();
+        let result = sqlx::query("UPDATE workflow_runs SET status = 'cancelled', message = '用户手动终止', finished_at = ? WHERE id = ? AND status = 'running'")
+            .bind(now)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1128,6 +1129,14 @@ impl DataLake {
         .await?;
 
         Ok(records)
+    }
+
+    /// 获取全局账号总数
+    pub async fn count_all_accounts(&self) -> Result<i64, sqlx::Error> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM generated_accounts")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count)
     }
 
     /// 内部 OTP 轮询：根据收件地址查询最近的验证码

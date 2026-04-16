@@ -290,16 +290,29 @@ impl WorkflowEngine {
 
             match definition_for_task.kind {
                 WorkflowKind::AccountGenerate => {
-                    let message = Self::simulate_account_gen(
+                    match Self::simulate_account_gen(
                         &hub,
                         &dl,
                         &mut context,
                         &definition_for_task.parameters,
                     )
-                    .await;
-                    let _ = dl
-                        .finish_workflow_run(&run_id_for_task, "success", &message)
-                        .await;
+                    .await
+                    {
+                        Ok(message) => {
+                            let _ = dl
+                                .finish_workflow_run(&run_id_for_task, "success", &message)
+                                .await;
+                        }
+                        Err(message) if message == "cancelled" => {
+                            // 保持数据库中的 cancelled 状态，仅记录一条结束语
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行").await;
+                        }
+                        Err(message) => {
+                            let _ = dl
+                                .finish_workflow_run(&run_id_for_task, "warn", &message)
+                                .await;
+                        }
+                    }
                 }
                 WorkflowKind::StatusReport => {
                     match Self::simulate_status_check(
@@ -378,6 +391,9 @@ impl WorkflowEngine {
                                 .finish_workflow_run(&run_id_for_task, "success", &message)
                                 .await;
                         }
+                        Err(message) if message == "cancelled" => {
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行").await;
+                        }
                         Err(message) => {
                             Self::log_step(&hub, &dl, &mut context, "error", &message).await;
                             let _ = dl
@@ -400,6 +416,9 @@ impl WorkflowEngine {
                                 .finish_workflow_run(&run_id_for_task, "success", &message)
                                 .await;
                         }
+                        Err(message) if message == "cancelled" => {
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行").await;
+                        }
                         Err(message) => {
                             Self::log_step(&hub, &dl, &mut context, "error", &message).await;
                             let _ = dl
@@ -420,7 +439,7 @@ impl WorkflowEngine {
         dl: &Arc<DataLake>,
         context: &mut WorkflowRunContext,
         parameters: &WorkflowParameters,
-    ) -> String {
+    ) -> Result<String, String> {
         let generated_count = parameters.batch_size.unwrap_or(10);
         let configured_domain = dl.get_setting("account_domain").await.ok().flatten();
         let domain = parameters
@@ -448,6 +467,14 @@ impl WorkflowEngine {
 
         let mut created = 0usize;
         for index in 0..generated_count {
+            // 实时检查是否已被用户手动停止
+            if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
+                if current_status == "cancelled" {
+                    Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
+                    return Err("cancelled".to_string());
+                }
+            }
+
             let len = rand::thread_rng().gen_range(8..=12);
             let local_part: String = rand::thread_rng()
                 .sample_iter(&Alphanumeric)
@@ -508,7 +535,7 @@ impl WorkflowEngine {
             "工作流执行成功: {} / DONE / GENERATED: {}",
             context.workflow_id, created
         );
-        message
+        Ok(message)
     }
 
     fn from_record(record: WorkflowDefinitionRecord) -> WorkflowDefinition {
@@ -790,7 +817,7 @@ impl WorkflowEngine {
             if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
                 if current_status == "cancelled" {
                     Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
-                    return Ok("工作流已由用户取消".to_string());
+                    return Err("cancelled".to_string());
                 }
             }
 
@@ -1020,6 +1047,14 @@ impl WorkflowEngine {
         let mut fail_count = 0;
 
         for index in 0..batch_size {
+            // 实时检查是否已被用户手动停止
+            if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
+                if current_status == "cancelled" {
+                    Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
+                    return Err("cancelled".to_string());
+                }
+            }
+
             Self::log_step(hub, dl, context, "info", &format!("[{}/{}] 正在初始化浏览器仿真环境...", index + 1, batch_size)).await;
             
             let domain = dl.get_setting("account_domain").await.ok().flatten().unwrap_or_else(|| "phantom.local".to_string());

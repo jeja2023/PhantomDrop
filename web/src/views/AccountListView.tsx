@@ -23,6 +23,7 @@ interface AccountPageResponse {
   items: GeneratedAccountRecord[];
   limit: number;
   offset: number;
+  total: number;
 }
 
 const AccountListView: React.FC = () => {
@@ -37,16 +38,9 @@ const AccountListView: React.FC = () => {
     setLoading(true);
     try {
       const offset = (page - 1) * pageSize;
-      // 注意：后端目前返回的是 {items, limit, offset}，并没有返回总数，
-      // 我们先假设列表能拉取到，或者通过 limit 控制
       const data = await fetchJson<AccountPageResponse>(`/api/accounts?limit=${pageSize}&offset=${offset}`);
       setAccounts(data.items);
-      // 由于后端没返回总数，我们简单处理：如果有数据且达到 pageSize，则假设有下一页
-      if (data.items.length === pageSize) {
-          setTotal(page * pageSize + 1);
-      } else {
-          setTotal((page - 1) * pageSize + data.items.length);
-      }
+      setTotal(data.total);
     } catch (error) {
       console.error('Failed to load accounts:', error);
     } finally {
@@ -257,7 +251,7 @@ const AccountListView: React.FC = () => {
               </button>
               <button 
                 onClick={() => setPage(p => p + 1)}
-                disabled={accounts.length < pageSize}
+                disabled={page >= Math.ceil(total / pageSize)}
                 className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-all"
               >
                 <ChevronRight size={16} />

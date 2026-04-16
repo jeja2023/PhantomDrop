@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy } from 'lucide-react'
+import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy, Square } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
 import PageHeader from '../ui/PageHeader'
@@ -237,6 +237,21 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     }
   }
 
+  const handleStopRun = async (runId: string) => {
+    try {
+      await postJson<{ status: string }>(`/api/workflow-runs/${runId}/stop`, {})
+      setToastContent({ title: '已发送终止指令', desc: '正在尝试安全停止工作流执行。' })
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 2000)
+      void loadRuns(runPage, runPageSize, true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '停止失败'
+      setToastContent({ title: '停止失败', desc: message })
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+    }
+  }
+
   const exportAccounts = () => {
     if (accounts.length === 0) return
     const link = document.createElement('a')
@@ -449,7 +464,22 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                       <div className="text-[15px] font-bold text-slate-900">{run.workflow_title}</div>
                       <div className="mt-1 text-[10px] font-mono text-slate-500">运行标识：{run.id}</div>
                     </div>
-                    <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${statusTone(run.status)}`}>{translateRunStatus(run.status)}</span>
+                    <div className="flex items-center gap-2">
+                      {run.status === 'running' && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleStopRun(run.id);
+                          }}
+                          className="flex h-6 w-6 items-center justify-center rounded-lg bg-red-500/10 text-red-500 transition-colors hover:bg-red-500/20"
+                          title="停止运行"
+                        >
+                          <Square size={12} fill="currentColor" />
+                        </button>
+                      )}
+                      <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${statusTone(run.status)}`}>{translateRunStatus(run.status)}</span>
+                    </div>
                   </div>
                   <div className="mt-2 text-[13px] leading-relaxed text-slate-600">{run.message}</div>
                   <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[10px] font-mono text-slate-500">
@@ -626,6 +656,8 @@ function translateRunStatus(status: WorkflowRunRecord['status']) {
       return '成功'
     case 'warn':
       return '警告'
+    case 'cancelled':
+      return '已取消'
   }
 }
 
@@ -650,6 +682,8 @@ function statusTone(status: WorkflowRunRecord['status']) {
       return 'bg-amber-500/10 text-amber-600'
     case 'running':
       return 'bg-blue-500/10 text-blue-600'
+    case 'cancelled':
+      return 'bg-slate-500/10 text-slate-600'
   }
 }
 

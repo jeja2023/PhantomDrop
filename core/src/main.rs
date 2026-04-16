@@ -710,13 +710,17 @@ async fn main() {
                         .and_then(|v| v.parse::<i64>().ok())
                         .unwrap_or(0);
 
-                    match dl.list_all_accounts(limit, offset).await {
-                        Ok(accounts) => Json(serde_json::json!({
-                            "items": accounts,
+                    let items = dl.list_all_accounts(limit, offset).await;
+                    let total = dl.count_all_accounts().await;
+
+                    match (items, total) {
+                        (Ok(items), Ok(total)) => Json(serde_json::json!({
+                            "items": items,
                             "limit": limit,
                             "offset": offset,
+                            "total": total,
                         })).into_response(),
-                        Err(e) => {
+                        (Err(e), _) | (_, Err(e)) => {
                             eprintln!("读取全局账号列表失败: {:?}", e);
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
