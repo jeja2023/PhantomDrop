@@ -12,30 +12,36 @@ pub async fn upload_account(
     refresh_token: Option<&str>,
     session_token: Option<&str>,
 ) -> Result<(), String> {
+    // 构建兼容性更强的平铺 Payload
     let payload = json!({
-        "account": {
-            "email": email,
-            "password": password,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "session_token": session_token,
-        }
+        "username": email,
+        "email": email, // 兼容某些平台要求 email 字段
+        "password": password,
+        "access_token": access_token.unwrap_or(""),
+        "accessToken": access_token.unwrap_or(""), // 兼容驼峰命名
+        "refresh_token": refresh_token.unwrap_or(""),
+        "refreshToken": refresh_token.unwrap_or(""), // 兼容驼峰命名
+        "session_token": session_token.unwrap_or(""),
+        "sessionToken": session_token.unwrap_or(""), // 兼容驼峰命名
+        "status": "ready",
+        "type": "openai"
     });
 
     let res = client
         .post(cpa_url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", cpa_key))
+        .header("x-api-key", cpa_key) // 同时发送两种常见的 API KEY Header 提高兼容性
         .json(&payload)
         .send()
         .await
-        .map_err(|e| format!("分发请求失败: {}", e))?;
+        .map_err(|e| format!("分发请求失败 (网络原因): {}", e))?;
 
     if res.status().is_success() {
         Ok(())
     } else {
         let status = res.status();
         let body = res.text().await.unwrap_or_default();
-        Err(format!("分发失败: HTTP {} - {}", status, body))
+        Err(format!("CPA 平台拒绝 (HTTP {}): {}", status, body))
     }
 }

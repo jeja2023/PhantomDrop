@@ -686,22 +686,27 @@ function StatItem({ label, value, sub }: { label: string; value: string; sub: st
 
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase();
-  const isSuccess = s.includes('registered') || s === 'success' || s.includes('active');
+  const isSuccess = s.includes('registered') || s === 'success' || s.includes('active') || s === 'uploaded';
   const isError = s.includes('banned') || s.includes('expired') || s.includes('invalid');
   const isNone = s.includes('no token');
+  const isUploaded = s === 'uploaded';
 
   return (
-    <span className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border ${
-      isSuccess
-        ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-        : isError
-          ? 'bg-rose-50 text-rose-600 border-rose-100'
-          : isNone
-            ? 'bg-slate-100 text-slate-500 border-slate-200'
-            : 'bg-amber-50 text-amber-600 border-amber-100'
+    <span 
+      title={`原始状态: ${status}`}
+      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border shadow-sm transition-all hover:scale-105 active:scale-95 cursor-default ${
+      isUploaded
+        ? 'bg-violet-50 text-violet-600 border-violet-100'
+        : isSuccess
+          ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+          : isError
+            ? 'bg-rose-50 text-rose-600 border-rose-100'
+            : isNone
+              ? 'bg-slate-100 text-slate-500 border-slate-200'
+              : 'bg-amber-50 text-amber-600 border-amber-100'
     }`}>
       {isSuccess ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />}
-      {status}
+      {isUploaded ? '已同步 (CPA)' : status}
     </span>
   );
 }

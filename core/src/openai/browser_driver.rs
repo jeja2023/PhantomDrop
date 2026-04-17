@@ -446,9 +446,8 @@ impl BrowserDriver {
 
         take_shot("提交资料前", &tab);
 
-        // 优先尝试点击继续按钮，如果不成功则按下回车
         let _ = tab.evaluate(r#"(function(){ 
-            const keywords = ['Continue', '继续', '确认', 'Next', '下一步'];
+            const keywords = ['Finish creating account', 'Continue', '继续', '确认', 'Next', '下一步'];
             const btn = Array.from(document.querySelectorAll('button')).find(el => 
                 keywords.some(k => el.innerText.includes(k))
             );
@@ -459,9 +458,9 @@ impl BrowserDriver {
         tab.press_key("Enter").ok();
 
         // 6.5 处理可能的后续确认弹窗或引导页 (关键：确保进入最终的聊天界面)
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         let _ = tab.evaluate(r#"(function(){ 
-            const keywords = ['Continue', '继续', '确认', 'Agree', '同意', 'Next', '下一步', 'Done', '完成', 'Okay'];
+            const keywords = ['Finish creating account', 'Continue', '继续', '确认', 'Agree', '同意', 'Next', '下一步', 'Done', '完成', 'Okay', 'Finish'];
             const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
             for (const btn of buttons) {
                 if (keywords.some(k => btn.innerText.includes(k))) {
@@ -478,7 +477,7 @@ impl BrowserDriver {
         take_shot("waiting_for_dashboard", &tab);
 
         let mut dash_found = false;
-        for i in 0..5 {
+        for i in 0..15 {
              // 检查是否出现了聊天输入框或侧边栏，这代表进入了主界面
             let is_dash = tab.evaluate("document.querySelector('#prompt-textarea, [data-testid=\"composer-input\"], nav') !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
@@ -491,11 +490,11 @@ impl BrowserDriver {
             }
 
             // 再次尝试点击可能的引导按钮
-            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成', 'Okay'].some(k => b.innerText.includes(k))) b.click(); })", false);
-            if i % 2 == 1 {
+            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成', 'Okay', 'Skip'].some(k => b.innerText.includes(k))) b.click(); })", false);
+            if i % 4 == 3 {
                 take_shot(&format!("dashboard_waiting_step_{}", i), &tab);
             }
-            tokio::time::sleep(Duration::from_secs(4)).await;
+            tokio::time::sleep(Duration::from_millis(1500)).await;
         }
 
         if dash_found {
@@ -519,71 +518,100 @@ impl BrowserDriver {
             cb("info", "🔑 正在等待会话就绪并提取 Access Token...");
         }
 
-        // 增强型循环尝试提取，直到成功或超时 (2 分钟)
         let mut token_extracted = None;
-        for i in 0..24 {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+        let mut refresh_token_extracted = None;
+        for i in 0..30 {
+            tokio::time::sleep(Duration::from_secs(3)).await;
             
-            // 尝试执行 JS 获取 session，增加了对 localStorage 和备用路径的检查
             let js = r#"
                 (async function() {
+                    const isJwt = (s) => s && s.startsWith('eyJ') && s.split('.').length === 3;
+                    const res = { at: null, rt: null };
+                    const jwtCandidates = [];
+                    const rtCandidates = [];
+
+                    const scan = (o) => {
+                        if (!o || typeof o !== 'object') return;
+                        for (let k in o) {
+                            try {
+                                const val = o[k];
+                                if (typeof val === 'string') {
+                                    if (isJwt(val)) jwtCandidates.push(val);
+                                    if (k.toLowerCase().includes('refresh') && val.length > 30) rtCandidates.push(val);
+                                } else {
+                                    scan(val);
+                                }
+                            } catch(e) {}
+                        }
+                    };
+
+                    // 1. Fetch Session
                     try {
-                        // 1. 尝试 Fetch Next-Auth Session (由于此时已在 chatgpt.com，此方法最可靠)
                         const resp = await fetch('/api/auth/session');
                         if (resp.ok) {
                             const data = await resp.json();
-                            if(data.accessToken) return data.accessToken;
+                            if (data.accessToken) res.at = data.accessToken;
                         }
                     } catch (e) {}
                     
+                    // 2. Scan Storage
                     try {
-                        // 2. 遍历 LocalStorage 寻找 JWT 特征字符串
-                        for (let j = 0; j < localStorage.length; j++) {
-                            const key = localStorage.key(j);
-                            const val = localStorage.getItem(key);
-                            if (val && val.startsWith('eyJ') && val.split('.').length === 3) {
-                                return val;
-                            }
-                        }
-                    } catch (e) {}
-
-                    try {
-                        // 3. 遍历 SessionStorage 寻找 JWT 特征字符串
-                        for (let j = 0; j < sessionStorage.length; j++) {
-                            const key = sessionStorage.key(j);
-                            const val = sessionStorage.getItem(key);
-                            if (val && val.startsWith('eyJ') && val.split('.').length === 3) {
-                                return val;
+                        const stores = [localStorage, sessionStorage];
+                        for (const store of stores) {
+                            for (let j = 0; j < store.length; j++) {
+                                const k = store.key(j);
+                                const v = store.getItem(k);
+                                if (!v) continue;
+                                if (isJwt(v)) jwtCandidates.push(v);
+                                if (k.toLowerCase().includes('refresh') && v.length > 30) rtCandidates.push(v);
+                                if (v.startsWith('{') || v.startsWith('[')) {
+                                    try { scan(JSON.parse(v)); } catch(e) {}
+                                }
                             }
                         }
                     } catch (e) {}
                     
-                    return null;
+                    if (!res.at && jwtCandidates.length > 0) {
+                        res.at = jwtCandidates.sort((a, b) => b.length - a.length)[0];
+                    }
+                    if (rtCandidates.length > 0) {
+                        res.rt = rtCandidates.sort((a, b) => b.length - a.length)[0];
+                    }
+                    return res;
                 })()
             "#;
 
             if let Ok(eval_res) = tab.evaluate(js, true) {
-                if let Some(token) = eval_res.value.and_then(|v| v.as_str().map(|s| s.to_string())) {
-                    if !token.is_empty() {
-                        token_extracted = Some(token);
-                        break;
+                if let Some(obj) = eval_res.value {
+                    let at = obj.get("at").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    let rt = obj.get("rt").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    
+                    if let Some(token) = at {
+                        if token.len() > 100 {
+                            if let Some(cb) = callback {
+                                cb("success", &format!("✅ 凭证提取成功 | AT: {} | RT: {}", 
+                                    token.len(), 
+                                    rt.as_ref().map(|s| s.len().to_string()).unwrap_or("无".to_string())
+                                ));
+                            }
+                            token_extracted = Some(token);
+                            refresh_token_extracted = rt;
+                            break;
+                        }
                     }
                 }
             }
 
-            if i % 4 == 0 && i > 0 {
+            if i % 6 == 5 {
                 let current_url = tab.get_url();
                 if let Some(cb) = callback {
-                    cb("info", &format!("尝试提取凭证中 (第 {}/24 次) [URL: {}]...", i + 1, current_url));
+                    cb("info", &format!("正在扫描凭证池 (第 {}/30 次) [URL: {}]...", i + 1, current_url));
                 }
                 
-                // 如果尝试多次依然失败且页面看起来是空白的，尝试刷新或重定向
-                if i == 8 || i == 16 {
+                if i == 11 || i == 23 {
                     if current_url.contains("chatgpt.com") {
-                        if let Some(cb) = callback { cb("warn", "🔄 提取停滞，尝试刷新页面以触发会话同步..."); }
                         let _ = tab.reload(false, None);
                     } else {
-                        if let Some(cb) = callback { cb("warn", "🔄 页面偏移，正在尝试强制校准至 ChatGPT 首页..."); }
                         let _ = tab.navigate_to("https://chatgpt.com/");
                     }
                 }
@@ -615,7 +643,7 @@ impl BrowserDriver {
                     email: self.context.email.clone(),
                     password: self.context.password.clone(),
                     access_token: token_extracted,
-                    refresh_token: None,
+                    refresh_token: refresh_token_extracted,
                     session_token: session_extracted, 
                     device_id: self.context.device_id.clone(),
                     workspace_id: Some("ws-browser-org".to_string()),
