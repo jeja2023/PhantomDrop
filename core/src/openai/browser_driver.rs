@@ -19,7 +19,7 @@ impl BrowserDriver {
         Self { context }
     }
 
-    pub async fn run(&self) -> Result<String, String> {
+    pub async fn run(&self) -> Result<crate::openai::register::RegisterResult, String> {
         let callback = &self.context.step_callback;
         
         let mode_text = if self.context.headless { "无头模式" } else { "有头模式 (Xvfb)" };
@@ -343,10 +343,68 @@ impl BrowserDriver {
 
         tab.press_key("Enter").ok();
 
+        // 7. 提取 Access Token (关键步骤)
+        if let Some(cb) = callback {
+            cb("info", "🔑 正在等待会话就绪并提取 Access Token...");
+        }
+
+        // 循环尝试提取，直到成功或超时 (2 分钟)
+        let mut token_extracted = None;
+        for _ in 0..24 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            
+            // 尝试执行 JS 获取 session
+            let js = r#"
+                (async function() {
+                    try {
+                        const resp = await fetch('/api/auth/session');
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            return data.accessToken || null;
+                        }
+                    } catch (e) {}
+                    return null;
+                })()
+            "#;
+
+            if let Ok(eval_res) = tab.evaluate(js, true) {
+                if let Some(token) = eval_res.value.and_then(|v| v.as_str().map(|s| s.to_string())) {
+                    if !token.is_empty() {
+                        token_extracted = Some(token);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 尝试额外提取 Session Token (从 Cookie 中)
+        let mut session_extracted = None;
+        if let Ok(cookies) = tab.get_cookies() {
+            if let Some(cookie) = cookies.iter().find(|c| c.name == "__Secure-next-auth.session-token") {
+                session_extracted = Some(cookie.value.clone());
+            }
+        }
+
+        if let Some(cb) = callback {
+            if token_extracted.is_some() {
+                cb("success", "✅ Token 提取成功！正在封存产物...");
+            } else {
+                cb("warn", "⚠️ 无法自动提取 Access Token，可能页面加载较慢或风控拦截。账号注册可能已完成但需手动同步。");
+            }
+        }
+
         if let Some(cb) = callback {
             cb("success", "✅ 浏览器仿真注册流程执行完毕！");
         }
 
-        Ok("注册成功 (Browser Mode)".to_string())
+        Ok(crate::openai::register::RegisterResult {
+            email: self.context.email.clone(),
+            password: self.context.password.clone(),
+            access_token: token_extracted,
+            refresh_token: None,
+            session_token: session_extracted, 
+            device_id: self.context.device_id.clone(),
+            workspace_id: Some("ws-browser-org".to_string()),
+        })
     }
 }

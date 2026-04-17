@@ -1107,18 +1107,26 @@ impl WorkflowEngine {
             }
 
             match driver_task.await {
-                Ok(Ok(_msg)) => {
+                Ok(Ok(result)) => {
                     success_count += 1;
-                    if let Err(e) = dl.create_generated_account(
+                    if let Ok(account_id) = dl.create_generated_account(
                         &context.run_id, 
-                        &email, 
-                        &password, 
-                        "browser_registered",
+                        &result.email, 
+                        &result.password, 
+                        "openai_registered",
                         parameters.account_type.as_deref()
                     ).await {
-                        Self::log_step(hub, dl, context, "error", &format!("账号入库失败: {}", e)).await;
+                        let _ = dl.update_account_tokens(
+                            &account_id,
+                            result.access_token.as_deref(),
+                            result.refresh_token.as_deref(),
+                            result.session_token.as_deref(),
+                            Some(&result.device_id),
+                            result.workspace_id.as_deref()
+                        ).await;
+                        Self::log_step(hub, dl, context, "success", &format!("✅ 账号及其凭证已保存至数据库: {}", email)).await;
                     } else {
-                        Self::log_step(hub, dl, context, "success", &format!("✅ 账号已保存至数据库: {}", email)).await;
+                        Self::log_step(hub, dl, context, "error", &format!("账号入库失败: {}", email)).await;
                     }
                 },
                 Ok(Err(e)) => {

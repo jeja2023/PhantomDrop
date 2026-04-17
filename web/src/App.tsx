@@ -65,7 +65,14 @@ function appendLog(
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<AppTab>('dashboard')
+  const [activeTab, setActiveTab] = useState<AppTab>(() => {
+    const saved = localStorage.getItem('phantom_active_tab')
+    return (saved as AppTab) || 'dashboard'
+  })
+
+  useEffect(() => {
+    localStorage.setItem('phantom_active_tab', activeTab)
+  }, [activeTab])
   const [isCmdOpen, setIsCmdOpen] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [emailSearchQuery, setEmailSearchQuery] = useState('')
@@ -305,7 +312,7 @@ function App() {
   const renderView = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <DashboardView emails={emails} logs={logs} stats={stats} />
+        return <DashboardView emails={emails} logs={logs} stats={stats} updateRate={updateRate} />
       case 'emails':
         return <EmailListView emails={emails} externalQuery={emailSearchQuery} />
       case 'logs':

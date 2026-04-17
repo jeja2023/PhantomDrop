@@ -1,4 +1,4 @@
-﻿import { Terminal as TerminalIcon } from 'lucide-react'
+import { Terminal as TerminalIcon } from 'lucide-react'
 import type { AppLog, LogSource } from '../types'
 
 interface TerminalProps {
@@ -22,16 +22,16 @@ export default function Terminal({ logs, activeFilter = 'all' }: TerminalProps) 
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/50"></div>
         </div>
       </div>
-      <div className="min-w-0 p-5 bg-white font-mono text-xs md:text-sm space-y-2 overflow-y-auto flex-grow custom-scrollbar">
+      <div className="min-w-0 p-3 bg-white font-mono text-[11px] space-y-0.5 overflow-y-auto flex-grow custom-scrollbar">
         {filteredLogs.map((log, index) => {
           const previousGroup = index > 0 ? filteredLogs[index - 1].groupLabel : ''
           const showGroupHeader = log.groupLabel && log.groupLabel !== previousGroup
 
           return (
             <div key={log.id}>
-              {showGroupHeader ? <div className="mb-1 mt-3 text-[10px] font-black tracking-widest text-slate-400">{log.groupLabel}</div> : null}
-              <div className="flex min-w-0 gap-4 animate-in fade-in slide-in-from-left-2 transition-all">
-                <span className="text-slate-400 shrink-0">[{log.time}]</span>
+              {showGroupHeader ? <div className="mb-0.5 mt-1.5 text-[9px] font-black tracking-widest text-slate-400 uppercase">{log.groupLabel}</div> : null}
+              <div className="flex min-w-0 gap-2.5 animate-in fade-in slide-in-from-left-2 transition-all">
+                <span className="text-slate-400 shrink-0 font-bold opacity-80">[{log.time}]</span>
                 <span
                   className={`min-w-0 break-words ${
                     log.type === 'success'

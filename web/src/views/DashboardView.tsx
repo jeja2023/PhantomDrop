@@ -1,18 +1,18 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, CheckCircle2, Sparkles } from 'lucide-react'
+import { Zap, CheckCircle2, Sparkles, Activity, Database } from 'lucide-react'
 import Grid from '../grid/Grid'
 import Terminal from '../terminal/Terminal'
-import PageHeader from '../ui/PageHeader'
 import type { AppLog, DashboardStats, EmailItem } from '../types'
 
 interface DashboardViewProps {
   emails: EmailItem[]
   logs: AppLog[]
   stats: DashboardStats | null
+  updateRate?: number
 }
 
-export default function DashboardView({ emails, logs, stats }: DashboardViewProps) {
+export default function DashboardView({ emails, logs, stats, updateRate = 1000 }: DashboardViewProps) {
   const [isExpertMode, setIsExpertMode] = useState(false)
   const [showToast, setShowToast] = useState(false)
   const [toastMsg, setToastMsg] = useState({ title: '', desc: '' })
@@ -71,27 +71,32 @@ export default function DashboardView({ emails, logs, stats }: DashboardViewProp
         ) : null}
       </AnimatePresence>
 
-      <PageHeader
-        title=""
-        kicker=""
-        description=""
-        status={
-          <div className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5">
-            <span className="relative flex h-1.5 w-1.5">
+      <div className="flex items-center justify-between px-2 pt-2 shrink-0">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2 shadow-sm">
+            <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span className="text-[10px] font-black tracking-widest text-emerald-700">本地中枢运行中</span>
+            <span className="text-[11px] font-black tracking-widest text-emerald-700 uppercase">系统感知：在线</span>
             {isExpertMode ? <Sparkles size={14} className="text-blue-500" /> : null}
           </div>
-        }
-        actions={
-          <>
-            <StatCard label="已摄入邮件" value={metrics.totalEmails.toString()} trend={`活跃度 ${metrics.activity}%`} color="blue" isMini />
-            <StatCard label="验证码覆盖率" value={`${metrics.coverage}%`} trend={`命中 ${metrics.codeEmails} 封`} color="emerald" isMini />
-          </>
-        }
-      />
+          
+          <div className="h-8 w-px bg-slate-200"></div>
+          
+          <div className="flex items-center gap-8">
+            <MiniStat label="捕获总量" value={metrics.totalEmails.toString()} sub="邮件流集成" color="blue" />
+            <MiniStat label="解析覆盖率" value={`${metrics.coverage}%`} sub={`命中 ${metrics.codeEmails} 封`} color="emerald" />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[10px] font-mono text-slate-500 flex items-center gap-2">
+            <Activity size={12} className="text-blue-500" />
+            更新频率：{(1000 / updateRate).toFixed(1)}Hz
+          </div>
+        </div>
+      </div>
 
       <div className="flex-grow flex flex-col lg:flex-row gap-4 min-h-0">
         <div className="flex-[3] flex flex-col space-y-3 min-w-0">
@@ -112,84 +117,73 @@ export default function DashboardView({ emails, logs, stats }: DashboardViewProp
           </div>
         </div>
 
-        <div className="page-panel flex-grow lg:flex-1 p-3 flex flex-col justify-between bg-gradient-to-b from-transparent to-blue-50 min-h-0 overflow-hidden">
-          <div className="space-y-3 min-h-0">
+        <div className="page-panel flex-grow lg:flex-1 p-4 flex flex-col justify-between bg-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] min-h-0 overflow-hidden relative">
+          <div className="space-y-4 min-h-0 relative z-10">
             <div className="flex items-center justify-between shrink-0">
               <div className="flex flex-col">
-                <span className="text-[11px] font-black text-blue-600 tracking-tight leading-none">决策核心</span>
-                <span className="text-[8px] text-slate-400 font-mono tracking-widest mt-0.5">运行摘要</span>
+                <span className="text-[12px] font-black text-indigo-600 tracking-tighter leading-none">决策核心 / CORE</span>
+                <span className="text-[8px] text-slate-400 font-mono tracking-widest mt-1 uppercase">运行摘要指标</span>
               </div>
-              <span className="flex items-center gap-1 text-[9px] text-emerald-500 font-mono">
+              <span className="flex items-center gap-1.5 text-[9px] text-emerald-500 font-mono bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
                 <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></div>
-                {metrics.activeWebhooks} 个活跃 Webhook
+                {metrics.activeWebhooks} 活跃网格
               </span>
             </div>
 
-            <div className="text-[15px] font-black italic tracking-tighter glow-text-blue leading-none">神经中枢已激活</div>
-            <div className="h-[1px] w-full bg-gradient-to-r from-blue-500/30 to-transparent"></div>
-
-            <div className="space-y-2 pr-1">
-              <ProgressItem label="验证码覆盖率" percent={metrics.coverage} color="blue" />
-              <ProgressItem label="日志成功率" percent={metrics.successRate} color="cyan" />
-              <ProgressItem label="警报密度" percent={metrics.alertDensity} color="indigo" />
-              <ProgressItem label="邮件活跃度" percent={metrics.activity} color="amber" />
+            <div className="space-y-2.5 pr-1">
+              <ProgressItem label="校验引擎覆盖率" percent={metrics.coverage} color="blue" />
+              <ProgressItem label="神经元解析成功率" percent={metrics.successRate} color="cyan" />
+              <ProgressItem label="异常信号密度" percent={metrics.alertDensity} color="indigo" />
+              <ProgressItem label="实时邮件活跃度" percent={metrics.activity} color="amber" />
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white/70 px-3 py-2 text-[10px] text-slate-600">
-              <div className="font-bold text-slate-800">后端真实统计</div>
-              <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 font-mono">
-                <span>活跃邮件：{metrics.activeEmails}</span>
-                <span>归档邮件：{metrics.archivedEmails}</span>
-                <span>近 24 小时工作流：{metrics.workflowRuns}</span>
-                <span>近 24 小时新邮件：{stats?.recent_emails_24h ?? emails.length}</span>
+            <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-3 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] font-bold text-slate-800 tracking-tight">感应层实时统计</div>
+                <Database size={12} className="text-slate-400" />
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[10px]">
+                <div className="flex flex-col">
+                  <span className="text-slate-400 text-[8px] uppercase">活跃节点</span>
+                  <span className="text-slate-700 font-bold">{metrics.activeEmails}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-slate-400 text-[8px] uppercase">归档节点</span>
+                  <span className="text-slate-700 font-bold">{metrics.archivedEmails}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-slate-400 text-[8px] uppercase">24H 工作流</span>
+                  <span className="text-slate-700 font-bold">{metrics.workflowRuns}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-slate-400 text-[8px] uppercase">今日注入</span>
+                  <span className="text-slate-700 font-bold">{stats?.recent_emails_24h ?? emails.length}</span>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="pt-3 border-t border-slate-200 shrink-0 mt-2">
+          <div className="pt-4 mt-2 relative z-10">
             <button
               onClick={handleExpertMode}
-              className={`w-full py-2 border rounded-lg text-[9px] font-black tracking-widest transition-all neon-btn cursor-pointer ${
+              className={`w-full py-2.5 rounded-xl text-[10px] font-black tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${
                 isExpertMode
-                  ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-500/40'
-                  : 'bg-blue-600/10 border-blue-500/20 text-blue-400 hover:bg-blue-600 hover:text-white'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200'
+                  : 'bg-slate-900 text-white hover:bg-slate-800'
               }`}
             >
-              {isExpertMode ? '退出专家模式' : '进入专家模式'}
+              <Zap size={12} />
+              {isExpertMode ? '退出专家诊断模式' : '进入专家诊断模式'}
             </button>
           </div>
         </div>
       </div>
 
-      <section className="h-[140px] shrink-0 min-h-0">
+      <section className="h-[220px] shrink-0 min-h-0">
         <div className="page-panel h-full overflow-hidden">
           <Terminal logs={logs} />
         </div>
       </section>
-    </div>
-  )
-}
-
-function StatCard({
-  label,
-  value,
-  trend,
-  color,
-  isMini = false,
-}: {
-  label: string
-  value: string
-  trend: string
-  color: 'blue' | 'emerald'
-  isMini?: boolean
-}) {
-  return (
-    <div className={`glass-panel border-slate-200 group hover:border-blue-500/30 transition-all hover:-translate-y-0.5 duration-300 ${isMini ? 'px-4 py-2 flex flex-col justify-center' : 'p-5'}`}>
-      <div className="text-[9px] text-slate-600 font-bold tracking-widest mb-0.5">{label}</div>
-      <div className="flex items-baseline gap-2">
-        <div className="text-lg font-black tracking-tighter text-slate-900">{value}</div>
-        <div className={`text-[9px] font-bold ${color === 'blue' ? 'text-blue-500' : 'text-emerald-500'}`}>{trend}</div>
-      </div>
     </div>
   )
 }
@@ -220,6 +214,17 @@ function ProgressItem({ label, percent, isLatency = false, color = 'blue' }: { l
           transition={{ duration: 0.8, ease: 'easeInOut' }}
           className={`h-full bg-gradient-to-r ${getGradient()} shadow-[0_0_10px_rgba(59,130,246,0.3)]`}
         />
+      </div>
+    </div>
+  )
+}
+function MiniStat({ label, value, sub, color }: { label: string; value: string; sub: string; color: 'blue' | 'emerald' }) {
+  return (
+    <div className="flex flex-col">
+      <div className="text-[10px] font-bold text-slate-500 tracking-tight leading-none mb-1 uppercase">{label}</div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-xl font-black tracking-tighter text-slate-900 leading-none">{value}</span>
+        <span className={`text-[9px] font-bold ${color === 'blue' ? 'text-blue-500' : 'text-emerald-500'} tracking-tight`}>{sub}</span>
       </div>
     </div>
   )

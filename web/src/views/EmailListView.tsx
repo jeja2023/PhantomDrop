@@ -46,7 +46,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
   const [searchResults, setSearchResults] = useState<EmailItem[]>([])
   const [archivedFilter, setArchivedFilter] = useState<'all' | 'active' | 'archived'>('all')
   const [page, setPage] = useState(1)
-  const [pageSize] = useState(20)
+  const [pageSize, setPageSize] = useState(10)
   const [total, setTotal] = useState(emails.length)
   const [hasLoadedPage, setHasLoadedPage] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -369,7 +369,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                         />
                       </td>
                       <td className="text-center">
-                        <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-black border ${
+                        <span className={`whitespace-nowrap rounded-full px-1.5 py-0.5 text-[9px] font-black border ${
                           email.isArchived ? 'border-slate-200 bg-slate-100 text-slate-500' : 'border-emerald-100 bg-emerald-50 text-emerald-600'
                         }`}>
                           {email.isArchived ? '已归档' : '已解析'}
@@ -381,7 +381,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                       <td className="text-[10px] font-mono text-slate-500">{email.time}</td>
                       <td className="text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <div className="font-mono text-base font-black tracking-widest text-blue-600">{email.code || '---'}</div>
+                          <div className="font-mono text-sm font-black tracking-widest text-blue-600">{email.code || '---'}</div>
                           <button
                             type="button"
                             aria-label={email.isArchived ? '取消归档邮件' : '归档邮件'}
@@ -390,7 +390,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                               event.stopPropagation()
                               void toggleArchive(email.id, !email.isArchived)
                             }}
-                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                            className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
                           >
                             {email.isArchived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                           </button>
@@ -402,7 +402,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                               event.stopPropagation()
                               void deleteEmail(email.id)
                             }}
-                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                            className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -435,6 +435,22 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
         </div>
 
         <div className="flex items-center justify-end gap-3">
+          <div className="mr-auto flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-500">每页显示</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setPage(1)
+              }}
+              className="phantom-select phantom-btn--sm py-0 h-8"
+              aria-label="选择每页显示条数"
+            >
+              {[10, 20, 50, 100].map(size => (
+                <option key={size} value={size}>{size} 条</option>
+              ))}
+            </select>
+          </div>
           <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1 || searching} className="phantom-btn phantom-btn--sm phantom-btn--secondary">
             <ChevronLeft size={14} />
             上一页

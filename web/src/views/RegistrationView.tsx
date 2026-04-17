@@ -408,7 +408,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
               )}
             </div>
 
-            <div className="flex-grow p-6 font-mono text-xs overflow-y-auto space-y-4 bg-slate-950 scrollbar-thin scroll-smooth min-h-0">
+            <div className="flex-grow p-4 font-mono text-xs overflow-y-auto space-y-1 bg-slate-950 scrollbar-thin scroll-smooth min-h-0">
               {!selectedRunId ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-4 opacity-40">
                   <div className="relative">
@@ -477,9 +477,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
                       key={step.id}
-                      className="flex gap-4 group items-baseline"
+                      className="flex gap-3 group items-baseline"
                     >
-                      <span className="shrink-0 text-slate-700 w-12 text-[10px]">{new Date(step.created_at * 1000).toLocaleTimeString([], { hour12: false })}</span>
+                      <span className="shrink-0 text-slate-500 w-12 text-[10px]">{new Date(step.created_at * 1000).toLocaleTimeString([], { hour12: false })}</span>
                       <span className={`shrink-0 font-black text-[10px] ${
                         step.level === 'success' ? 'text-emerald-500' : 
                         step.level === 'warn' ? 'text-amber-500' : 
@@ -487,7 +487,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                       }`}>
                         [{step.level.toUpperCase()}]
                       </span>
-                      <span className="text-slate-300 leading-relaxed group-hover:text-white transition-colors antialiased">
+                      <span className="text-slate-300 leading-snug group-hover:text-white transition-colors antialiased">
                         {renderMessage(step.message)}
                       </span>
                     </motion.div>

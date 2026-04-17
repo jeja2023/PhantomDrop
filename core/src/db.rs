@@ -106,6 +106,8 @@ pub struct DashboardStats {
     pub active_webhooks: i64,
     pub workflow_runs_24h: i64,
     pub successful_runs_24h: i64,
+    pub total_accounts: i64,
+    pub today_accounts_24h: i64,
     pub latest_email_at: Option<i64>,
 }
 
@@ -689,8 +691,11 @@ impl DataLake {
                 (SELECT COUNT(*) FROM webhooks WHERE is_active = 1) AS active_webhooks,
                 (SELECT COUNT(*) FROM workflow_runs WHERE started_at >= ?) AS workflow_runs_24h,
                 (SELECT COUNT(*) FROM workflow_runs WHERE started_at >= ? AND status = 'success') AS successful_runs_24h,
+                (SELECT COUNT(*) FROM generated_accounts) AS total_accounts,
+                (SELECT COUNT(*) FROM generated_accounts WHERE created_at >= ?) AS today_accounts_24h,
                 (SELECT MAX(created_at) FROM emails) AS latest_email_at"
         )
+        .bind(threshold_24h)
         .bind(threshold_24h)
         .bind(threshold_24h)
         .bind(threshold_24h)

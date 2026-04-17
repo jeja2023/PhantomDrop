@@ -169,6 +169,8 @@ export interface DashboardStats {
   active_webhooks: number
   workflow_runs_24h: number
   successful_runs_24h: number
+  total_accounts?: number
+  today_accounts_24h?: number
   latest_email_at: number | null
 }
 
