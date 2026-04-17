@@ -1194,8 +1194,14 @@ async fn main() {
             move |Json(payload): Json<HashMap<String, String>>| {
                 let dl = dl.clone();
                 async move {
-                    let callback_url = payload.get("callback_url").ok_or((StatusCode::BAD_REQUEST, "缺少 callback_url"))?;
-                    let code_verifier = payload.get("code_verifier").ok_or((StatusCode::BAD_REQUEST, "缺少 code_verifier"))?;
+                    let callback_url = match payload.get("callback_url") {
+                        Some(v) => v,
+                        None => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"status": "error", "message": "缺少 callback_url"})))),
+                    };
+                    let code_verifier = match payload.get("code_verifier") {
+                        Some(v) => v,
+                        None => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"status": "error", "message": "缺少 code_verifier"})))),
+                    };
                     match openai::oauth::exchange_codex_code(callback_url, code_verifier).await {
                         Ok(auth_data) => {
                             let json_str = serde_json::to_string_pretty(&auth_data).unwrap();

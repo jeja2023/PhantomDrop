@@ -71,7 +71,8 @@ impl CodexAuthData {
     pub fn get_email(&self) -> Option<String> {
         let parts: Vec<&str> = self.id_token.split('.').collect();
         if parts.len() >= 2 {
-            if let Ok(decoded) = base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD) {
+            use base64::Engine;
+            if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
                     return json.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
                 }
@@ -110,8 +111,9 @@ pub async fn exchange_codex_code(
         .map_err(|e| format!("令牌交换请求失败: {}", e))?;
 
     if !response.status().is_success() {
+        let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("令牌交换失败 ({}): {}", response.status(), error_text));
+        return Err(format!("令牌交换失败 ({}): {}", status, error_text));
     }
 
     let auth_data = response

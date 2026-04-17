@@ -1,5 +1,4 @@
-use reqwest::Client;
-use serde_json::json;
+
 
 /// 以 JSON 格式推送账号 (适用于 Sub2API, NewAPI 等)
 /// 以 JSON 格式推送账号 (适用于 Sub2API, NewAPI 等)

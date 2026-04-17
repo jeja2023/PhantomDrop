@@ -937,15 +937,18 @@ impl WorkflowEngine {
                                 )
                                 .await;
                                 let client = reqwest::Client::new();
-                                match crate::uploader::upload_account(
+                                let payload = serde_json::json!({
+                                    "email": result.email,
+                                    "password": result.password,
+                                    "access_token": result.access_token,
+                                    "refresh_token": result.refresh_token,
+                                    "session_token": result.session_token,
+                                });
+                                match crate::uploader::upload_account_multipart(
                                     &client,
                                     cpa_url.trim(),
                                     cpa_key.trim(),
-                                    &result.email,
-                                    &result.password,
-                                    result.access_token.as_deref(),
-                                    result.refresh_token.as_deref(),
-                                    result.session_token.as_deref(),
+                                    payload,
                                 )
                                 .await
                                 {
