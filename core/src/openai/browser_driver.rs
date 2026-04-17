@@ -333,11 +333,13 @@ impl BrowserDriver {
         if let Ok(name_input) = tab.find_element("input[name='name'], input[name='full_name'], input#name") {
              name_input.click().ok();
              tab.type_str(&full_name).ok();
+             take_shot("after_name_input", &tab);
         }
 
         if let Ok(age_input) = tab.find_element("input[name='age'], input[type='number'], input#age") {
              age_input.click().ok();
              tab.type_str(&age.to_string()).ok();
+             take_shot("after_age_input", &tab);
         } else if let Ok(birthday_input) = tab.find_element("input[name='birthday']") {
              // 兜底逻辑：如果还是旧版的生日输入框
              let bday = format!("{}-01-01", 2024 - age); 
@@ -374,8 +376,10 @@ impl BrowserDriver {
             cb("info", "⌛ 正在等待 Dashboard 界面加载 (可能需要绕过引导弹窗)...");
         }
         
+        take_shot("waiting_for_dashboard", &tab);
+
         let mut dash_found = false;
-        for _ in 0..5 {
+        for i in 0..5 {
              // 检查是否出现了聊天输入框或侧边栏，这代表进入了主界面
             let is_dash = tab.evaluate("document.querySelector('#prompt-textarea, [data-testid=\"composer-input\"], nav') !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
@@ -383,11 +387,15 @@ impl BrowserDriver {
             
             if is_dash {
                 dash_found = true;
+                take_shot("dashboard_detected", &tab);
                 break;
             }
 
             // 再次尝试点击可能的引导按钮
-            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成'].some(k => b.innerText.includes(k))) b.click(); })", false);
+            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成', 'Okay'].some(k => b.innerText.includes(k))) b.click(); })", false);
+            if i % 2 == 1 {
+                take_shot(&format!("dashboard_waiting_step_{}", i), &tab);
+            }
             tokio::time::sleep(Duration::from_secs(4)).await;
         }
 
