@@ -323,8 +323,12 @@ impl BrowserDriver {
             cb("info", &format!("资料生成 -> 姓名: {}, 年龄: {}", full_name, age));
         }
 
-        // 等待页面跳转到资料填写页 (由于网络延迟，可能需要较长时间)
-        let _ = tab.wait_for_element_with_custom_timeout("input[name='name'], input[name='full_name'], input#name", Duration::from_secs(60));
+        // 严格等待姓名输入框出现，若超时则认为注册失败 (账号可能被拦截或环境检测通过但未跳转)
+        tab.wait_for_element_with_custom_timeout("input[name='name'], input[name='full_name'], input#name", Duration::from_secs(60))
+            .map_err(|_| {
+                take_shot("profile_timeout", &tab);
+                "已完成注册表单提交，但无法进入个人资料填写页 (可能是 IP 质量较差导致被拦截)"
+            })?;
         
         if let Ok(name_input) = tab.find_element("input[name='name'], input[name='full_name'], input#name") {
              name_input.click().ok();
@@ -341,6 +345,16 @@ impl BrowserDriver {
              tab.type_str(&bday).ok();
         }
 
+        // 优先尝试点击继续按钮，如果不成功则按下回车
+        let _ = tab.evaluate(r#"(function(){ 
+            const keywords = ['Continue', '继续', '确认', 'Next', '下一步'];
+            const btn = Array.from(document.querySelectorAll('button')).find(el => 
+                keywords.some(k => el.innerText.includes(k))
+            );
+            if(btn) { btn.click(); }
+        })()"#, false);
+        
+        tokio::time::sleep(Duration::from_secs(1)).await;
         tab.press_key("Enter").ok();
 
         // 6.5 处理可能的后续确认弹窗或引导页 (关键：确保进入最终的聊天界面)
@@ -487,25 +501,24 @@ impl BrowserDriver {
         }
 
         if let Some(cb) = callback {
-            if token_extracted.is_some() {
-                cb("success", "✅ Token 提取成功！正在封存产物...");
+            if token_extracted.is_some() || session_extracted.is_some() {
+                cb("success", "✅ 浏览器仿真注册流程执行完毕，已获取访问凭证！");
+                Ok(crate::openai::register::RegisterResult {
+                    email: self.context.email.clone(),
+                    password: self.context.password.clone(),
+                    access_token: token_extracted,
+                    refresh_token: None,
+                    session_token: session_extracted, 
+                    device_id: self.context.device_id.clone(),
+                    workspace_id: Some("ws-browser-org".to_string()),
+                })
             } else {
-                cb("warn", "⚠️ 无法自动提取 Access Token，可能页面加载较慢或风控拦截。账号注册可能已完成但需手动同步。");
+                cb("error", "❌ 注册流程可能已走完，但未能在规定时间内提取到任何有效 Token。请检查快照确认为何未进入主控台。");
+                take_shot("extraction_failed_final", &tab);
+                Err("凭证提取完全失败 (Access Token & Session Token 均为 None)".to_string())
             }
+        } else {
+            Err("Callback missing".to_string())
         }
-
-        if let Some(cb) = callback {
-            cb("success", "✅ 浏览器仿真注册流程执行完毕！");
-        }
-
-        Ok(crate::openai::register::RegisterResult {
-            email: self.context.email.clone(),
-            password: self.context.password.clone(),
-            access_token: token_extracted,
-            refresh_token: None,
-            session_token: session_extracted, 
-            device_id: self.context.device_id.clone(),
-            workspace_id: Some("ws-browser-org".to_string()),
-        })
     }
 }
