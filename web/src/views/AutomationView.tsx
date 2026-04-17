@@ -529,6 +529,10 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
           <div ref={stepsContainerRef} className="max-h-[500px] overflow-y-auto pr-2 rounded-2xl">
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
               {steps.map((step) => {
+                /**
+                 * 渲染日志消息
+                 * 支持 Markdown 链接格式 [文字](链接)，点击后如果是快照则触发预览，否则新窗口打开
+                 */
                 const renderMessage = (msg: string) => {
                   const linkRegex = /\[(.*?)\]\((.*?)\)/g;
                   const parts = [];

@@ -6,6 +6,10 @@ interface SnapshotModalProps {
   onClose: () => void
 }
 
+/**
+ * 快照预览模态框组件
+ * 用于在不离开页面的情况下查看浏览器驱动抓拍的调试图片
+ */
 export default function SnapshotModal({ url, onClose }: SnapshotModalProps) {
   if (!url) return null
 
