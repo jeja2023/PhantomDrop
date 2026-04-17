@@ -1,5 +1,5 @@
-use reqwest_impersonate::impersonate::Impersonate;
-use reqwest_impersonate::Client;
+use rquest::tls::Impersonate;
+use rquest::Client;
 use std::time::Duration;
 
 /// 协议版注册专用的指纹客户端构造器
@@ -17,13 +17,13 @@ impl ImpersonateProvider {
             .cookie_store(true);
 
         if let Some(proxy) = proxy_url.filter(|u| !u.trim().is_empty()) {
-            if let Ok(p) = reqwest_impersonate::Proxy::all(proxy) {
+            if let Ok(p) = rquest::Proxy::all(proxy) {
                 builder = builder.proxy(p);
             }
         }
 
         // 注入标准的 Chrome 124 Client Hints 和基本头部，确保与 TLS 指纹匹配
-        let mut headers = reqwest_impersonate::header::HeaderMap::new();
+        let mut headers = rquest::header::HeaderMap::new();
         headers.insert("user-agent", crate::openai::constants::DEFAULT_USER_AGENT.parse().unwrap());
         headers.insert("sec-ch-ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\"".parse().unwrap());
         headers.insert("sec-ch-ua-mobile", "?0".parse().unwrap());
@@ -45,7 +45,7 @@ impl ImpersonateProvider {
             .cookie_store(true);
 
         if let Some(proxy) = proxy_url.filter(|u| !u.trim().is_empty()) {
-            if let Ok(p) = reqwest_impersonate::Proxy::all(proxy) {
+            if let Ok(p) = rquest::Proxy::all(proxy) {
                 builder = builder.proxy(p);
             }
         }

@@ -16,7 +16,7 @@ pub struct SentinelToken {
 /// 该函数将与 sentinel.openai.com 握手，获取解算难度和初始种子
 /// 后续根据返回的 difficulty 进行 PoW 计算
 pub async fn request_sentinel_token(
-    client: &reqwest_impersonate::Client,
+    client: &rquest::Client,
     device_id: &str,
 ) -> Result<SentinelToken, String> {
     let payload = serde_json::json!({
@@ -112,7 +112,7 @@ pub struct IpQualityInfo {
 }
 
 /// 环境预检：检测当前出口 IP 的归属地和质量
-pub async fn check_ip_quality(client: &reqwest_impersonate::Client) -> Result<IpQualityInfo, String> {
+pub async fn check_ip_quality(client: &rquest::Client) -> Result<IpQualityInfo, String> {
     // 使用 ip-api.com 获取详细的地理位置和组织信息
     let response = client
         .get("http://ip-api.com/json/?fields=status,message,country,city,org,as,query,hosting")

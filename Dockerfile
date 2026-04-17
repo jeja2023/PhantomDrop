@@ -16,6 +16,8 @@ RUN npm run build
 FROM rust:1.88-bookworm AS core-builder
 
 WORKDIR /build/core
+# 安装构建 boring-sys 所需的系统依赖 (cmake, golang)
+RUN apt-get update && apt-get install -y --no-install-recommends cmake golang && rm -rf /var/lib/apt/lists/*
 # 缓存依赖层 (可选优化，此处先简单处理)
 COPY core/Cargo.toml core/Cargo.lock ./
 COPY core/src ./src

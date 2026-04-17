@@ -1,7 +1,7 @@
 use crate::db::DataLake;
 use rand::Rng;
 use crate::openai::{constants, oauth, sentinel, sms::SmsActivateClient, impersonator::ImpersonateProvider};
-use reqwest_impersonate::impersonate::Impersonate;
+use rquest::tls::Impersonate;
 use serde_json::json;
 /**
  * OpenAI 两阶段注册状态机
@@ -41,7 +41,7 @@ pub struct RegisterResult {
 }
 
 /// 构建具备指纹伪装能力的 HTTP 客户端（可选代理）
-pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest_impersonate::Client, String> {
+pub fn build_client(proxy_url: Option<&str>) -> Result<rquest::Client, String> {
     Ok(super::impersonator::ImpersonateProvider::create_chrome_client(proxy_url))
 }
 
