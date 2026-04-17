@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Radar,
   Lock,
+  Database,
 } from 'lucide-react'
 import { fetchJson, postJson } from '../lib/api'
 import type { CloudflareAutomationStatus, PhantomSettingsUpdatedDetail, SettingsPayload } from '../types'
@@ -35,9 +36,16 @@ export default function SettingsView() {
   const [cloudflareAccountId, setCloudflareAccountId] = useState('')
   const [cpaUrl, setCpaUrl] = useState('')
   const [cpaKey, setCpaKey] = useState('')
+  const [sub2apiUrl, setSub2apiUrl] = useState('')
+  const [sub2apiKey, setSub2apiKey] = useState('')
   const [showCloudflareToken, setShowCloudflareToken] = useState(false)
   const [showCpaKey, setShowCpaKey] = useState(false)
   const [automationStatus, setAutomationStatus] = useState<CloudflareAutomationStatus | null>(null)
+  const [cpaAuthStatus, setCpaAuthStatus] = useState<'authenticated' | 'unauthenticated' | 'invalid'>('unauthenticated')
+  const [cpaAuthEmail, setCpaAuthEmail] = useState('')
+  const [cpaCodeVerifier, setCpaCodeVerifier] = useState('')
+  const [cpaCallbackUrl, setCpaCallbackUrl] = useState('')
+  const [isExchanging, setIsExchanging] = useState(false)
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -57,8 +65,13 @@ export default function SettingsView() {
         setCloudflareAccountId(settings.cloudflare_account_id || '')
         setCpaUrl(settings.cpa_url || '')
         setCpaKey(settings.cpa_key || '')
+        setSub2apiUrl(settings.sub2api_url || '')
+        setSub2apiKey(settings.sub2api_key || '')
         const status = await fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status')
         setAutomationStatus(status)
+        const cpaStatus = await fetchJson<{ status: any; email?: string }>('/api/cpa/auth-status')
+        setCpaAuthStatus(cpaStatus.status)
+        if (cpaStatus.email) setCpaAuthEmail(cpaStatus.email)
       } finally {
         setIsLoading(false)
       }
@@ -89,6 +102,8 @@ export default function SettingsView() {
       cloudflare_account_id: cloudflareAccountId || null,
       cpa_url: cpaUrl || null,
       cpa_key: cpaKey || null,
+      sub2api_url: sub2apiUrl || null,
+      sub2api_key: sub2apiKey || null,
     })
 
     window.dispatchEvent(
@@ -149,6 +164,43 @@ export default function SettingsView() {
   }
 
   const actionBusy = isSaving || isLoading || automationStatus?.running
+
+  const handleCodexLogin = async () => {
+    try {
+      const res = await fetchJson<{ url: string; code_verifier: string }>('/api/cpa/oauth-url')
+      setCpaCodeVerifier(res.code_verifier)
+      window.open(res.url, '_blank')
+    } catch (e) {
+      alert('获取 OAuth 链接失败')
+    }
+  }
+
+  const handleExchangeCode = async () => {
+    if (!cpaCallbackUrl || !cpaCodeVerifier) return
+    setIsExchanging(true)
+    try {
+      const res = await postJson<{ status: string; data?: { id_token?: string } }, { callback_url: string; code_verifier: string }>('/api/cpa/exchange', {
+        callback_url: cpaCallbackUrl,
+        code_verifier: cpaCodeVerifier,
+      })
+      if (res.status === 'success') {
+        setCpaAuthStatus('authenticated')
+        if (res.data?.id_token) {
+          // 简单演示：这里可以增加前端解析 JWT 展示 Email，但我们主要靠后端 status 回传
+          const cpaStatus = await fetchJson<{ status: any; email?: string }>('/api/cpa/auth-status')
+          if (cpaStatus.email) setCpaAuthEmail(cpaStatus.email)
+        }
+        setCpaCallbackUrl('')
+        setCpaCodeVerifier('')
+      } else {
+        alert('授权失败，请检查 URL 是否正确')
+      }
+    } catch (e) {
+      alert('令牌交换请求失败')
+    } finally {
+      setIsExchanging(false)
+    }
+  }
 
   return (
     <div className="page-shell relative min-w-0 space-y-2.5 animate-in fade-in slide-in-from-top-4 duration-500 pb-4 overflow-y-auto">
@@ -529,6 +581,108 @@ export default function SettingsView() {
                     <Lock size={14} className={showCpaKey ? 'text-blue-500' : ''} />
                   </button>
                 </div>
+              }
+            />
+            <SettingsRow
+              title="CPA 认证状态"
+              hint="Codex 服务登录凭据"
+              control={
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full ${cpaAuthStatus === 'authenticated' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></div>
+                    <span className="text-[10px] font-bold text-slate-600">
+                      {cpaAuthStatus === 'authenticated' ? `已授权 (${cpaAuthEmail || 'Codex Service'})` : '未授权'}
+                    </span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    {cpaAuthStatus === 'authenticated' && (
+                      <button
+                        onClick={async () => {
+                          if (confirm('确定要清除 CPA 认证状态吗？')) {
+                            await postJson('/api/settings/save', { cpa_auth_json: '' })
+                            setCpaAuthStatus('unauthenticated')
+                            setCpaAuthEmail('')
+                          }
+                        }}
+                        className="phantom-btn h-7 px-2.5 phantom-btn--secondary border-red-50 hover:bg-red-50 text-red-400 text-[9px] font-black"
+                        title="清除授权"
+                      >
+                        <Lock size={10} />
+                      </button>
+                    )}
+                    <button
+                      onClick={handleCodexLogin}
+                      disabled={isExchanging}
+                      className="phantom-btn h-7 px-3 phantom-btn--secondary border-blue-100 hover:bg-blue-50 text-[9px] font-black"
+                    >
+                      <ExternalLink size={10} className="mr-1" />
+                      {cpaAuthStatus === 'authenticated' ? '重连授权' : '去登录授权'}
+                    </button>
+                  </div>
+                </div>
+              }
+            />
+            {cpaCodeVerifier && (
+              <div className="mt-2 space-y-2 rounded-xl border border-blue-50 bg-blue-50/30 p-2.5 animate-in slide-in-from-top-2">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[9px] font-black text-blue-600">回调 URL 提交</span>
+                  <span className="text-[8px] text-blue-400 font-mono">等待授权回调...</span>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    aria-label="回调 URL"
+                    title="回调 URL"
+                    value={cpaCallbackUrl}
+                    onChange={(e) => setCpaCallbackUrl(e.target.value)}
+                    placeholder="在此粘贴包含 code=... 的完整回调 URL"
+                    className="phantom-input flex-grow text-[10px] h-8"
+                  />
+                  <button
+                    onClick={handleExchangeCode}
+                    disabled={isExchanging || !cpaCallbackUrl}
+                    className="phantom-btn h-8 px-4 phantom-btn--primary shadow-md shadow-blue-500/10 active:scale-95 transition-all"
+                  >
+                    {isExchanging ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                    <span className="text-[10px] font-bold ml-1">确认提交</span>
+                  </button>
+                </div>
+                <p className="px-1 text-[8px] text-slate-400">
+                  授权完成后，浏览器会跳转至 localhost:1455，请复制完整的跳转后 URL 地址提交。
+                </p>
+              </div>
+            )}
+          </SettingsSectionCard>
+
+          <SettingsSectionCard icon={<Database size={14} />} title="账号分发 (Sub2API/NewAPI)">
+            <SettingsRow
+              title="API 接口地址"
+              hint="推送 JSON 格式产物的端点"
+              control={
+                <input
+                  aria-label="Sub2API 接口地址"
+                  title="Sub2API 接口地址"
+                  value={sub2apiUrl}
+                  onChange={(e) => setSub2apiUrl(e.target.value)}
+                  placeholder="https://api.example.com/v1/accounts/import"
+                  disabled={isLoading}
+                  className="phantom-input w-full"
+                />
+              }
+            />
+            <SettingsRow
+              title="API 认证密钥"
+              hint="接口 Header 令牌 (Bearer)"
+              control={
+                <input
+                  aria-label="Sub2API 认证密钥"
+                  title="Sub2API 认证密钥"
+                  type="password"
+                  value={sub2apiKey}
+                  onChange={(e) => setSub2apiKey(e.target.value)}
+                  disabled={isLoading}
+                  placeholder="请输入 API Key"
+                  className="phantom-input w-full"
+                />
               }
             />
           </SettingsSectionCard>

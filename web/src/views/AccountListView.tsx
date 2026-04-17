@@ -18,7 +18,8 @@ import {
   Trash2,
   Trash,
   Key,
-  X
+  X,
+  Share2
 } from 'lucide-react';
 import { fetchJson, deleteJson, postJson } from '../lib/api';
 import type { GeneratedAccountRecord, DashboardStats } from '../types';
@@ -258,6 +259,60 @@ const AccountListView: FC = () => {
       window.dispatchEvent(event);
     }
   };
+  
+  const handleBatchUploadSub2api = async () => {
+    if (selectedIds.length === 0) return;
+    
+    setLoading(true);
+    try {
+      const res = await postJson<{ status: string, message: string }, any>('/api/accounts/batch/upload-sub2api', { ids: selectedIds });
+      
+      if (res.status === 'success') {
+          const event = new CustomEvent('phantom-log', { 
+            detail: { msg: `Sub2API 分发完成: ${res.message}`, level: 'success' } 
+          });
+          window.dispatchEvent(event);
+      }
+    } catch (error: any) {
+      console.error('Failed to upload to Sub2API:', error);
+      const event = new CustomEvent('phantom-log', { 
+        detail: { msg: `Sub2API 分发失败: ${error.message || '由于设置未配置或网络错误'}`, level: 'error' } 
+      });
+      window.dispatchEvent(event);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBatchExportJson = async () => {
+    if (selectedIds.length === 0) return;
+    
+    setLoading(true);
+    try {
+      const res = await postJson<any[], any>('/api/accounts/batch/export', { ids: selectedIds });
+      
+      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `accounts_export_${new Date().getTime()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      const event = new CustomEvent('phantom-log', { 
+        detail: { msg: `成功导出 ${res.length} 条账号记录为 JSON`, level: 'success' } 
+      });
+      window.dispatchEvent(event);
+    } catch (error: any) {
+      console.error('Failed to export JSON:', error);
+      const event = new CustomEvent('phantom-log', { 
+        detail: { msg: 'JSON 导出失败', level: 'error' } 
+      });
+      window.dispatchEvent(event);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredAccounts = accounts;
 
@@ -317,11 +372,33 @@ const AccountListView: FC = () => {
           )}
           <button 
             onClick={handleExport}
-            className="phantom-btn phantom-btn--primary phantom-btn--sm"
+            className="phantom-btn phantom-btn--secondary phantom-btn--sm"
+            title="导出全部记录为 CSV"
           >
             <Download size={12} />
-            导出 (.CSV)
+            CSV
           </button>
+          {selectedIds.length > 0 && (
+            <button 
+              onClick={handleBatchExportJson}
+              className="phantom-btn phantom-btn--primary phantom-btn--sm"
+              title="将选中账号导出为 JSON 格式"
+            >
+              <Database size={12} />
+              导出 JSON ({selectedIds.length})
+            </button>
+          )}
+          {selectedIds.length > 0 && (
+            <button 
+              onClick={handleBatchUploadSub2api}
+              className="phantom-btn phantom-btn--secondary phantom-btn--sm hover:text-indigo-600"
+              disabled={loading}
+              title="一键同步至 Sub2API/NewAPI"
+            >
+              <Share2 size={12} className={loading ? 'animate-pulse' : ''} />
+              同步 Sub2API ({selectedIds.length})
+            </button>
+          )}
         </div>
       </div>
 

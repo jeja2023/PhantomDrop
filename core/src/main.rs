@@ -1,5 +1,6 @@
 mod cloudflare_automation;
 mod db;
+mod exporter;
 mod openai;
 mod parser;
 mod register;
@@ -104,6 +105,8 @@ struct SettingsPayload {
     cloudflare_account_id: Option<String>,
     cpa_url: Option<String>,
     cpa_key: Option<String>,
+    sub2api_url: Option<String>,
+    sub2api_key: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -170,6 +173,8 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
         cloudflare_account_id: map.get("cloudflare_account_id").cloned().filter(|v| !v.is_empty()),
         cpa_url: map.get("cpa_url").cloned().filter(|v| !v.is_empty()),
         cpa_key: map.get("cpa_key").cloned().filter(|v| !v.is_empty()),
+        sub2api_url: map.get("sub2api_url").cloned().filter(|v| !v.is_empty()),
+        sub2api_key: map.get("sub2api_key").cloned().filter(|v| !v.is_empty()),
     }
 }
 
@@ -866,26 +871,36 @@ async fn main() {
                          _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 CPA 接口地址").into_response(),
                     };
                     
-                    let cpa_key = settings.get("cpa_key").cloned().unwrap_or_default();
-                    let client = reqwest::Client::new();
+                    let mut cpa_key = settings.get("cpa_key").cloned().unwrap_or_default();
                     
+                    // 增强逻辑：如果配置中 cpa_key 为空，则尝试使用 Codex OAuth 授权得到的令牌
+                    if cpa_key.trim().is_empty() {
+                        if let Ok(Some(auth_json)) = dl.get_setting("cpa_auth_json").await {
+                            if let Ok(auth_data) = serde_json::from_str::<openai::oauth::CodexAuthData>(&auth_json) {
+                                cpa_key = auth_data.access_token;
+                            }
+                        }
+                    }
+
+                    if cpa_key.trim().is_empty() {
+                         return (StatusCode::BAD_REQUEST, "请求失败：未配置 CPA 密钥且未进行 Codex 授权").into_response();
+                    }
+
+                    let client = reqwest::Client::new();
                     let mut success_count = 0;
                     let mut fail_count = 0;
                     
                     for id in ids {
                         if let Ok(Some(acc)) = dl.get_generated_account(&id).await {
-                             match crate::uploader::upload_account(
+                             let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Cpa);
+                             match crate::uploader::upload_account_multipart(
                                  &client,
                                  &cpa_url,
                                  &cpa_key,
-                                 &acc.address,
-                                 &acc.password,
-                                 acc.access_token.as_deref(),
-                                 acc.refresh_token.as_deref(),
-                                 acc.session_token.as_deref()
+                                 payload
                              ).await {
                                  Ok(_) => {
-                                     let _ = dl.update_account_upload_status(&id, "uploaded").await;
+                                     let _ = dl.update_account_upload_status(&id, "uploaded_cpa").await;
                                      success_count += 1;
                                  },
                                  Err(e) => {
@@ -898,8 +913,70 @@ async fn main() {
                     
                     Json(serde_json::json!({
                         "status": "success", 
-                        "message": format!("同步完成: 成功 {} 条, 失败 {} 条", success_count, fail_count)
+                        "message": format!("CPA 同步完成: 成功 {} 条, 失败 {} 条", success_count, fail_count)
                     })).into_response()
+                }
+            }
+        }))
+        .route("/api/accounts/batch/upload-sub2api", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<HashMap<String, Vec<String>>>| {
+                let dl = dl.clone();
+                async move {
+                    let ids = payload.get("ids").cloned().unwrap_or_default();
+                    let settings = dl.list_settings().await.unwrap_or_default();
+                    
+                    let sub2api_url = match settings.get("sub2api_url") {
+                         Some(u) if !u.trim().is_empty() => u.clone(),
+                         _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 Sub2API 接口地址").into_response(),
+                    };
+                    let sub2api_key = settings.get("sub2api_key").cloned().unwrap_or_default();
+                    
+                    let client = reqwest::Client::new();
+                    let mut success_count = 0;
+                    let mut fail_count = 0;
+                    
+                    for id in ids {
+                        if let Ok(Some(acc)) = dl.get_generated_account(&id).await {
+                             let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Sub2api);
+                             match crate::uploader::upload_account_json(
+                                 &client,
+                                 &sub2api_url,
+                                 &sub2api_key,
+                                 payload
+                             ).await {
+                                 Ok(_) => {
+                                     let _ = dl.update_account_upload_status(&id, "uploaded_sub2api").await;
+                                     success_count += 1;
+                                 },
+                                 Err(e) => {
+                                     eprintln!("Sub2API 上传失败 ({}): {}", id, e);
+                                     fail_count += 1;
+                                 }
+                             }
+                        }
+                    }
+                    
+                    Json(serde_json::json!({
+                        "status": "success", 
+                        "message": format!("Sub2API 同步完成: 成功 {} 条, 失败 {} 条", success_count, fail_count)
+                    })).into_response()
+                }
+            }
+        }))
+        .route("/api/accounts/batch/export", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<HashMap<String, Vec<String>>>| {
+                let dl = dl.clone();
+                async move {
+                    let ids = payload.get("ids").cloned().unwrap_or_default();
+                    let mut results = Vec::new();
+                    for id in ids {
+                        if let Ok(Some(acc)) = dl.get_generated_account(&id).await {
+                            results.push(acc);
+                        }
+                    }
+                    Json(results).into_response()
                 }
             }
         }))
@@ -1079,7 +1156,79 @@ async fn main() {
                         }
                     }
 
+                    if let Some(sub2api_url) = payload.sub2api_url.as_deref() {
+                        let trimmed = sub2api_url.trim();
+                        if !trimmed.is_empty() {
+                            let _ = dl.upsert_setting("sub2api_url", trimmed).await;
+                        }
+                    }
+
+                    if let Some(sub2api_key) = payload.sub2api_key.as_deref() {
+                        let trimmed = sub2api_key.trim();
+                        if !trimmed.is_empty() {
+                            let _ = dl.upsert_setting("sub2api_key", trimmed).await;
+                        }
+                    }
+
                     Json(serde_json::json!({"status": "success"}))
+                }
+            }
+        }))
+        .route("/api/cpa/oauth-url", get({
+            move || {
+                async move {
+                    let pkce = openai::oauth::generate_pkce();
+                    let state = openai::oauth::generate_state();
+                    let url = format!(
+                        "https://auth.openai.com/oauth/authorize?client_id={}&code_challenge={}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&prompt=login&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&scope=openid+email+profile+offline_access&state={}",
+                        openai::constants::OPENAI_CLIENT_ID,
+                        pkce.code_challenge,
+                        state
+                    );
+                    Json(serde_json::json!({"url": url, "code_verifier": pkce.code_verifier, "state": state}))
+                }
+            }
+        }))
+        .route("/api/cpa/exchange", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<HashMap<String, String>>| {
+                let dl = dl.clone();
+                async move {
+                    let callback_url = payload.get("callback_url").ok_or((StatusCode::BAD_REQUEST, "缺少 callback_url"))?;
+                    let code_verifier = payload.get("code_verifier").ok_or((StatusCode::BAD_REQUEST, "缺少 code_verifier"))?;
+                    match openai::oauth::exchange_codex_code(callback_url, code_verifier).await {
+                        Ok(auth_data) => {
+                            let json_str = serde_json::to_string_pretty(&auth_data).unwrap();
+                            let _ = dl.upsert_setting("cpa_auth_json", &json_str).await;
+                            
+                            // 同时也保存为物理文件，以供某些 CLI 工具使用
+                            if let Err(e) = std::fs::write("codex_auth.json", &json_str) {
+                                eprintln!("写入 codex_auth.json 失败: {:?}", e);
+                            }
+
+                            Ok(Json(serde_json::json!({"status": "success", "data": auth_data})))
+                        },
+                        Err(e) => Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"status": "error", "message": e})))),
+                    }
+                }
+            }
+        }))
+        .route("/api/cpa/auth-status", get({
+            let dl = Arc::clone(&data_lake);
+            move || {
+                let dl = dl.clone();
+                async move {
+                    match dl.get_setting("cpa_auth_json").await {
+                        Ok(Some(json_str)) => {
+                            if let Ok(auth_data) = serde_json::from_str::<openai::oauth::CodexAuthData>(&json_str) {
+                                let email = auth_data.get_email().unwrap_or_else(|| "Codex Service".to_string());
+                                Json(serde_json::json!({"status": "authenticated", "email": email}))
+                            } else {
+                                Json(serde_json::json!({"status": "invalid"}))
+                            }
+                        },
+                        _ => Json(serde_json::json!({"status": "unauthenticated"}))
+                    }
                 }
             }
         }))

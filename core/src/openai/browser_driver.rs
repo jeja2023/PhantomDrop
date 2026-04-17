@@ -525,7 +525,7 @@ impl BrowserDriver {
             
             let js = r#"
                 (async function() {
-                    const isJwt = (s) => s && s.startsWith('eyJ') && s.split('.').length === 3;
+                    const isJwt = (s) => typeof s === 'string' && s.startsWith('eyJ') && s.split('.').length === 3;
                     const res = { at: null, rt: null };
                     const jwtCandidates = [];
                     const rtCandidates = [];
@@ -537,24 +537,38 @@ impl BrowserDriver {
                                 const val = o[k];
                                 if (typeof val === 'string') {
                                     if (isJwt(val)) jwtCandidates.push(val);
-                                    if (k.toLowerCase().includes('refresh') && val.length > 30) rtCandidates.push(val);
-                                } else {
+                                    if (k.toLowerCase().includes('refresh') && val.length > 30 && !isJwt(val)) {
+                                        rtCandidates.push(val);
+                                    }
+                                } else if (typeof val === 'object') {
                                     scan(val);
                                 }
                             } catch(e) {}
                         }
                     };
 
-                    // 1. Fetch Session
+                    // 1. Try standard NextAuth session endpoint
                     try {
-                        const resp = await fetch('/api/auth/session');
+                        const resp = await fetch('/api/auth/session', { credentials: 'same-origin' });
                         if (resp.ok) {
                             const data = await resp.json();
-                            if (data.accessToken) res.at = data.accessToken;
+                            if (data && data.accessToken) res.at = data.accessToken;
                         }
                     } catch (e) {}
+
+                    // 2. Try alternative backend session endpoint
+                    if (!res.at) {
+                        try {
+                            const resp2 = await fetch('/backend-api/session', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
+                            if (resp2.ok) {
+                                const data2 = await resp2.json();
+                                if (data2 && data2.accessToken) res.at = data2.accessToken;
+                            }
+                        } catch (e) {}
+                    }
+
                     
-                    // 2. Scan Storage
+                    // 3. Scan Storage
                     try {
                         const stores = [localStorage, sessionStorage];
                         for (const store of stores) {
@@ -563,18 +577,29 @@ impl BrowserDriver {
                                 const v = store.getItem(k);
                                 if (!v) continue;
                                 if (isJwt(v)) jwtCandidates.push(v);
-                                if (k.toLowerCase().includes('refresh') && v.length > 30) rtCandidates.push(v);
-                                if (v.startsWith('{') || v.startsWith('[')) {
-                                    try { scan(JSON.parse(v)); } catch(e) {}
-                                }
+                                if (k.toLowerCase().includes('refresh') && v.length > 30 && !isJwt(v)) rtCandidates.push(v);
+                                
+                                let parsed = null;
+                                try {
+                                    if (v.startsWith('{') || v.startsWith('[')) {
+                                        parsed = JSON.parse(v);
+                                    }
+                                } catch(e) {}
+                                if (parsed) scan(parsed);
                             }
                         }
                     } catch (e) {}
-                    
+
+                    // 4. Try scanning window.__NEXT_DATA__
+                    try {
+                        scan(window.__NEXT_DATA__);
+                    } catch (e) {}
+
                     if (!res.at && jwtCandidates.length > 0) {
+                        // Default to the longest JWT found, typically the Access Token is the most data-heavy JWT
                         res.at = jwtCandidates.sort((a, b) => b.length - a.length)[0];
                     }
-                    if (rtCandidates.length > 0) {
+                    if (!res.rt && rtCandidates.length > 0) {
                         res.rt = rtCandidates.sort((a, b) => b.length - a.length)[0];
                     }
                     return res;

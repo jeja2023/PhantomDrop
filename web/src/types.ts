@@ -79,6 +79,8 @@ export interface SettingsPayload {
   cloudflare_account_id?: string | null
   cpa_url?: string | null
   cpa_key?: string | null
+  sub2api_url?: string | null
+  sub2api_key?: string | null
 }
 
 export interface CloudflareAutomationStatus {
@@ -124,6 +126,8 @@ export interface WorkflowParameters {
   captcha_key?: string
   cpa_url?: string
   cpa_key?: string
+  sub2api_url?: string
+  sub2api_key?: string
   concurrency?: number
   account_type?: string
   full_name?: string

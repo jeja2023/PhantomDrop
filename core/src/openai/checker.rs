@@ -16,11 +16,7 @@ pub async fn check_account_status(
         .map_err(|e| format!("数据库读取失败: {}", e))?
         .ok_or_else(|| "账号不存在".to_string())?;
 
-    let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| format!("HTTP 客户端创建失败: {}", e))?;
+    let client = crate::openai::impersonator::ImpersonateProvider::create_chrome_client(None);
 
     let mut final_status = "Unknown".to_string();
     let mut details: Vec<String> = Vec::new();
@@ -44,9 +40,12 @@ pub async fn check_account_status(
                     if resp.status().is_success() {
                         final_status = "Active".to_string();
                         details.push("Web 会话有效".to_string());
-                    } else if resp.status() == 401 || resp.status() == 403 {
-                        final_status = "Banned/Expired".to_string();
-                        details.push("Web 会话已封禁或过期".to_string());
+                    } else if resp.status() == 401 {
+                        final_status = "Expired".to_string();
+                        details.push("Web 会话已过期或未授权 (401)".to_string());
+                    } else if resp.status() == 403 {
+                        final_status = "Banned".to_string();
+                        details.push("账号已被封禁或 IP 受限 (403)".to_string());
                     } else {
                         details.push(format!("Web 检查返回异常状态: {}", resp.status()));
                     }
@@ -60,7 +59,7 @@ pub async fn check_account_status(
     }
 
     // 3. 如果 Web 校验没有成功确认状态，尝试使用 Access Token (针对 API)
-    if final_status != "Active" && final_status != "Banned/Expired" {
+    if final_status != "Active" && final_status != "Banned" {
         if let Some(ref at) = account.access_token {
             if !at.trim().is_empty() {
                 let mut headers = HeaderMap::new();
@@ -80,10 +79,11 @@ pub async fn check_account_status(
                             final_status = "Active (API)".to_string();
                             details.push("API Key 有效".to_string());
                         } else if resp.status() == 401 {
-                            if final_status == "Unknown" {
-                                final_status = "Invalid".to_string();
-                            }
-                            details.push("API Key 无效".to_string());
+                            final_status = "Expired (API)".to_string();
+                            details.push("API Key 已过期或无效 (401)".to_string());
+                        } else if resp.status() == 403 {
+                            final_status = "Banned (API)".to_string();
+                            details.push("账号封禁或权限不足 (403)".to_string());
                         } else {
                              details.push(format!("API 检查返回异常状态: {}", resp.status()));
                         }

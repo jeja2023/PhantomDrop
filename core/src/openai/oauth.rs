@@ -58,6 +58,70 @@ pub fn generate_device_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+pub struct CodexAuthData {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub id_token: String,
+    pub expires_in: u64,
+    pub token_type: String,
+}
+
+impl CodexAuthData {
+    pub fn get_email(&self) -> Option<String> {
+        let parts: Vec<&str> = self.id_token.split('.').collect();
+        if parts.len() >= 2 {
+            if let Ok(decoded) = base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD) {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
+                    return json.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+                }
+            }
+        }
+        None
+    }
+}
+
+/// 将回调 URL 转换为授权码并进行令牌交换
+pub async fn exchange_codex_code(
+    callback_url: &str,
+    code_verifier: &str,
+) -> Result<CodexAuthData, String> {
+    let url = url::Url::parse(callback_url).map_err(|e| format!("URL 解析失败: {}", e))?;
+    let code = url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .map(|(_, v)| v.to_string())
+        .ok_or("回调 URL 中未找到授权码 (code)")?;
+
+    let client = reqwest::Client::new();
+    let params = [
+        ("client_id", crate::openai::constants::OPENAI_CLIENT_ID),
+        ("grant_type", "authorization_code"),
+        ("code", &code),
+        ("redirect_uri", "http://localhost:1455/auth/callback"),
+        ("code_verifier", code_verifier),
+    ];
+
+    let response = client
+        .post(crate::openai::constants::AUTH_TOKEN_URL)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("令牌交换请求失败: {}", e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("令牌交换失败 ({}): {}", response.status(), error_text));
+    }
+
+    let auth_data = response
+        .json::<CodexAuthData>()
+        .await
+        .map_err(|e| format!("解析令牌响应失败: {}", e))?;
+
+    Ok(auth_data)
+}
+
 // --- 辅助函数：Base64 URL 编码（无 padding） ---
 
 fn base64url_encode(data: &[u8]) -> String {

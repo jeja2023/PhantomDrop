@@ -1,6 +1,7 @@
 use crate::db::DataLake;
 use rand::Rng;
-use crate::openai::{constants, oauth, sentinel, sms::SmsActivateClient};
+use crate::openai::{constants, oauth, sentinel, sms::SmsActivateClient, impersonator::ImpersonateProvider};
+use reqwest_impersonate::impersonate::Impersonate;
 use serde_json::json;
 /**
  * OpenAI 两阶段注册状态机
@@ -39,22 +40,9 @@ pub struct RegisterResult {
     pub workspace_id: Option<String>,
 }
 
-/// 构建 HTTP 客户端（可选代理）
-pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .user_agent(constants::DEFAULT_USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .cookie_store(true);
-
-    if let Some(proxy) = proxy_url.filter(|u| !u.trim().is_empty()) {
-        let proxy = reqwest::Proxy::all(proxy).map_err(|e| format!("代理配置无效: {}", e))?;
-        builder = builder.proxy(proxy);
-    }
-
-    builder
-        .build()
-        .map_err(|e| format!("HTTP 客户端构建失败: {}", e))
+/// 构建具备指纹伪装能力的 HTTP 客户端（可选代理）
+pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest_impersonate::Client, String> {
+    Ok(super::impersonator::ImpersonateProvider::create_chrome_client(proxy_url))
 }
 
 /// 执行完整的注册流程（Phase A + Phase B）
