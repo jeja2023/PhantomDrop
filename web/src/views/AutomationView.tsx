@@ -592,6 +592,54 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
       <section className="page-panel rounded-3xl border border-slate-200 p-5">
         <div className="mb-4 flex items-center justify-between">
           <div>
+            <h3 className="text-lg font-bold text-slate-900">执行快照全览</h3>
+            <p className="text-xs font-mono text-slate-500">关键步骤视觉追踪</p>
+          </div>
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-bold tracking-widest text-slate-500">
+             自动捕获
+          </span>
+        </div>
+
+        {!selectedRunId || steps.filter(s => s.message.includes('/debug/')).length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
+            {!selectedRunId ? '选择记录后查看快照' : '当前工作流尚未捕获到视觉快照。'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {steps
+              .filter(s => s.message.includes('/debug/'))
+              .map((step, idx) => {
+                const match = /\[(.*?)\]\((.*?)\)/.exec(step.message);
+                const label = match ? match[1].replace(' 步骤快照', '') : `快照 ${idx + 1}`;
+                const url = match ? match[2] : '';
+                
+                return (
+                  <motion.div 
+                    key={step.id} 
+                    whileHover={{ scale: 1.05 }}
+                    className="group relative aspect-[4/3] rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 cursor-pointer shadow-sm hover:shadow-xl transition-all"
+                    onClick={() => setPreviewUrl(buildApiUrl(url))}
+                  >
+                    <img 
+                      src={buildApiUrl(url)} 
+                      alt={label}
+                      className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-3">
+                      <p className="text-[10px] font-bold text-white truncate">{label}</p>
+                      <p className="text-[8px] text-slate-400 font-mono">Step {step.step_index}</p>
+                    </div>
+                  </motion.div>
+                );
+              })
+            }
+          </div>
+        )}
+      </section>
+
+      <section className="page-panel rounded-3xl border border-slate-200 p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
             <h3 className="text-lg font-bold text-slate-900">任务产物</h3>
             <p className="text-xs font-mono text-slate-500">工作流输出</p>
           </div>

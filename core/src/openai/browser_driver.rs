@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::openai::register::{RegisterContext, build_client};
 use crate::openai::sentinel;
 use anyhow::Result;
+use chrono;
 
 /**
  * PhantomBrowser 驱动程序
@@ -183,14 +184,20 @@ impl BrowserDriver {
         }
 
         // 调试截图辅助
+        let email_tag = self.context.email.replace(['@', '.'], "_");
         let take_shot = |name: &str, tab: &std::sync::Arc<headless_chrome::Tab>| {
             let _ = std::fs::create_dir_all("./data");
+            // 使用时间戳和邮箱后缀，确保快照唯一不被覆盖
+            let filename = format!("snap_{}_{}_{}.png", 
+                chrono::Utc::now().timestamp(),
+                email_tag,
+                name
+            );
             if let Ok(png) = tab.capture_screenshot(headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png, None, None, true) {
-                let filename = format!("debug_{}.png", name);
                 let path = format!("./data/{}", filename);
                 let _ = std::fs::write(&path, png);
                 if let Some(cb) = callback {
-                    cb("warn", &format!("📸 自动抓拍已保存: [点击查看](/debug/{})", filename));
+                    cb("warn", &format!("📸 [{} 步骤快照] 已存证: [点击预览](/debug/{})", name, filename));
                 }
                 return Some(path);
             }
@@ -210,7 +217,7 @@ impl BrowserDriver {
             }
 
             if cf_retry >= 5 {
-                take_shot("cloudflare_blocked", &tab);
+                take_shot("CF验证拦截", &tab);
                  if let Some(cb) = callback {
                     cb("error", "🛡️ 遭遇 Cloudflare 持续拦截，已尝试点击但未能通过，建议检查 Proxy 质量。");
                 }
@@ -255,7 +262,7 @@ impl BrowserDriver {
         
         email_input.click().ok();
         tab.type_str(&self.context.email).map_err(|e| format!("邮箱输入失败: {}", e))?;
-        take_shot("after_email_input", &tab);
+        take_shot("邮箱输入后", &tab);
 
         if let Ok(btn) = tab.find_element(continue_selectors) {
             btn.click().ok();
@@ -281,7 +288,7 @@ impl BrowserDriver {
         let pwd_input = pwd_input_res.unwrap();
         pwd_input.click().ok();
         tab.type_str(&self.context.password).ok();
-        take_shot("after_password_input", &tab);
+        take_shot("密码输入后", &tab);
         
         tab.press_key("Enter").ok();
 
@@ -326,26 +333,32 @@ impl BrowserDriver {
         // 严格等待姓名输入框出现，若超时则认为注册失败 (账号可能被拦截或环境检测通过但未跳转)
         tab.wait_for_element_with_custom_timeout("input[name='name'], input[name='full_name'], input#name", Duration::from_secs(60))
             .map_err(|_| {
-                take_shot("profile_timeout", &tab);
+                take_shot("资料页超时", &tab);
                 "已完成注册表单提交，但无法进入个人资料填写页 (可能是 IP 质量较差导致被拦截)"
             })?;
         
+        // 进入资料填写页，开始录像/快照
+        take_shot("个人资料页入口", &tab);
+
         if let Ok(name_input) = tab.find_element("input[name='name'], input[name='full_name'], input#name") {
              name_input.click().ok();
              tab.type_str(&full_name).ok();
-             take_shot("after_name_input", &tab);
+             take_shot("姓名填写后", &tab);
         }
 
         if let Ok(age_input) = tab.find_element("input[name='age'], input[type='number'], input#age") {
              age_input.click().ok();
              tab.type_str(&age.to_string()).ok();
-             take_shot("after_age_input", &tab);
+             take_shot("年龄填写后", &tab);
         } else if let Ok(birthday_input) = tab.find_element("input[name='birthday']") {
              // 兜底逻辑：如果还是旧版的生日输入框
              let bday = format!("{}-01-01", 2024 - age); 
              birthday_input.click().ok();
              tab.type_str(&bday).ok();
+             take_shot("生日填写后", &tab);
         }
+
+        take_shot("提交资料前", &tab);
 
         // 优先尝试点击继续按钮，如果不成功则按下回车
         let _ = tab.evaluate(r#"(function(){ 
@@ -387,7 +400,7 @@ impl BrowserDriver {
             
             if is_dash {
                 dash_found = true;
-                take_shot("dashboard_detected", &tab);
+                take_shot("主控制台已加载", &tab);
                 break;
             }
 
@@ -510,6 +523,7 @@ impl BrowserDriver {
 
         if let Some(cb) = callback {
             if token_extracted.is_some() || session_extracted.is_some() {
+                take_shot("注册完成控制台", &tab);
                 cb("success", "✅ 浏览器仿真注册流程执行完毕，已获取访问凭证！");
                 Ok(crate::openai::register::RegisterResult {
                     email: self.context.email.clone(),
@@ -522,7 +536,7 @@ impl BrowserDriver {
                 })
             } else {
                 cb("error", "❌ 注册流程可能已走完，但未能在规定时间内提取到任何有效 Token。请检查快照确认为何未进入主控台。");
-                take_shot("extraction_failed_final", &tab);
+                take_shot("凭证提取失败点", &tab);
                 Err("凭证提取完全失败 (Access Token & Session Token 均为 None)".to_string())
             }
         } else {
