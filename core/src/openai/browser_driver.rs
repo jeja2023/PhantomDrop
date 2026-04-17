@@ -380,8 +380,17 @@ impl BrowserDriver {
         if dash_found {
              if let Some(cb) = callback { cb("success", "📍 已成功抵达 ChatGPT 主控台界面"); }
         } else {
-             if let Some(cb) = callback { cb("warn", "📍 未能识别到主控台特征，可能停留在了异常页面，尝试强行提取..."); }
+             let final_url = tab.get_url();
+             if let Some(cb) = callback { 
+                 cb("warn", &format!("📍 未能识别到主控台特征 (当前 URL: {}), 正在尝试强行重定向并提取...", final_url)); 
+             }
              take_shot("dashboard_not_detected", &tab);
+             
+             // 如果停留在了 auth0 或者错误的页面，强行跳转到首页
+             if final_url.contains("auth0") || final_url.contains("signup") || final_url.contains("profile") {
+                 let _ = tab.navigate_to("https://chatgpt.com/");
+                 tokio::time::sleep(Duration::from_secs(8)).await;
+             }
         }
 
         // 7. 提取 Access Token (关键步骤)
@@ -442,8 +451,20 @@ impl BrowserDriver {
             }
 
             if i % 4 == 0 && i > 0 {
+                let current_url = tab.get_url();
                 if let Some(cb) = callback {
-                    cb("info", &format!("尝试提取凭证中 (第 {}/24 次)...", i + 1));
+                    cb("info", &format!("尝试提取凭证中 (第 {}/24 次) [URL: {}]...", i + 1, current_url));
+                }
+                
+                // 如果尝试多次依然失败且页面看起来是空白的，尝试刷新或重定向
+                if i == 8 || i == 16 {
+                    if current_url.contains("chatgpt.com") {
+                        if let Some(cb) = callback { cb("warn", "🔄 提取停滞，尝试刷新页面以触发会话同步..."); }
+                        let _ = tab.reload(false, None);
+                    } else {
+                        if let Some(cb) = callback { cb("warn", "🔄 页面偏移，正在尝试强制校准至 ChatGPT 首页..."); }
+                        let _ = tab.navigate_to("https://chatgpt.com/");
+                    }
                 }
             }
         }
