@@ -1094,7 +1094,7 @@ impl WorkflowEngine {
                 })),
             };
 
-            let driver = crate::openai::browser_driver::BrowserDriver::new(register_ctx);
+            let driver = crate::openai::browser_driver::BrowserDriver::new(register_ctx, dl.clone());
             
             // 运行驱动
             let driver_task = tokio::spawn(async move {

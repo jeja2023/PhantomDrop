@@ -1,6 +1,8 @@
 use headless_chrome::{Browser, LaunchOptions};
 use std::time::Duration;
 use crate::openai::register::{RegisterContext, build_client};
+use crate::db::DataLake;
+use std::sync::Arc;
 use crate::openai::sentinel;
 use anyhow::Result;
 use chrono;
@@ -13,11 +15,12 @@ use chrono;
 
 pub struct BrowserDriver {
     pub context: RegisterContext,
+    pub dl: Arc<DataLake>,
 }
 
 impl BrowserDriver {
-    pub fn new(context: RegisterContext) -> Self {
-        Self { context }
+    pub fn new(context: RegisterContext, dl: Arc<DataLake>) -> Self {
+        Self { context, dl }
     }
 
     pub async fn run(&self) -> Result<crate::openai::register::RegisterResult, String> {
@@ -245,6 +248,9 @@ impl BrowserDriver {
             tokio::time::sleep(Duration::from_secs(8)).await;
         }
 
+        // 记录锚点，用于后续轮询邮件
+        let poll_start = chrono::Utc::now().timestamp() - 10;
+
         // 3. 进入注册表单并输入邮箱
         if let Some(cb) = callback {
             cb("info", &format!("📧 正在输入邮箱并核验表单: {}", self.context.email));
@@ -292,14 +298,94 @@ impl BrowserDriver {
         
         tab.press_key("Enter").ok();
 
-        // 5. 等待验证邮件
+        // 5. 等待并处理验证邮件 (OTP 验证码或验证链接)
         if let Some(cb) = callback {
-            cb("warn", "📩 请在后台查看验证邮件并点击激活链接...");
+            cb("warn", "📩 正在监控 Catch-all 通道并等待验证邮件流入...");
         }
         
-        // 此处逻辑可以参考协议模式中的 poll_otp_by_email
-        // 插件模式中是自动跳转到邮箱页，这里我们也建议用户等待
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        let mut otp_code: Option<String> = None;
+        let mut verification_link: Option<String> = None;
+
+        // 轮询 100 次，每次 3s，总计 5 分钟
+        for attempt in 0..100 {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+
+            // 检查浏览器是否已经跳转到了资料页（由于某些环境可能跳过验证）
+            let on_profile_page = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
+                .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                .unwrap_or(false);
+            
+            if on_profile_page {
+                if let Some(cb) = callback { cb("success", "✅ 浏览器已自动进入资料填写页，跳过邮件验证轮询。"); }
+                break;
+            }
+
+            // 轮询数据库
+            match self.dl.poll_otp_by_email(&self.context.email, poll_start).await {
+                Ok(Some(code)) => {
+                    otp_code = Some(code);
+                    break;
+                }
+                _ => {
+                    if let Ok(Some(link)) = self.dl.poll_link_by_email(&self.context.email, poll_start).await {
+                        verification_link = Some(link);
+                        break;
+                    }
+                }
+            }
+
+            if attempt % 10 == 9 {
+                if let Some(cb) = callback {
+                    cb("info", &format!("持续等待 OTP 验证码或链接流入 (已等待 {}s)...", (attempt + 1) * 3));
+                }
+                take_shot(&format!("waiting_email_retry_{}", attempt), &tab);
+            }
+        }
+
+        if let Some(otp) = otp_code {
+            if let Some(cb) = callback { cb("success", &format!("成功提取 OTP 验证码: {}，正在浏览器中注入...", otp)); }
+            
+            // 尝试寻找验证码输入框 (常见于 input[maxlength='6'], input[id*='otp'], input[autocomplete='one-time-code'])
+            let otp_selectors = "input[autocomplete='one-time-code'], input[maxlength='6'], input#otp, input[name='code']";
+            match tab.wait_for_element_with_custom_timeout(otp_selectors, Duration::from_secs(15)) {
+                Ok(el) => {
+                    el.click().ok();
+                    tab.type_str(&otp).ok();
+                    tab.press_key("Enter").ok();
+                    take_shot("OTP输入后", &tab);
+                }
+                Err(_) => {
+                    if let Some(cb) = callback { cb("warn", "⚠️ 提取到验证码但未能在页面找到输入框，尝试执行 JS 注入..."); }
+                    let _ = tab.evaluate(&format!(r#"
+                        (function() {{
+                            const input = document.querySelector("{otp_selectors}") || document.querySelector("input[type='text'], input[type='number']");
+                            if (input) {{
+                                input.value = "{otp}";
+                                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            }}
+                        }})()
+                    "#), false);
+                    tab.press_key("Enter").ok();
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        } else if let Some(link) = verification_link {
+            if let Some(cb) = callback { cb("success", "检测到验证链接，正在浏览器中导航以完成激活..."); }
+            let _ = tab.navigate_to(&link);
+            tab.wait_until_navigated().ok();
+            take_shot("验证链接导航后", &tab);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        } else {
+             // 如果既没有 OTP 也没有 Link 且没在资料页，则可能是失败了
+             let on_profile_page_final = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
+                .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                .unwrap_or(false);
+             
+             if !on_profile_page_final {
+                return Err("等待验证邮件超时或页面未响应".to_string());
+             }
+        }
 
         // 6. 个人资料填写 (姓名和生日)
         if let Some(cb) = callback {
