@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, Square } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { fetchJson, postJson } from '../lib/api'
+import { fetchJson, postJson, buildApiUrl } from '../lib/api'
 import type {
   WorkflowDefinition,
   WorkflowRunPageResponse,
   WorkflowRunRecord,
   WorkflowStepRecord,
 } from '../types'
+import SnapshotModal from '../ui/SnapshotModal'
 
 type RegistrationPlatform = 'openai' | 'custom'
 
@@ -21,6 +22,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [steps, setSteps] = useState<WorkflowStepRecord[]>([])
   const [isStepsLoading, setIsStepsLoading] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   // OpenAI 专属配置状态 (模拟)
   const [openaiProxy, setOpenaiProxy] = useState('')
@@ -446,21 +448,21 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                       }
                       const [_, text, url] = match;
                       parts.push(
-                        <a 
+                        <button 
                           key={match.index} 
-                          href={url.startsWith('/') ? url : url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 hover:bg-blue-600/40 transition-colors mx-1"
-                          onClick={(_e) => {
-                             // 如果是 /debug 路由，尝试在当前项目范围内打开
-                             if (url.startsWith('/debug/')) {
-                               // 可以在这里实现一个预览模态框，或者直接跳转
-                             }
+                          className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 hover:bg-blue-600/40 transition-colors mx-1 font-bold"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (url.startsWith('/debug/')) {
+                              setPreviewUrl(buildApiUrl(url));
+                            } else {
+                              window.open(url, '_blank');
+                            }
                           }}
                         >
                           {text}
-                        </a>
+                        </button>
                       );
                       lastIndex = linkRegex.lastIndex;
                     }
@@ -507,6 +509,8 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
           </section>
         </div>
       </div>
+      
+      <SnapshotModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
     </div>
   )
 }

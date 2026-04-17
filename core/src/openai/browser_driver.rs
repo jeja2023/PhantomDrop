@@ -343,26 +343,91 @@ impl BrowserDriver {
 
         tab.press_key("Enter").ok();
 
+        // 6.5 处理可能的后续确认弹窗或引导页 (关键：确保进入最终的聊天界面)
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let _ = tab.evaluate(r#"(function(){ 
+            const keywords = ['Continue', '继续', '确认', 'Agree', '同意', 'Next', '下一步', 'Done', '完成', 'Okay'];
+            const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+            for (const btn of buttons) {
+                if (keywords.some(k => btn.innerText.includes(k))) {
+                    try { btn.click(); } catch(e) {}
+                }
+            }
+        })()"#, false);
+
+        // 再次兜底等待，确保页面跳转至 chatgpt.com 首页
+        if let Some(cb) = callback {
+            cb("info", "⌛ 正在等待 Dashboard 界面加载 (可能需要绕过引导弹窗)...");
+        }
+        
+        let mut dash_found = false;
+        for _ in 0..5 {
+             // 检查是否出现了聊天输入框或侧边栏，这代表进入了主界面
+            let is_dash = tab.evaluate("document.querySelector('#prompt-textarea, [data-testid=\"composer-input\"], nav') !== null", false)
+                .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                .unwrap_or(false);
+            
+            if is_dash {
+                dash_found = true;
+                break;
+            }
+
+            // 再次尝试点击可能的引导按钮
+            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成'].some(k => b.innerText.includes(k))) b.click(); })", false);
+            tokio::time::sleep(Duration::from_secs(4)).await;
+        }
+
+        if dash_found {
+             if let Some(cb) = callback { cb("success", "📍 已成功抵达 ChatGPT 主控台界面"); }
+        } else {
+             if let Some(cb) = callback { cb("warn", "📍 未能识别到主控台特征，可能停留在了异常页面，尝试强行提取..."); }
+             take_shot("dashboard_not_detected", &tab);
+        }
+
         // 7. 提取 Access Token (关键步骤)
         if let Some(cb) = callback {
             cb("info", "🔑 正在等待会话就绪并提取 Access Token...");
         }
 
-        // 循环尝试提取，直到成功或超时 (2 分钟)
+        // 增强型循环尝试提取，直到成功或超时 (2 分钟)
         let mut token_extracted = None;
-        for _ in 0..24 {
+        for i in 0..24 {
             tokio::time::sleep(Duration::from_secs(5)).await;
             
-            // 尝试执行 JS 获取 session
+            // 尝试执行 JS 获取 session，增加了对 localStorage 和备用路径的检查
             let js = r#"
                 (async function() {
                     try {
+                        // 1. 尝试 Fetch Next-Auth Session (由于此时已在 chatgpt.com，此方法最可靠)
                         const resp = await fetch('/api/auth/session');
                         if (resp.ok) {
                             const data = await resp.json();
-                            return data.accessToken || null;
+                            if(data.accessToken) return data.accessToken;
                         }
                     } catch (e) {}
+                    
+                    try {
+                        // 2. 遍历 LocalStorage 寻找 JWT 特征字符串
+                        for (let j = 0; j < localStorage.length; j++) {
+                            const key = localStorage.key(j);
+                            const val = localStorage.getItem(key);
+                            if (val && val.startsWith('eyJ') && val.split('.').length === 3) {
+                                return val;
+                            }
+                        }
+                    } catch (e) {}
+
+                    try {
+                        // 3. 遍历 SessionStorage 寻找 JWT 特征字符串
+                        for (let j = 0; j < sessionStorage.length; j++) {
+                            const key = sessionStorage.key(j);
+                            const val = sessionStorage.getItem(key);
+                            if (val && val.startsWith('eyJ') && val.split('.').length === 3) {
+                                return val;
+                            }
+                        }
+                    } catch (e) {}
+                    
                     return null;
                 })()
             "#;
@@ -375,13 +440,28 @@ impl BrowserDriver {
                     }
                 }
             }
+
+            if i % 4 == 0 && i > 0 {
+                if let Some(cb) = callback {
+                    cb("info", &format!("尝试提取凭证中 (第 {}/24 次)...", i + 1));
+                }
+            }
         }
 
         // 尝试额外提取 Session Token (从 Cookie 中)
+        // 尝试额外提取 Session Token (增加对不同命名的 Cookie 兼容)
         let mut session_extracted = None;
         if let Ok(cookies) = tab.get_cookies() {
-            if let Some(cookie) = cookies.iter().find(|c| c.name == "__Secure-next-auth.session-token") {
-                session_extracted = Some(cookie.value.clone());
+            let session_cookie_names = [
+                "__Secure-next-auth.session-token",
+                "__Host-next-auth.session-token",
+                "next-auth.session-token"
+            ];
+            for name in session_cookie_names {
+                if let Some(cookie) = cookies.iter().find(|c| c.name == name) {
+                    session_extracted = Some(cookie.value.clone());
+                    break;
+                }
             }
         }
 

@@ -12,6 +12,7 @@ import type {
   WorkflowRunRecord,
   WorkflowStepRecord,
 } from '../types'
+import SnapshotModal from '../ui/SnapshotModal'
 
 export default function AutomationView({ refreshIntervalMs }: { refreshIntervalMs: number }) {
   const [showToast, setShowToast] = useState(false)
@@ -32,6 +33,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
   const [accounts, setAccounts] = useState<GeneratedAccountRecord[]>([])
   const [isStepsLoading, setIsStepsLoading] = useState(false)
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [copiedOutput, setCopiedOutput] = useState(false)
   const stepsContainerRef = useRef<HTMLDivElement>(null)
 
@@ -526,16 +528,58 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
         ) : (
           <div ref={stepsContainerRef} className="max-h-[500px] overflow-y-auto pr-2 rounded-2xl">
             <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              {steps.map((step) => (
-                <div key={step.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="font-mono text-[15px] font-bold text-slate-900">第 {step.step_index} 步</div>
-                    <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${stepTone(step.level)}`}>{translateStepLevel(step.level)}</span>
+              {steps.map((step) => {
+                const renderMessage = (msg: string) => {
+                  const linkRegex = /\[(.*?)\]\((.*?)\)/g;
+                  const parts = [];
+                  let lastIndex = 0;
+                  let match;
+
+                  while ((match = linkRegex.exec(msg)) !== null) {
+                    if (match.index > lastIndex) {
+                      parts.push(msg.substring(lastIndex, match.index));
+                    }
+                    const [_, text, url] = match;
+                    parts.push(
+                      <button 
+                        key={match.index} 
+                        className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 hover:bg-blue-600/40 transition-colors mx-1 font-bold"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (url.startsWith('/debug/')) {
+                            setPreviewUrl(buildApiUrl(url));
+                          } else {
+                            window.open(url, '_blank');
+                          }
+                        }}
+                      >
+                        {text}
+                      </button>
+                    );
+                    lastIndex = linkRegex.lastIndex;
+                  }
+
+                  if (lastIndex < msg.length) {
+                    parts.push(msg.substring(lastIndex));
+                  }
+
+                  return parts.length > 0 ? parts : msg;
+                };
+
+                return (
+                  <div key={step.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5 group hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="font-mono text-[15px] font-bold text-slate-900">第 {step.step_index} 步</div>
+                      <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${stepTone(step.level)}`}>{translateStepLevel(step.level)}</span>
+                    </div>
+                    <div className="mt-2 text-[13px] leading-relaxed text-slate-600">
+                      {renderMessage(step.message)}
+                    </div>
+                    <div className="mt-2 text-[10px] font-mono text-slate-500">{new Date(step.created_at * 1000).toLocaleString()}</div>
                   </div>
-                  <div className="mt-2 text-[13px] leading-relaxed text-slate-600">{step.message}</div>
-                  <div className="mt-2 text-[10px] font-mono text-slate-500">{new Date(step.created_at * 1000).toLocaleString()}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -580,6 +624,8 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
           </div>
         )}
       </section>
+
+      <SnapshotModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
     </div>
   )
 }
