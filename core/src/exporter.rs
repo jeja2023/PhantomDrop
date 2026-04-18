@@ -69,6 +69,7 @@ impl AccountExporter {
     }
 
     /// 批量转换
+    #[allow(dead_code)]
     pub fn transform_batch(accounts: &[GeneratedAccountRecord], format: ExportFormat) -> Vec<serde_json::Value> {
         accounts.iter().map(|acc| Self::transform(acc, format)).collect()
     }

@@ -61,7 +61,8 @@ pub async fn upload_account_multipart(
     if res.status().is_success() {
         Ok(())
     } else {
+        let status = res.status();
         let err_body = res.text().await.unwrap_or_default();
-        Err(format!("CPA 平台拒绝 ({}): {}", res.status(), err_body))
+        Err(format!("CPA 平台拒绝 ({}): {}", status, err_body))
     }
 }

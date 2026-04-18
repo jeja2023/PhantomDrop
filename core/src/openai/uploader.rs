@@ -2,10 +2,12 @@ use reqwest::Client;
 use serde_json::json;
 
 /// 账号上传分发管理器
+#[allow(dead_code)]
 pub struct AccountUploader {
     client: Client,
 }
 
+#[allow(dead_code)]
 impl AccountUploader {
     pub fn new() -> Self {
         Self {

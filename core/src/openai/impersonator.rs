@@ -37,6 +37,7 @@ impl ImpersonateProvider {
     }
 
     /// 创建一个模拟 Safari 17.4 的客户端
+    #[allow(dead_code)]
     pub fn create_safari_client(proxy_url: Option<&str>) -> Client {
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(30))

@@ -1104,7 +1104,7 @@ impl DataLake {
                     access_token, refresh_token, session_token,
                     device_id, workspace_id, upload_status, account_type, proxy_url
              FROM generated_accounts
-             WHERE run_id = ?"
+             WHERE run_id = ?
              ORDER BY created_at DESC
              LIMIT ?"
         };
