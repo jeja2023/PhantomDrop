@@ -10,7 +10,6 @@ import {
   ExternalLink,
   Radar,
   Lock,
-  Database,
 } from 'lucide-react'
 import { fetchJson, postJson } from '../lib/api'
 import type { CloudflareAutomationStatus, PhantomSettingsUpdatedDetail, SettingsPayload } from '../types'
@@ -559,18 +558,18 @@ export default function SettingsView() {
               }
             />
             <SettingsRow
-              title="CPA 认证密钥"
-              hint="分发平台令牌"
+              title="CPA 管理密码"
+              hint="平台管理密钥 (MANAGEMENT_PASSWORD)"
               control={
                 <div className="relative">
                   <input
-                    aria-label="CPA 认证密钥"
-                    title="CPA 认证密钥"
+                    aria-label="CPA 管理密码"
+                    title="CPA 管理密码"
                     type={showCpaKey ? 'text' : 'password'}
                     value={cpaKey}
                     onChange={(e) => setCpaKey(e.target.value)}
                     disabled={isLoading}
-                    placeholder="请输入 CPA Key"
+                    placeholder="请输入管理密码或密钥"
                     className="phantom-input w-full pr-10"
                   />
                   <button
@@ -653,39 +652,6 @@ export default function SettingsView() {
             )}
           </SettingsSectionCard>
 
-          <SettingsSectionCard icon={<Database size={14} />} title="账号分发 (Sub2API/NewAPI)">
-            <SettingsRow
-              title="API 接口地址"
-              hint="推送 JSON 格式产物的端点"
-              control={
-                <input
-                  aria-label="Sub2API 接口地址"
-                  title="Sub2API 接口地址"
-                  value={sub2apiUrl}
-                  onChange={(e) => setSub2apiUrl(e.target.value)}
-                  placeholder="https://api.example.com/v1/accounts/import"
-                  disabled={isLoading}
-                  className="phantom-input w-full"
-                />
-              }
-            />
-            <SettingsRow
-              title="API 认证密钥"
-              hint="接口 Header 令牌 (Bearer)"
-              control={
-                <input
-                  aria-label="Sub2API 认证密钥"
-                  title="Sub2API 认证密钥"
-                  type="password"
-                  value={sub2apiKey}
-                  onChange={(e) => setSub2apiKey(e.target.value)}
-                  disabled={isLoading}
-                  placeholder="请输入 API Key"
-                  className="phantom-input w-full"
-                />
-              }
-            />
-          </SettingsSectionCard>
         </div>
       </div>
     </div>

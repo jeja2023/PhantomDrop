@@ -16,10 +16,12 @@ pub async fn check_account_status(
         .map_err(|e| format!("数据库读取失败: {}", e))?
         .ok_or_else(|| "账号不存在".to_string())?;
 
-    let client = crate::openai::impersonator::ImpersonateProvider::create_chrome_client(None);
-
     let mut final_status = "Unknown".to_string();
     let mut details: Vec<String> = Vec::new();
+
+    // 1.5 创建客户端 (关键：使用账号关联的代理)
+    let proxy_url = account.proxy_url.as_deref();
+    let client = crate::openai::impersonator::ImpersonateProvider::create_chrome_client(proxy_url);
 
     // 2. 尝试使用 Session Token 校验 (针对 ChatGPT 网页版账号)
     if let Some(ref st) = account.session_token {

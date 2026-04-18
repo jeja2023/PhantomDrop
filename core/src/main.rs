@@ -866,10 +866,15 @@ async fn main() {
                         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "无法读取设置").into_response(),
                     };
                     
-                    let cpa_url = match settings.get("cpa_url") {
-                         Some(u) if !u.trim().is_empty() => u.clone(),
+                    let mut cpa_url = match settings.get("cpa_url") {
+                         Some(u) if !u.trim().is_empty() => u.trim().to_string(),
                          _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 CPA 接口地址").into_response(),
                     };
+                    
+                    // 自动补全路径 (针对 CLIProxyAPI)
+                    if !cpa_url.contains("/v0/") && !cpa_url.contains("/api/") {
+                        cpa_url = format!("{}/v0/management/auth-files", cpa_url.trim_end_matches('/'));
+                    }
                     
                     let mut cpa_key = settings.get("cpa_key").cloned().unwrap_or_default();
                     
@@ -913,7 +918,9 @@ async fn main() {
                     
                     Json(serde_json::json!({
                         "status": "success", 
-                        "message": format!("CPA 同步完成: 成功 {} 条, 失败 {} 条", success_count, fail_count)
+                        "message": format!("成功 {} 条, 失败 {} 条", success_count, fail_count),
+                        "success_count": success_count,
+                        "fail_count": fail_count
                     })).into_response()
                 }
             }
@@ -959,7 +966,9 @@ async fn main() {
                     
                     Json(serde_json::json!({
                         "status": "success", 
-                        "message": format!("Sub2API 同步完成: 成功 {} 条, 失败 {} 条", success_count, fail_count)
+                        "message": format!("成功 {} 条, 失败 {} 条", success_count, fail_count),
+                        "success_count": success_count,
+                        "fail_count": fail_count
                     })).into_response()
                 }
             }

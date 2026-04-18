@@ -94,6 +94,7 @@ pub struct GeneratedAccountRecord {
     pub workspace_id: Option<String>,
     pub upload_status: Option<String>,
     pub account_type: Option<String>,
+    pub proxy_url: Option<String>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -246,7 +247,8 @@ impl DataLake {
                 device_id TEXT,
                 workspace_id TEXT,
                 upload_status TEXT DEFAULT 'pending',
-                account_type TEXT
+                account_type TEXT,
+                proxy_url TEXT
             )",
         )
         .execute(pool)
@@ -284,6 +286,9 @@ impl DataLake {
         .execute(pool)
         .await;
         let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN account_type TEXT")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN proxy_url TEXT")
             .execute(pool)
             .await;
 
@@ -1014,11 +1019,12 @@ impl DataLake {
         password: &str,
         status: &str,
         account_type: Option<&str>,
+        proxy_url: Option<&str>,
     ) -> Result<String, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let res = sqlx::query(
-            "INSERT INTO generated_accounts (id, run_id, address, password, status, created_at, upload_status, account_type)
-             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)"
+            "INSERT INTO generated_accounts (id, run_id, address, password, status, created_at, upload_status, account_type, proxy_url)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)"
         )
         .bind(&id)
         .bind(run_id)
@@ -1027,6 +1033,7 @@ impl DataLake {
         .bind(status)
         .bind(Utc::now().timestamp())
         .bind(account_type)
+        .bind(proxy_url)
         .execute(&self.pool)
         .await;
 
@@ -1088,16 +1095,16 @@ impl DataLake {
         let sql = if run_id == "all" {
             "SELECT id, run_id, address, password, status, created_at,
                     access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type
+                    device_id, workspace_id, upload_status, account_type, proxy_url
              FROM generated_accounts
              ORDER BY created_at DESC
              LIMIT ?"
         } else {
             "SELECT id, run_id, address, password, status, created_at,
                     access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type
+                    device_id, workspace_id, upload_status, account_type, proxy_url
              FROM generated_accounts
-             WHERE run_id = ?
+             WHERE run_id = ?"
              ORDER BY created_at DESC
              LIMIT ?"
         };
@@ -1126,7 +1133,7 @@ impl DataLake {
             let records = sqlx::query_as::<_, GeneratedAccountRecord>(
                 "SELECT id, run_id, address, password, status, created_at,
                         access_token, refresh_token, session_token,
-                        device_id, workspace_id, upload_status, account_type
+                        device_id, workspace_id, upload_status, account_type, proxy_url
                  FROM generated_accounts
                  WHERE lower(address) LIKE ? OR lower(status) LIKE ? OR lower(run_id) LIKE ?
                  ORDER BY created_at DESC
@@ -1144,7 +1151,7 @@ impl DataLake {
             let records = sqlx::query_as::<_, GeneratedAccountRecord>(
                 "SELECT id, run_id, address, password, status, created_at,
                         access_token, refresh_token, session_token,
-                        device_id, workspace_id, upload_status, account_type
+                        device_id, workspace_id, upload_status, account_type, proxy_url
                  FROM generated_accounts
                  ORDER BY created_at DESC
                  LIMIT ? OFFSET ?",
@@ -1266,7 +1273,7 @@ impl DataLake {
         let record = sqlx::query_as::<_, GeneratedAccountRecord>(
             "SELECT id, run_id, address, password, status, created_at,
                     access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type
+                    device_id, workspace_id, upload_status, account_type, proxy_url
              FROM generated_accounts
              WHERE id = ?
              LIMIT 1",

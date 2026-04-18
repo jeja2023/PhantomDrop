@@ -503,7 +503,8 @@ impl WorkflowEngine {
                     &address, 
                     &password, 
                     "ready", 
-                    parameters.account_type.as_deref()
+                    parameters.account_type.as_deref(),
+                    parameters.proxy_url.as_deref()
                 )
                 .await
             {
@@ -905,6 +906,7 @@ impl WorkflowEngine {
                             &result.password,
                             "openai_registered",
                             parameters.account_type.as_deref(),
+                            parameters.proxy_url.as_deref(),
                         )
                         .await
                     {
@@ -1005,6 +1007,7 @@ impl WorkflowEngine {
                             &password,
                             "register_failed",
                             parameters.account_type.as_deref(),
+                            parameters.proxy_url.as_deref(),
                         )
                         .await;
                     fail_count += 1;
@@ -1025,6 +1028,7 @@ impl WorkflowEngine {
                             &password,
                             "register_failed",
                             parameters.account_type.as_deref(),
+                            parameters.proxy_url.as_deref(),
                         )
                         .await;
                     fail_count += 1;
@@ -1117,7 +1121,8 @@ impl WorkflowEngine {
                         &result.email, 
                         &result.password, 
                         "openai_registered",
-                        parameters.account_type.as_deref()
+                        parameters.account_type.as_deref(),
+                        parameters.proxy_url.as_deref()
                     ).await {
                         let _ = dl.update_account_tokens(
                             &account_id,

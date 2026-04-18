@@ -192,6 +192,7 @@ export interface GeneratedAccountRecord {
   workspace_id?: string | null
   upload_status?: string | null
   account_type?: string | null
+  proxy_url?: string | null
 }
 
 export interface EmailPageResponse {

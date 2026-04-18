@@ -24,30 +24,35 @@ pub async fn upload_account_json(
     }
 }
 
-/// 以 Multipart 格式推送账号 (适用于标准 CPA 协议平台)
+/// 以 Multipart 格式推送账号 (兼容 CLIProxyAPI/Codex 协议平台)
 pub async fn upload_account_multipart(
     client: &reqwest::Client,
     cpa_url: &str,
     cpa_key: &str,
     payload: serde_json::Value,
 ) -> Result<(), String> {
-    let mut form = reqwest::multipart::Form::new();
+    // 准备文件名，通常使用账号地址作为标识
+    let filename = if let Some(addr) = payload.get("username").and_then(|v| v.as_str()) {
+        format!("{}.json", addr.replace('@', "_at_"))
+    } else {
+        "account.json".to_string()
+    };
+
+    let json_content = serde_json::to_string(&payload).unwrap_or_default();
     
-    // 将 JSON 扁平化为 Form Data
-    if let Some(obj) = payload.as_object() {
-        for (k, v) in obj {
-            let val_str = match v {
-                serde_json::Value::String(s) => s.clone(),
-                _ => v.to_string(),
-            };
-            form = form.text(k.clone(), val_str);
-        }
-    }
+    // 创建 multipart form
+    // 关键点：CLIProxyAPI 要求字段名为 "file"，且内容为 JSON 文件
+    let part = reqwest::multipart::Part::text(json_content)
+        .file_name(filename)
+        .mime_str("application/json")
+        .map_err(|e| format!("构建 Part 失败: {}", e))?;
+
+    let form = reqwest::multipart::Form::new().part("file", part);
 
     let res = client
         .post(cpa_url)
         .header("Authorization", format!("Bearer {}", cpa_key))
-        .header("x-api-key", cpa_key)
+        .header("x-management-key", cpa_key) // 兼容 CLIProxyAPI 的 Header
         .multipart(form)
         .send()
         .await
@@ -56,6 +61,7 @@ pub async fn upload_account_multipart(
     if res.status().is_success() {
         Ok(())
     } else {
-        Err(format!("CPA 平台拒绝: {}", res.status()))
+        let err_body = res.text().await.unwrap_or_default();
+        Err(format!("CPA 平台拒绝 ({}): {}", res.status(), err_body))
     }
 }

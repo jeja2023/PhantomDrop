@@ -18,8 +18,7 @@ import {
   Trash2,
   Trash,
   Key,
-  X,
-  Share2
+  X
 } from 'lucide-react';
 import { fetchJson, deleteJson, postJson } from '../lib/api';
 import type { GeneratedAccountRecord, DashboardStats } from '../types';
@@ -200,8 +199,13 @@ const AccountListView: FC = () => {
               return result ? { ...acc, status: result.status } : acc;
           }));
           
+          const msg = `批量检查完成，已更新 ${res.results.length} 条数据`;
+          setToastMsg(msg);
+          setShowToast(true);
+          setTimeout(() => setShowToast(false), 3000);
+
           const event = new CustomEvent('phantom-log', { 
-            detail: { msg: `批量检查完成，已更新 ${res.results.length} 条数据`, level: 'success' } 
+            detail: { msg, level: 'success' } 
           });
           window.dispatchEvent(event);
       }
@@ -224,8 +228,13 @@ const AccountListView: FC = () => {
       const res = await postJson<{ status: string, message: string }, any>('/api/accounts/batch/upload-cpa', { ids: selectedIds });
       
       if (res.status === 'success') {
+          const msg = `CPA 同步完成: ${res.message}`;
+          setToastMsg(msg);
+          setShowToast(true);
+          setTimeout(() => setShowToast(false), 3000);
+
           const event = new CustomEvent('phantom-log', { 
-            detail: { msg: `CPA 分发完成: ${res.message}`, level: 'success' } 
+            detail: { msg, level: 'success' } 
           });
           window.dispatchEvent(event);
       }
@@ -260,29 +269,6 @@ const AccountListView: FC = () => {
     }
   };
   
-  const handleBatchUploadSub2api = async () => {
-    if (selectedIds.length === 0) return;
-    
-    setLoading(true);
-    try {
-      const res = await postJson<{ status: string, message: string }, any>('/api/accounts/batch/upload-sub2api', { ids: selectedIds });
-      
-      if (res.status === 'success') {
-          const event = new CustomEvent('phantom-log', { 
-            detail: { msg: `Sub2API 分发完成: ${res.message}`, level: 'success' } 
-          });
-          window.dispatchEvent(event);
-      }
-    } catch (error: any) {
-      console.error('Failed to upload to Sub2API:', error);
-      const event = new CustomEvent('phantom-log', { 
-        detail: { msg: `Sub2API 分发失败: ${error.message || '由于设置未配置或网络错误'}`, level: 'error' } 
-      });
-      window.dispatchEvent(event);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleBatchExportJson = async () => {
     if (selectedIds.length === 0) return;
@@ -386,17 +372,6 @@ const AccountListView: FC = () => {
             >
               <Database size={12} />
               导出 JSON ({selectedIds.length})
-            </button>
-          )}
-          {selectedIds.length > 0 && (
-            <button 
-              onClick={handleBatchUploadSub2api}
-              className="phantom-btn phantom-btn--secondary phantom-btn--sm hover:text-indigo-600"
-              disabled={loading}
-              title="一键同步至 Sub2API/NewAPI"
-            >
-              <Share2 size={12} className={loading ? 'animate-pulse' : ''} />
-              同步 Sub2API ({selectedIds.length})
             </button>
           )}
         </div>
@@ -689,6 +664,13 @@ const AccountListView: FC = () => {
                             <code className="text-[11px] font-mono text-slate-700 break-all">{selectedAccount.workspace_id || 'N/A'}</code>
                         </div>
                     </div>
+
+                    {selectedAccount.proxy_url && (
+                        <div className="p-4 rounded-2xl bg-indigo-50/20 border border-indigo-100/50">
+                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1">注册代理节点 (Proxy used at registration)</p>
+                            <code className="text-[11px] font-mono text-indigo-600 break-all">{selectedAccount.proxy_url}</code>
+                        </div>
+                    )}
                 </div>
 
                 <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
