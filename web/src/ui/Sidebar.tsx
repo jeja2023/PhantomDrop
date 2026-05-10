@@ -16,7 +16,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         </div>
         <div className="flex flex-col hidden md:flex">
           <span className="font-extrabold text-sm tracking-tighter text-slate-900 leading-none">幻影中枢</span>
-          <span className="text-[9px] text-slate-700 font-mono tracking-widest mt-1 font-bold">核心节点 0.0.15</span>
+          <span className="text-[9px] text-slate-700 font-mono tracking-widest mt-1 font-bold">核心节点 0.0.17</span>
         </div>
       </div>
 
