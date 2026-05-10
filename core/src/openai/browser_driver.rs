@@ -164,6 +164,14 @@ impl BrowserDriver {
         // 2.2 中转页处理：新版 ChatGPT 会先展示 Get started 页，需要主动点入注册表单。
         let email_selectors = "input#email, input#username, input[name='email'], input[type='email']";
         tokio::time::sleep(Duration::from_secs(4)).await;
+        let signup_urls = [
+            "https://chatgpt.com/auth/login?screen_hint=signup",
+            "https://chatgpt.com/auth/signup",
+            "https://chatgpt.com/signup",
+            "https://chatgpt.com/",
+            "https://auth.openai.com/u/signup",
+            "https://auth0.openai.com/u/signup",
+        ];
 
         for attempt in 0..5 {
             let has_email_form = tab.evaluate(
@@ -229,15 +237,17 @@ impl BrowserDriver {
 
             if !clicked_signup {
                 if let Some(cb) = callback {
-                    cb("warn", "未在当前页面识别到注册按钮，尝试直接进入 ChatGPT 注册路径...");
+                    cb("warn", "未在当前页面识别到注册按钮，尝试切换备用注册入口...");
                 }
-                let _ = tab.navigate_to("https://chatgpt.com/auth/signup");
+                let target = signup_urls[(attempt + 1) % signup_urls.len()];
+                let _ = tab.navigate_to(target);
                 let _ = tab.wait_until_navigated();
             } else if attempt >= 2 && tab.get_url().contains("/auth/login") {
                 if let Some(cb) = callback {
-                    cb("warn", "点击注册入口后仍停留在登录页，尝试直接切换到注册路径...");
+                    cb("warn", "点击注册入口后仍停留在登录页，尝试切换备用注册入口...");
                 }
-                let _ = tab.navigate_to("https://chatgpt.com/auth/signup");
+                let target = signup_urls[(attempt + 1) % signup_urls.len()];
+                let _ = tab.navigate_to(target);
                 let _ = tab.wait_until_navigated();
             }
 
@@ -320,7 +330,49 @@ impl BrowserDriver {
             .map_err(|_| {
                 let current_url = tab.get_url();
                 take_shot("email_not_found", &tab);
-                format!("未找到邮箱输入框，环境检测可能未通过 (当前 URL: {})", current_url)
+                let diagnostics = tab.evaluate(r#"
+                    (function() {
+                        const visible = (el) => {
+                            const rect = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                        };
+                        const textOf = (el) => (
+                            el.innerText ||
+                            el.textContent ||
+                            el.getAttribute('aria-label') ||
+                            el.getAttribute('placeholder') ||
+                            el.getAttribute('name') ||
+                            el.getAttribute('type') ||
+                            ''
+                        ).trim().replace(/\s+/g, ' ');
+                        const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+                            .filter(visible)
+                            .slice(0, 12)
+                            .map(textOf)
+                            .filter(Boolean);
+                        const inputs = Array.from(document.querySelectorAll('input'))
+                            .filter(visible)
+                            .slice(0, 12)
+                            .map((el) => `${el.getAttribute('type') || ''}:${el.getAttribute('name') || ''}:${el.getAttribute('placeholder') || ''}`)
+                            .filter(Boolean);
+                        return {
+                            title: document.title,
+                            url: location.href,
+                            body: (document.body && document.body.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 240),
+                            buttons,
+                            inputs
+                        };
+                    })()
+                "#, true)
+                    .ok()
+                    .and_then(|result| result.value)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "页面诊断信息获取失败".to_string());
+                if let Some(cb) = callback {
+                    cb("warn", &format!("注册页诊断: {}", diagnostics));
+                }
+                format!("未找到邮箱输入框，环境检测可能未通过或注册入口结构已变化 (当前 URL: {})", current_url)
             })?;
         
         email_input.click().ok();
