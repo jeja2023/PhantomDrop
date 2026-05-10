@@ -7,14 +7,11 @@ use axum::http::{
 };
 use tower_http::cors::{Any, CorsLayer};
 
-pub const DEFAULT_HUB_SECRET: &str = "local_dev_secret";
-
 #[derive(Clone)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
     pub cors_origins: Vec<HeaderValue>,
     pub debug_assets_enabled: bool,
-    pub environment: String,
 }
 
 impl AppConfig {
@@ -53,7 +50,6 @@ impl AppConfig {
             bind_addr,
             cors_origins,
             debug_assets_enabled,
-            environment,
         })
     }
 
@@ -69,20 +65,6 @@ impl AppConfig {
             .allow_headers([CONTENT_TYPE, HeaderName::from_static("x-hub-secret")])
     }
 
-    pub fn is_production(&self) -> bool {
-        is_production_environment(&self.environment)
-    }
-}
-
-pub fn validate_hub_secret_for_environment(config: &AppConfig, secret: Option<&str>) -> Result<(), String> {
-    if !config.is_production() {
-        return Ok(());
-    }
-
-    match secret.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) if value != DEFAULT_HUB_SECRET => Ok(()),
-        _ => Err("生产环境必须配置非默认 HUB_SECRET".to_string()),
-    }
 }
 
 fn parse_bool_env(key: &str) -> Option<bool> {
@@ -95,40 +77,4 @@ fn parse_bool_env(key: &str) -> Option<bool> {
 
 fn is_production_environment(value: &str) -> bool {
     matches!(value.trim().to_ascii_lowercase().as_str(), "prod" | "production")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{AppConfig, DEFAULT_HUB_SECRET, validate_hub_secret_for_environment};
-
-    fn config_for(environment: &str) -> AppConfig {
-        AppConfig {
-            bind_addr: "127.0.0.1:9010".parse().unwrap(),
-            cors_origins: Vec::new(),
-            debug_assets_enabled: false,
-            environment: environment.to_string(),
-        }
-    }
-
-    #[test]
-    fn production_rejects_missing_or_default_secret() {
-        let config = config_for("production");
-
-        assert!(validate_hub_secret_for_environment(&config, None).is_err());
-        assert!(validate_hub_secret_for_environment(&config, Some(DEFAULT_HUB_SECRET)).is_err());
-    }
-
-    #[test]
-    fn production_accepts_non_default_secret() {
-        let config = config_for("prod");
-
-        assert!(validate_hub_secret_for_environment(&config, Some("strong-secret")).is_ok());
-    }
-
-    #[test]
-    fn development_allows_default_secret() {
-        let config = config_for("development");
-
-        assert!(validate_hub_secret_for_environment(&config, Some(DEFAULT_HUB_SECRET)).is_ok());
-    }
 }

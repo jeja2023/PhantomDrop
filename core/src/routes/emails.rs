@@ -9,7 +9,6 @@ use axum::{
     routing::{delete, get, post},
 };
 use serde::Deserialize;
-use std::env;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -213,20 +212,28 @@ pub fn routes(data_lake: Arc<DataLake>, stream_hub: Arc<StreamHub>) -> Router<Ar
                 let dl = dl.clone();
                 let hub = hub.clone();
                 async move {
-                    let expected_secret = match env::var("HUB_SECRET") {
-                        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
-                        _ => dl.get_setting("auth_secret").await.unwrap_or(None).unwrap_or_default().trim().to_string(),
-                    };
-                    if !expected_secret.is_empty() {
-                        let provided_secret = headers
-                            .get("X-Hub-Secret")
-                            .and_then(|val| val.to_str().ok())
-                            .unwrap_or("")
-                            .trim();
-                        if provided_secret != expected_secret {
-                            eprintln!("安全拦截：未授权的访问请求(Secret不匹配)");
-                            return (StatusCode::UNAUTHORIZED, "安全验证失败").into_response();
-                        }
+                    let expected_secret = dl
+                        .get_setting("auth_secret")
+                        .await
+                        .unwrap_or(None)
+                        .or_else(|| std::env::var("HUB_SECRET").ok())
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+
+                    if expected_secret.is_empty() {
+                        eprintln!("安全拦截：未配置接口令牌，拒绝邮件接入");
+                        return (StatusCode::UNAUTHORIZED, "未配置接口令牌").into_response();
+                    }
+
+                    let provided_secret = headers
+                        .get("X-Hub-Secret")
+                        .and_then(|val| val.to_str().ok())
+                        .unwrap_or("")
+                        .trim();
+                    if provided_secret != expected_secret {
+                        eprintln!("安全拦截：未授权的访问请求(Secret不匹配)");
+                        return (StatusCode::UNAUTHORIZED, "安全验证失败").into_response();
                     }
 
                     let id = Uuid::new_v4().to_string();

@@ -12,10 +12,9 @@ mod uploader;
 mod workflow;
 
 use crate::cloudflare_automation::CloudflareAutomationManager;
-use crate::config::{AppConfig, validate_hub_secret_for_environment};
+use crate::config::AppConfig;
 use crate::db::DataLake;
 use crate::stream::StreamHub;
-use std::env;
 use std::sync::Arc;
 
 /**
@@ -53,16 +52,6 @@ async fn main() {
         .unwrap_or_else(|_| "sqlite://phantom_core.db?mode=rwc".to_string());
     let data_lake = DataLake::new(&database_url).await;
     let saved_settings = data_lake.list_settings().await.unwrap_or_default();
-    if let Err(error) = validate_hub_secret_for_environment(
-        &app_config,
-        env::var("HUB_SECRET")
-            .ok()
-            .as_deref()
-            .or_else(|| saved_settings.get("auth_secret").map(String::as_str)),
-    ) {
-        eprintln!("安全配置错误: {error}");
-        std::process::exit(1);
-    }
     let project_root = detect_project_root();
 
     // 2. 初始化实时流枢纽 (SSE)

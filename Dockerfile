@@ -90,7 +90,6 @@ COPY ./tools /app/tools
 COPY ./.automation /app/.automation
 
 # 8. 环境配置
-ENV HUB_SECRET=local_dev_secret
 ENV APP_ENV=development
 ENV PHANTOM_DB_URL=sqlite:///app/data/phantom_core.db?mode=rwc
 ENV WEB_DIST=/app/web

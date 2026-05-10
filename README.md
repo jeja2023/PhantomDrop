@@ -57,12 +57,13 @@ cargo run --release
 
 请参考 `.env.example` 进行配置：
 
-- `HUB_SECRET`: API 访问秘钥。
+- `auth_secret`: API 接口令牌，请在 Web 控制台“全局设置”中配置。
+- `HUB_SECRET`: 可选兜底环境变量；Docker 生产环境通常不需要配置。
 - `PHANTOM_DB_URL`: SQLite 数据库连接字符串（容器内建议保持默认）。
 - `CLOUDFLARE_API_TOKEN`: 用于驱动自动化脚本的 Cloudflare 令牌。
 - `WEB_DIST`: (可选) 前端静态产物目录。
 
-生产环境请设置 `APP_ENV=production` 并使用非默认 `HUB_SECRET`，否则后端会拒绝启动。Cloudflare Worker 侧不要把 `HUB_SECRET` 写入 `wrangler.toml`，请使用 `npx wrangler secret put HUB_SECRET` 注入。
+生产环境请设置 `APP_ENV=production`，并在 Web 控制台“全局设置”中配置接口令牌。Cloudflare Worker 侧不要把 `HUB_SECRET` 写入 `wrangler.toml`，请使用 `npx wrangler secret put HUB_SECRET` 注入同一个令牌。
 Worker 的 `/health` 会检查 `PHANTOM_HUB_URL` 和 `HUB_SECRET` 是否可用；`npm run dry-run` 会调用 Wrangler 并可能与 Cloudflare 通信。
 
 ### 数据持久化

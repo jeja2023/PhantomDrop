@@ -10,7 +10,6 @@ services:
     tty: true
     stdin_open: true
     environment:
-      - HUB_SECRET=${HUB_SECRET:-local_dev_secret}
       - APP_ENV=${APP_ENV:-development}
       - PHANTOM_DB_URL=${PHANTOM_DB_URL:-sqlite:///app/data/phantom_core.db?mode=rwc}
       - BIND_ADDR=${BIND_ADDR:-0.0.0.0}

@@ -683,7 +683,7 @@ impl WorkflowEngine {
     ) -> Result<String, String> {
         Self::log_step(hub, dl, context, "info", "正在读取中枢与边缘配置快照...").await;
 
-        let env_secret = env::var("HUB_SECRET")
+        let fallback_env_secret = env::var("HUB_SECRET")
             .ok()
             .filter(|value| !value.trim().is_empty());
         let saved_secret = dl
@@ -709,27 +709,26 @@ impl WorkflowEngine {
             .await
             .map(|hooks| hooks.len())
             .unwrap_or(0);
-        let require_env_secret_match = parameters.require_env_secret_match.unwrap_or(true);
         let require_public_hub_url = parameters.require_public_hub_url.unwrap_or(true);
         let require_webhook = parameters.require_webhook.unwrap_or(false);
 
-        if env_secret.is_some() {
-            Self::log_step(hub, dl, context, "success", "检测到系统环境变量 HUB_SECRET").await;
+        if saved_secret.is_some() {
+            Self::log_step(hub, dl, context, "success", "全局设置中已配置接口令牌 auth_secret").await;
         } else {
             Self::log_step(
                 hub,
                 dl,
                 context,
                 "warn",
-                "未检测到环境变量 HUB_SECRET，将依赖数据库配置回退",
+                "全局设置中尚未配置接口令牌 auth_secret，邮件接入会被拒绝",
             )
             .await;
         }
 
-        if saved_secret.is_some() {
-            Self::log_step(hub, dl, context, "success", "数据库中存在 auth_secret 配置").await;
+        if fallback_env_secret.is_some() {
+            Self::log_step(hub, dl, context, "info", "检测到可选兜底环境变量 HUB_SECRET").await;
         } else {
-            Self::log_step(hub, dl, context, "warn", "数据库中未配置 auth_secret").await;
+            Self::log_step(hub, dl, context, "info", "未配置兜底环境变量 HUB_SECRET，将完全使用全局设置接口令牌").await;
         }
 
         if public_hub_url.is_some() {
@@ -758,18 +757,9 @@ impl WorkflowEngine {
             Self::log_step(hub, dl, context, "warn", "尚未配置可用的 Webhook 回调地址").await;
         }
 
-        let secrets_match = match (&env_secret, &saved_secret) {
-            (Some(left), Some(right)) => left == right,
-            _ => false,
-        };
-
         let public_hub_ok = public_hub_url.is_some() || !require_public_hub_url;
         let webhook_ok = webhook_url.is_some() || active_hooks > 0 || !require_webhook;
-        let secrets_ok = if require_env_secret_match {
-            secrets_match
-        } else {
-            true
-        };
+        let secrets_ok = saved_secret.is_some() || fallback_env_secret.is_some();
 
         if secrets_ok && public_hub_ok && webhook_ok {
             let message = "环境变量同步校验完成 / SECRETS_SYNCED_OK".to_string();
