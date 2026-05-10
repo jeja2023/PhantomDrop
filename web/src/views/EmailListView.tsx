@@ -38,6 +38,28 @@ function formatEmail(record: EmailRecordApi): EmailItem {
   }
 }
 
+function htmlToReadableText(html: string): string {
+  if (!html.trim()) return ''
+
+  const withLineBreaks = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, ' ')
+
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = withLineBreaks
+
+  return textarea.value
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 export default function EmailListView({ emails, externalQuery = '' }: { emails: EmailItem[]; externalQuery?: string }) {
   const [isExporting, setIsExporting] = useState(false)
   const [showToast, setShowToast] = useState(false)
@@ -80,6 +102,32 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
   }, [archivedFilter, page, pageSize, query])
 
   const visibleEmails = useMemo(() => (hasLoadedPage ? searchResults : emails), [emails, hasLoadedPage, searchResults])
+  const selectedEmailBody = useMemo(() => {
+    const bodyText = selectedEmail?.body_text?.trim() || ''
+    const bodyHtml = selectedEmail?.body_html?.trim() || ''
+
+    if (bodyText) {
+      return {
+        displayText: bodyText,
+        source: '纯文本正文',
+        rawHtml: bodyHtml,
+      }
+    }
+
+    if (bodyHtml) {
+      return {
+        displayText: htmlToReadableText(bodyHtml) || bodyHtml,
+        source: 'HTML 正文已转文本',
+        rawHtml: bodyHtml,
+      }
+    }
+
+    return {
+      displayText: '',
+      source: '无正文',
+      rawHtml: '',
+    }
+  }, [selectedEmail])
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const allVisibleSelected = visibleEmails.length > 0 && visibleEmails.every((email) => selectedIds.includes(email.id))
   const archivedVisibleCount = visibleEmails.filter((email) => email.isArchived).length
@@ -509,24 +557,57 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                     
                     <div className="group relative rounded-2xl border border-slate-200 bg-white p-5 transition-all hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5">
                       <div className="flex items-center justify-between">
-                        <div className="text-[10px] font-black tracking-widest text-slate-400 uppercase">正文纯文本 / BODY TEXT</div>
+                        <div>
+                          <div className="text-[10px] font-black tracking-widest text-slate-400 uppercase">邮件正文 / MESSAGE BODY</div>
+                          <div className="mt-1 text-[10px] font-bold text-blue-500">{selectedEmailBody.source}</div>
+                        </div>
                         <button 
-                          onClick={() => void copyField('text', selectedEmail.body_text)}
+                          type="button"
+                          onClick={() => void copyField('text', selectedEmailBody.displayText)}
                           className="text-slate-400 hover:text-blue-500 transition-colors"
-                          title="复制正文"
+                          title="复制邮件正文"
+                          aria-label="复制邮件正文"
                         >
                           <Copy size={12} />
                         </button>
                       </div>
-                      <div className="mt-2 max-h-[220px] overflow-auto custom-scrollbar">
+                      <div className="mt-3 max-h-[260px] overflow-auto custom-scrollbar">
                         <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed font-medium text-slate-700 selection:bg-blue-100">
-                          {selectedEmail.body_text || '无纯文本内容'}
+                          {selectedEmailBody.displayText || '未检测到邮件正文内容'}
                         </pre>
                       </div>
                       {copiedField === 'text' && (
                         <div className="absolute top-4 right-10 text-[10px] font-bold text-emerald-600 animate-in fade-in slide-in-from-right-2">已复制</div>
                       )}
                     </div>
+
+                    {selectedEmailBody.rawHtml ? (
+                      <div className="group relative rounded-2xl border border-slate-200 bg-white p-5 transition-all hover:border-blue-200 hover:shadow-lg hover:shadow-blue-500/5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-[10px] font-black tracking-widest text-slate-400 uppercase">原始 HTML / RAW HTML</div>
+                            <div className="mt-1 text-[10px] font-bold text-slate-400">用于排查验证码模板和隐藏内容</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void copyField('html', selectedEmailBody.rawHtml)}
+                            className="text-slate-400 hover:text-blue-500 transition-colors"
+                            title="复制原始 HTML"
+                            aria-label="复制原始 HTML"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                        <div className="mt-3 max-h-[220px] overflow-auto custom-scrollbar">
+                          <pre className="whitespace-pre-wrap break-words text-[10px] leading-relaxed font-mono text-slate-500 selection:bg-blue-100">
+                            {selectedEmailBody.rawHtml}
+                          </pre>
+                        </div>
+                        {copiedField === 'html' && (
+                          <div className="absolute top-4 right-10 text-[10px] font-bold text-emerald-600 animate-in fade-in slide-in-from-right-2">已复制</div>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 

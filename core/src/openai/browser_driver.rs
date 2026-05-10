@@ -335,25 +335,48 @@ impl BrowserDriver {
 
         tokio::time::sleep(Duration::from_secs(5)).await;
 
-        // 4. 输入密码
-        if let Some(cb) = callback {
-            cb("info", "🔐 正在注入安全密码...");
-        }
-        
         let pwd_selectors = "input#password, input[name='password'], input[type='password']";
-        let pwd_input_res = tab.wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(30));
-        
-        if pwd_input_res.is_err() {
-            take_shot("password_not_found", &tab);
-            return Err("进入密码设置页失败，可能邮箱已被黑名单或需邮箱验证".to_string());
+        let otp_selectors = "input[autocomplete='one-time-code'], input[maxlength='6'], input#otp, input[name='code']";
+        let mut password_filled = false;
+
+        // 4. 输入密码。新版流程可能会先进入邮箱验证码页，因此这里先探测密码框是否存在。
+        if let Some(cb) = callback {
+            cb("info", "🔐 正在检查密码设置页...");
         }
 
-        let pwd_input = pwd_input_res.unwrap();
-        pwd_input.click().ok();
-        tab.type_str(&self.context.password).ok();
-        take_shot("密码输入后", &tab);
-        
-        tab.press_key("Enter").ok();
+        match tab.wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(10)) {
+            Ok(pwd_input) => {
+                if let Some(cb) = callback {
+                    cb("info", "🔐 正在注入安全密码...");
+                }
+                pwd_input.click().ok();
+                tab.type_str(&self.context.password).ok();
+                take_shot("密码输入后", &tab);
+                tab.press_key("Enter").ok();
+                password_filled = true;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            Err(_) => {
+                let on_otp_page = tab.evaluate(
+                    &format!(
+                        "document.querySelector({:?}) !== null || document.body.innerText.includes('Check your inbox')",
+                        otp_selectors
+                    ),
+                    false,
+                )
+                    .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                    .unwrap_or(false);
+
+                if on_otp_page {
+                    if let Some(cb) = callback {
+                        cb("info", "📨 当前流程先要求邮箱验证码，完成验证后再继续设置密码...");
+                    }
+                } else {
+                    take_shot("password_not_found", &tab);
+                    return Err("进入密码设置页失败，且未检测到邮箱验证码页".to_string());
+                }
+            }
+        }
 
         // 5. 等待并处理验证邮件 (OTP 验证码或验证链接)
         if let Some(cb) = callback {
@@ -402,13 +425,15 @@ impl BrowserDriver {
         if let Some(otp) = otp_code {
             if let Some(cb) = callback { cb("success", &format!("成功提取 OTP 验证码: {}，正在浏览器中注入...", otp)); }
             
-            // 尝试寻找验证码输入框 (常见于 input[maxlength='6'], input[id*='otp'], input[autocomplete='one-time-code'])
-            let otp_selectors = "input[autocomplete='one-time-code'], input[maxlength='6'], input#otp, input[name='code']";
             match tab.wait_for_element_with_custom_timeout(otp_selectors, Duration::from_secs(15)) {
                 Ok(el) => {
                     el.click().ok();
                     tab.type_str(&otp).ok();
-                    tab.press_key("Enter").ok();
+                    if let Ok(btn) = tab.find_element(continue_selectors) {
+                        btn.click().ok();
+                    } else {
+                        tab.press_key("Enter").ok();
+                    }
                     take_shot("OTP输入后", &tab);
                 }
                 Err(_) => {
@@ -442,6 +467,29 @@ impl BrowserDriver {
              if !on_profile_page_final {
                 return Err("等待验证邮件超时或页面未响应".to_string());
              }
+        }
+
+        if !password_filled {
+            if let Some(cb) = callback {
+                cb("info", "🔐 邮箱验证完成，正在继续设置安全密码...");
+            }
+
+            let pwd_input = tab.wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(45))
+                .map_err(|_| {
+                    take_shot("password_after_otp_not_found", &tab);
+                    "邮箱验证完成后仍未进入密码设置页".to_string()
+                })?;
+
+            pwd_input.click().ok();
+            tab.type_str(&self.context.password).ok();
+            take_shot("密码输入后", &tab);
+
+            if let Ok(btn) = tab.find_element(continue_selectors) {
+                btn.click().ok();
+            } else {
+                tab.press_key("Enter").ok();
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
 
         // 6. 个人资料填写 (姓名和生日)

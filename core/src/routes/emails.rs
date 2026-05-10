@@ -236,7 +236,10 @@ pub fn routes(data_lake: Arc<DataLake>, stream_hub: Arc<StreamHub>) -> Router<Ar
                     let to = payload.meta.to.clone();
                     let subject = payload.meta.subject.as_deref().unwrap_or("无主题").to_string();
                     let decode_depth = dl.get_setting("decode_depth").await.ok().flatten();
-                    let parsed = NeuralParser::parse_all(text, html, ParseDepth::from_setting(decode_depth.as_deref()));
+                    let mut parsed = NeuralParser::parse_all(text, html, ParseDepth::from_setting(decode_depth.as_deref()));
+                    if NeuralParser::is_openai_sender(&from) {
+                        parsed.code = NeuralParser::extract_openai_otp(text, html);
+                    }
 
                     if let Err(e) = dl.record_email(
                         &id,

@@ -87,6 +87,7 @@ impl NeuralParser {
                     .captures(&merged_text)
                     .and_then(|caps| caps.get(1))
                     .map(|m| m.as_str().to_string())
+                    .filter(|candidate| candidate.chars().any(|c| c.is_ascii_digit()))
             })
             // 针对 OpenAI 风格的独立 6 位验证码进行二次扫描
             .or_else(|| Self::extract_openai_otp_from_text(&merged_text))
@@ -239,6 +240,16 @@ mod tests {
             ParseDepth::FullDeepScan,
         );
         assert_eq!(parsed.code.as_deref(), Some("123456"));
+    }
+
+    #[test]
+    fn does_not_capture_enter_as_code() {
+        let parsed = NeuralParser::parse_all(
+            "Your temporary ChatGPT verification code Enter the verification code we just sent to you.",
+            "",
+            ParseDepth::FullDeepScan,
+        );
+        assert_eq!(parsed.code, None);
     }
 
     #[test]

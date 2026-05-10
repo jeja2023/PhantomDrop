@@ -1176,6 +1176,7 @@ impl DataLake {
         let row = sqlx::query(
             "SELECT extracted_code FROM emails
              WHERE to_addr = ? AND extracted_code IS NOT NULL AND extracted_code != ''
+               AND extracted_code GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]'
                AND created_at >= ?
              ORDER BY created_at DESC
              LIMIT 1",
