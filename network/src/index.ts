@@ -5,6 +5,8 @@ export interface Env {
   HUB_SECRET: string;
 }
 
+const DEFAULT_HUB_SECRET = 'local_dev_secret';
+
 interface MailMessage {
   from: string;
   to: string;
@@ -42,7 +44,24 @@ interface HubPayload {
 }
 
 function normalizedHubUrl(env: Env): string {
-  return env.PHANTOM_HUB_URL.replace(/\/+$/, '');
+  const hubUrl = env.PHANTOM_HUB_URL?.trim();
+  if (!hubUrl) {
+    throw new Error('PHANTOM_HUB_URL is not configured');
+  }
+
+  return hubUrl.replace(/\/+$/, '');
+}
+
+function hubSecret(env: Env): string {
+  const secret = env.HUB_SECRET?.trim();
+  if (!secret) {
+    throw new Error('HUB_SECRET is not configured. Run: npx wrangler secret put HUB_SECRET');
+  }
+  if (secret === DEFAULT_HUB_SECRET) {
+    throw new Error('HUB_SECRET is still using the development default');
+  }
+
+  return secret;
 }
 
 function json(data: unknown, init?: ResponseInit): Response {
@@ -55,14 +74,18 @@ function json(data: unknown, init?: ResponseInit): Response {
 }
 
 async function relayToHub(payload: HubPayload, env: Env): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
   return fetch(`${normalizedHubUrl(env)}/ingest`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Hub-Secret': env.HUB_SECRET.trim(),
+      'X-Hub-Secret': hubSecret(env),
     },
     body: JSON.stringify(payload),
-  });
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
 }
 
 function buildRelayTestPayload(overridePayload?: Partial<HubPayload>): HubPayload {
@@ -91,11 +114,23 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === 'GET' && url.pathname === '/health') {
-      return json({
-        status: 'ok',
-        worker: 'phantom-drop-edge',
-        hub_url: normalizedHubUrl(env),
-      });
+      try {
+        return json({
+          status: 'ok',
+          worker: 'phantom-drop-edge',
+          hub_url: normalizedHubUrl(env),
+          secret_configured: Boolean(hubSecret(env)),
+        });
+      } catch (error) {
+        return json(
+          {
+            status: 'error',
+            worker: 'phantom-drop-edge',
+            message: error instanceof Error ? error.message : String(error),
+          },
+          { status: 500 },
+        );
+      }
     }
 
     if (request.method === 'POST' && url.pathname === '/relay-test') {

@@ -24,7 +24,7 @@ static FALLBACK_CODE_REGEX: LazyLock<Regex> =
 // OpenAI 专用：精准匹配独立的 6 位数字验证码
 #[allow(dead_code)]
 static OPENAI_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?<![0-9])([0-9]{6})(?![0-9])").expect("OpenAI OTP 正则初始化失败")
+    Regex::new(r"(?:^|[^0-9])([0-9]{6})(?:[^0-9]|$)").expect("OpenAI OTP 正则初始化失败")
 });
 
 static LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -89,12 +89,7 @@ impl NeuralParser {
                     .map(|m| m.as_str().to_string())
             })
             // 针对 OpenAI 风格的独立 6 位验证码进行二次扫描
-            .or_else(|| {
-                OPENAI_OTP_REGEX
-                    .captures(&merged_text)
-                    .and_then(|caps| caps.get(1))
-                    .map(|m| m.as_str().to_string())
-            })
+            .or_else(|| Self::extract_openai_otp_from_text(&merged_text))
             // 最后兜底通用正则
             .or_else(|| {
                 FALLBACK_CODE_REGEX
@@ -199,8 +194,12 @@ impl NeuralParser {
         let normalized_html = Self::html_to_text(html);
         let merged = Self::merge_sources(text, &normalized_html);
 
+        Self::extract_openai_otp_from_text(&merged)
+    }
+
+    fn extract_openai_otp_from_text(text: &str) -> Option<String> {
         OPENAI_OTP_REGEX
-            .captures(&merged)
+            .captures(text)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
     }
@@ -271,5 +270,21 @@ mod tests {
         let parsed = NeuralParser::parse_all("您的验证码: 123456", "", ParseDepth::HeadersOnly);
         assert_eq!(parsed.code, None);
         assert_eq!(parsed.link, None);
+    }
+
+    #[test]
+    fn extracts_standalone_openai_otp_without_lookaround() {
+        assert_eq!(
+            NeuralParser::extract_openai_otp("OpenAI verification: 654321.", "").as_deref(),
+            Some("654321")
+        );
+    }
+
+    #[test]
+    fn openai_otp_does_not_slice_long_numbers() {
+        assert_eq!(
+            NeuralParser::extract_openai_otp("reference id 9876543210", ""),
+            None
+        );
     }
 }

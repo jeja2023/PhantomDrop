@@ -15,6 +15,9 @@ import { fetchJson, postJson } from '../lib/api'
 import type { CloudflareAutomationStatus, PhantomSettingsUpdatedDetail, SettingsPayload } from '../types'
 
 type CloudflareMode = 'local_trycloudflare' | 'public_ip' | 'public_domain'
+type CpaAuthStatus = 'authenticated' | 'unauthenticated' | 'invalid'
+type CpaAuthStatusResponse = { status: CpaAuthStatus; email?: string }
+type CpaExchangeResponse = { status: 'success' | 'error'; email?: string; message?: string }
 
 export default function SettingsView() {
   const [isSaving, setIsSaving] = useState(false)
@@ -40,7 +43,7 @@ export default function SettingsView() {
   const [showCloudflareToken, setShowCloudflareToken] = useState(false)
   const [showCpaKey, setShowCpaKey] = useState(false)
   const [automationStatus, setAutomationStatus] = useState<CloudflareAutomationStatus | null>(null)
-  const [cpaAuthStatus, setCpaAuthStatus] = useState<'authenticated' | 'unauthenticated' | 'invalid'>('unauthenticated')
+  const [cpaAuthStatus, setCpaAuthStatus] = useState<CpaAuthStatus>('unauthenticated')
   const [cpaAuthEmail, setCpaAuthEmail] = useState('')
   const [cpaCodeVerifier, setCpaCodeVerifier] = useState('')
   const [cpaCallbackUrl, setCpaCallbackUrl] = useState('')
@@ -68,7 +71,7 @@ export default function SettingsView() {
         setSub2apiKey(settings.sub2api_key || '')
         const status = await fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status')
         setAutomationStatus(status)
-        const cpaStatus = await fetchJson<{ status: any; email?: string }>('/api/cpa/auth-status')
+        const cpaStatus = await fetchJson<CpaAuthStatusResponse>('/api/cpa/auth-status')
         setCpaAuthStatus(cpaStatus.status)
         if (cpaStatus.email) setCpaAuthEmail(cpaStatus.email)
       } finally {
@@ -169,7 +172,7 @@ export default function SettingsView() {
       const res = await fetchJson<{ url: string; code_verifier: string }>('/api/cpa/oauth-url')
       setCpaCodeVerifier(res.code_verifier)
       window.open(res.url, '_blank')
-    } catch (e) {
+    } catch {
       alert('获取 OAuth 链接失败')
     }
   }
@@ -178,23 +181,19 @@ export default function SettingsView() {
     if (!cpaCallbackUrl || !cpaCodeVerifier) return
     setIsExchanging(true)
     try {
-      const res = await postJson<{ status: string; data?: { id_token?: string } }, { callback_url: string; code_verifier: string }>('/api/cpa/exchange', {
+      const res = await postJson<CpaExchangeResponse, { callback_url: string; code_verifier: string }>('/api/cpa/exchange', {
         callback_url: cpaCallbackUrl,
         code_verifier: cpaCodeVerifier,
       })
       if (res.status === 'success') {
         setCpaAuthStatus('authenticated')
-        if (res.data?.id_token) {
-          // 简单演示：这里可以增加前端解析 JWT 展示 Email，但我们主要靠后端 status 回传
-          const cpaStatus = await fetchJson<{ status: any; email?: string }>('/api/cpa/auth-status')
-          if (cpaStatus.email) setCpaAuthEmail(cpaStatus.email)
-        }
+        if (res.email) setCpaAuthEmail(res.email)
         setCpaCallbackUrl('')
         setCpaCodeVerifier('')
       } else {
         alert('授权失败，请检查 URL 是否正确')
       }
-    } catch (e) {
+    } catch {
       alert('令牌交换请求失败')
     } finally {
       setIsExchanging(false)
@@ -331,6 +330,8 @@ export default function SettingsView() {
                   />
                   <button
                     type="button"
+                    aria-label={showSecret ? '隐藏节点认证密钥' : '显示节点认证密钥'}
+                    title={showSecret ? '隐藏节点认证密钥' : '显示节点认证密钥'}
                     onClick={() => setShowSecret(!showSecret)}
                     className="absolute right-0 top-0 bottom-0 px-3 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors"
                   >
@@ -377,10 +378,23 @@ export default function SettingsView() {
                   actions={
                     automationStatus?.worker_url ? (
                       <div className="flex gap-1.5">
-                        <button onClick={() => void handleCopy(automationStatus.worker_url!)} className="text-slate-400 hover:text-blue-500">
+                        <button
+                          type="button"
+                          aria-label="复制工作节点地址"
+                          title="复制工作节点地址"
+                          onClick={() => void handleCopy(automationStatus.worker_url!)}
+                          className="text-slate-400 hover:text-blue-500"
+                        >
                           <Copy size={12} />
                         </button>
-                        <a href={automationStatus.worker_url} target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-blue-500">
+                        <a
+                          href={automationStatus.worker_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="打开工作节点地址"
+                          title="打开工作节点地址"
+                          className="text-slate-400 hover:text-blue-500"
+                        >
                           <ExternalLink size={12} />
                         </a>
                       </div>
@@ -393,7 +407,13 @@ export default function SettingsView() {
                   emptyLabel="尚未生成"
                   actions={
                     automationStatus?.email_address ? (
-                      <button onClick={() => void handleCopy(automationStatus.email_address!)} className="text-slate-400 hover:text-blue-500">
+                      <button
+                        type="button"
+                        aria-label="复制最终收件地址"
+                        title="复制最终收件地址"
+                        onClick={() => void handleCopy(automationStatus.email_address!)}
+                        className="text-slate-400 hover:text-blue-500"
+                      >
                         <Copy size={12} />
                       </button>
                     ) : null
@@ -519,6 +539,8 @@ export default function SettingsView() {
                       />
                       <button
                         type="button"
+                        aria-label={showCloudflareToken ? '隐藏 Cloudflare 接口令牌' : '显示 Cloudflare 接口令牌'}
+                        title={showCloudflareToken ? '隐藏 Cloudflare 接口令牌' : '显示 Cloudflare 接口令牌'}
                         onClick={() => setShowCloudflareToken(!showCloudflareToken)}
                         className="absolute right-0 top-0 bottom-0 px-3 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors"
                       >
@@ -574,6 +596,8 @@ export default function SettingsView() {
                   />
                   <button
                     type="button"
+                    aria-label={showCpaKey ? '隐藏 CPA 管理密码' : '显示 CPA 管理密码'}
+                    title={showCpaKey ? '隐藏 CPA 管理密码' : '显示 CPA 管理密码'}
                     onClick={() => setShowCpaKey(!showCpaKey)}
                     className="absolute right-0 top-0 bottom-0 px-3 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors"
                   >

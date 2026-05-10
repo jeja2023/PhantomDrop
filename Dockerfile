@@ -90,8 +90,13 @@ COPY ./.automation /app/.automation
 
 # 8. 环境配置
 ENV HUB_SECRET=local_dev_secret
+ENV APP_ENV=development
 ENV PHANTOM_DB_URL=sqlite:///app/data/phantom_core.db?mode=rwc
 ENV WEB_DIST=/app/web
+ENV BIND_ADDR=0.0.0.0
+ENV PORT=9010
+ENV ENABLE_DEBUG_ASSETS=false
+ENV WRITE_CODEX_AUTH_FILE=false
 # 确保在容器内通过 pwsh 运行
 ENV SHELL=/usr/bin/pwsh
 

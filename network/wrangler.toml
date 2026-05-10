@@ -5,4 +5,3 @@ workers_dev = true
 
 [vars]
 PHANTOM_HUB_URL = "https://your-hub.example.com"
-HUB_SECRET = "local_dev_secret"

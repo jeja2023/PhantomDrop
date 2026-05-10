@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
+use sqlx::{Pool, Row, Sqlite, sqlite::SqlitePoolOptions};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -134,189 +134,69 @@ impl DataLake {
             .await
             .expect("无法连接到 SQLite 数据湖");
 
-        // 基础表结构迁移
-        Self::ensure_tables(&pool).await;
+        Self::configure_sqlite(&pool).await;
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("数据库迁移失败");
+        Self::ensure_legacy_columns(&pool).await;
 
         Arc::new(Self { pool })
     }
 
-    async fn ensure_tables(pool: &Pool<Sqlite>) {
-        // 创建核心邮件存储表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS emails (
-                id TEXT PRIMARY KEY,
-                created_at INTEGER NOT NULL,
-                from_addr TEXT NOT NULL,
-                to_addr TEXT NOT NULL,
-                subject TEXT,
-                body_text TEXT,
-                body_html TEXT,
-                extracted_code TEXT,
-                extracted_link TEXT,
-                extracted_text TEXT,
-                is_archived BOOLEAN DEFAULT FALSE
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("数据表初始化失败");
-
-        // 创建 Webhook 订阅表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS webhooks (
-                id TEXT PRIMARY KEY,
-                url TEXT NOT NULL,
-                event_filter TEXT DEFAULT '*',
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at INTEGER NOT NULL
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("Webhook表初始化失败");
-
-        // 创建应用级配置表，用于替代前端本地运行期依赖
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("应用配置表初始化失败");
-
-        // 创建工作流执行记录表
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS workflow_runs (
-                id TEXT PRIMARY KEY,
-                workflow_id TEXT NOT NULL,
-                workflow_title TEXT NOT NULL,
-                status TEXT NOT NULL,
-                message TEXT NOT NULL,
-                started_at INTEGER NOT NULL,
-                finished_at INTEGER
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("工作流执行记录表初始化失败");
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS workflow_definitions (
-                id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL DEFAULT 'account_generate',
-                title TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                status TEXT NOT NULL,
-                parameters_json TEXT NOT NULL DEFAULT '{}',
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("工作流定义表初始化失败");
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS workflow_run_steps (
-                id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                step_index INTEGER NOT NULL,
-                level TEXT NOT NULL,
-                message TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("工作流步骤记录表初始化失败");
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS generated_accounts (
-                id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                address TEXT NOT NULL,
-                password TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                access_token TEXT,
-                refresh_token TEXT,
-                session_token TEXT,
-                device_id TEXT,
-                workspace_id TEXT,
-                upload_status TEXT DEFAULT 'pending',
-                account_type TEXT,
-                proxy_url TEXT
-            )",
-        )
-        .execute(pool)
-        .await
-        .expect("生成账号表初始化失败");
-
-        // 尝试添加新字段，如果由于表已存在而缺少字段的话 (通过静默忽略错误来简单处理增量更新)
-        let _ = sqlx::query("ALTER TABLE emails ADD COLUMN extracted_link TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE emails ADD COLUMN extracted_text TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE workflow_definitions ADD COLUMN kind TEXT NOT NULL DEFAULT 'account_generate'").execute(pool).await;
-
-        // 生成账号表增量迁移：补充 Token 及分发字段
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN access_token TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN refresh_token TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN session_token TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN device_id TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN workspace_id TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query(
-            "ALTER TABLE generated_accounts ADD COLUMN upload_status TEXT DEFAULT 'pending'",
-        )
-        .execute(pool)
-        .await;
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN account_type TEXT")
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE generated_accounts ADD COLUMN proxy_url TEXT")
-            .execute(pool)
-            .await;
-
-        // 创建索引加速查询 (特别是针对收件地址的实时过滤)
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_to_addr ON emails (to_addr)")
+    async fn configure_sqlite(pool: &Pool<Sqlite>) {
+        sqlx::query("PRAGMA journal_mode = WAL")
             .execute(pool)
             .await
-            .expect("索引创建失败");
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_runs_started_at ON workflow_runs (started_at DESC)")
+            .expect("SQLite WAL 模式配置失败");
+        sqlx::query("PRAGMA synchronous = NORMAL")
             .execute(pool)
             .await
-            .expect("工作流索引创建失败");
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_definitions_updated_at ON workflow_definitions (updated_at DESC)")
+            .expect("SQLite 同步模式配置失败");
+        sqlx::query("PRAGMA busy_timeout = 5000")
             .execute(pool)
             .await
-            .expect("工作流定义索引创建失败");
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_workflow_run_steps_run_id ON workflow_run_steps (run_id, step_index)")
+            .expect("SQLite busy timeout 配置失败");
+        sqlx::query("PRAGMA foreign_keys = ON")
             .execute(pool)
             .await
-            .expect("工作流步骤索引创建失败");
+            .expect("SQLite 外键配置失败");
+    }
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_generated_accounts_run_id ON generated_accounts (run_id, created_at DESC)")
+    async fn ensure_legacy_columns(pool: &Pool<Sqlite>) {
+        Self::add_column_if_missing(pool, "emails", "extracted_link", "TEXT").await;
+        Self::add_column_if_missing(pool, "emails", "extracted_text", "TEXT").await;
+        Self::add_column_if_missing(pool, "workflow_definitions", "kind", "TEXT NOT NULL DEFAULT 'account_generate'").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "access_token", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "refresh_token", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "session_token", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "device_id", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "workspace_id", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "upload_status", "TEXT DEFAULT 'pending'").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "account_type", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "proxy_url", "TEXT").await;
+    }
+
+    async fn add_column_if_missing(pool: &Pool<Sqlite>, table: &str, column: &str, definition: &str) {
+        if Self::table_has_column(pool, table, column).await {
+            return;
+        }
+
+        let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+        sqlx::query(&sql)
             .execute(pool)
             .await
-            .expect("生成账号索引创建失败");
+            .unwrap_or_else(|error| panic!("数据库列迁移失败: {table}.{column}: {error}"));
+    }
+
+    async fn table_has_column(pool: &Pool<Sqlite>, table: &str, column: &str) -> bool {
+        let sql = format!("PRAGMA table_info({table})");
+        sqlx::query(&sql)
+            .fetch_all(pool)
+            .await
+            .map(|rows| rows.iter().any(|row| row.get::<String, _>("name") == column))
+            .unwrap_or(false)
     }
 
     /// 插入一条新解析的原始邮件

@@ -62,6 +62,9 @@ cargo run --release
 - `CLOUDFLARE_API_TOKEN`: 用于驱动自动化脚本的 Cloudflare 令牌。
 - `WEB_DIST`: (可选) 前端静态产物目录。
 
+生产环境请设置 `APP_ENV=production` 并使用非默认 `HUB_SECRET`，否则后端会拒绝启动。Cloudflare Worker 侧不要把 `HUB_SECRET` 写入 `wrangler.toml`，请使用 `npx wrangler secret put HUB_SECRET` 注入。
+Worker 的 `/health` 会检查 `PHANTOM_HUB_URL` 和 `HUB_SECRET` 是否可用；`npm run dry-run` 会调用 Wrangler 并可能与 Cloudflare 通信。
+
 ### 数据持久化
 
 Docker 部署时，请务必挂载以下两个目录以保证数据不丢失：
@@ -74,3 +77,7 @@ Docker 部署时，请务必挂载以下两个目录以保证数据不丢失：
 - 改动界面文案时，不修改接口路径、环境变量键名和外部协议字段。
 - 提交前清理无关调试输出。
 - 编码统一使用 UTF-8，避免中文乱码。
+
+## 质量验证
+
+本地验证命令见 `VERIFY.md`。仓库已提供 GitHub Actions 工作流，覆盖 Rust 后端测试、Web 生产构建和 Worker 类型检查。

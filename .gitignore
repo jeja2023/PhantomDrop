@@ -12,6 +12,8 @@ dist/
 # 本地数据库与事务日志
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 
 # 本地自动化状态
 .automation/
