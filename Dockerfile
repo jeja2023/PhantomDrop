@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake golang cl
 COPY core/Cargo.toml core/Cargo.lock ./
 COPY core/src ./src
 COPY core/console ./console
+COPY core/migrations ./migrations
 
 RUN cargo build --release
 
