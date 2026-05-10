@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Mail,
   Search,
@@ -515,9 +516,9 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
         </div>
       </div>
 
-      {selectedEmail || loadingDetail ? (
-        <div className="fixed inset-0 z-[3000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md sm:p-6">
-          <div className="flex h-[calc(100vh-48px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/20 bg-white shadow-2xl animate-in zoom-in-95 duration-400">
+      {selectedEmail || loadingDetail ? createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/65 p-4 backdrop-blur-md">
+          <div className="flex h-[min(900px,calc(100vh-48px))] w-[min(1180px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-white/20 bg-white shadow-2xl animate-in zoom-in-95 duration-400">
             <div className="flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3 sm:px-6">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
@@ -697,7 +698,8 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
               </div>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   )
