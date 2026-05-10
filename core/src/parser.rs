@@ -27,6 +27,11 @@ static OPENAI_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[^0-9])([0-9]{6})(?:[^0-9]|$)").expect("OpenAI OTP 正则初始化失败")
 });
 
+static OPENAI_SPACED_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^0-9])([0-9](?:\s+[0-9]){5})(?:[^0-9]|$)")
+        .expect("OpenAI 分散 OTP 正则初始化失败")
+});
+
 static LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:link|url|点击链接|打开网址)[:\s]*((?:https?://|www\.)[^\s<]+)")
         .expect("正则表达式初始化失败")
@@ -187,6 +192,7 @@ impl NeuralParser {
         lower.contains("@openai.com")
             || lower.contains("@email.openai.com")
             || lower.contains("noreply@tm.openai.com")
+            || lower.contains(".openai.com")
     }
 
     /// OpenAI 专用 OTP 提取：仅从 OpenAI 发件的邮件中精准提取 6 位验证码
@@ -203,6 +209,12 @@ impl NeuralParser {
             .captures(text)
             .and_then(|caps| caps.get(1))
             .map(|m| m.as_str().to_string())
+            .or_else(|| {
+                OPENAI_SPACED_OTP_REGEX
+                    .captures(text)
+                    .and_then(|caps| caps.get(1))
+                    .map(|m| m.as_str().chars().filter(|c| c.is_ascii_digit()).collect::<String>())
+            })
     }
 }
 
@@ -289,6 +301,21 @@ mod tests {
             NeuralParser::extract_openai_otp("OpenAI verification: 654321.", "").as_deref(),
             Some("654321")
         );
+    }
+
+    #[test]
+    fn extracts_spaced_openai_otp() {
+        assert_eq!(
+            NeuralParser::extract_openai_otp("Your temporary code is 1 2 3 4 5 6", "").as_deref(),
+            Some("123456")
+        );
+    }
+
+    #[test]
+    fn detects_tm_openai_bounce_sender() {
+        assert!(NeuralParser::is_openai_sender(
+            "bounces+20216706-8290-user=example.xyz@em7877.tm.openai.com"
+        ));
     }
 
     #[test]
