@@ -135,6 +135,10 @@ export default {
     }
 
     if (request.method === 'POST' && url.pathname === '/relay-test') {
+      const clientSecret = request.headers.get('X-Hub-Secret')?.trim();
+      if (!clientSecret || clientSecret !== hubSecret(env)) {
+        return json({ status: 'error', message: 'Unauthorized' }, { status: 401 });
+      }
       try {
         const body = (await request.json().catch(() => ({}))) as Partial<HubPayload>;
         const payload = buildRelayTestPayload(body);

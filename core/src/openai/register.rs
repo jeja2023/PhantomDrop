@@ -1,6 +1,6 @@
 use crate::db::DataLake;
-use rand::Rng;
 use crate::openai::{constants, oauth, sentinel, sms::SmsActivateClient};
+use rand::Rng;
 use serde_json::json;
 /**
  * OpenAI 两阶段注册状态机
@@ -74,14 +74,28 @@ pub async fn execute_registration(
                     info.ip,
                     info.country,
                     info.org,
-                    if info.is_datacenter { "⚠️ 机房/数据中心 (高风险)" } else { "✅ 住宅/基站 (低风险)" }
+                    if info.is_datacenter {
+                        "⚠️ 机房/数据中心 (高风险)"
+                    } else {
+                        "✅ 住宅/基站 (低风险)"
+                    }
                 );
-                cb(if info.is_datacenter { "warn" } else { "success" }, &msg);
+                cb(
+                    if info.is_datacenter {
+                        "warn"
+                    } else {
+                        "success"
+                    },
+                    &msg,
+                );
             }
         }
         Err(e) => {
             if let Some(ref cb) = context.step_callback {
-                cb("warn", &format!("环境预检跳过 (第三方 API 暂时不可达): {}", e));
+                cb(
+                    "warn",
+                    &format!("环境预检跳过 (第三方 API 暂时不可达): {}", e),
+                );
             }
         }
     }
@@ -199,13 +213,25 @@ pub async fn execute_registration(
 
     // 步骤 5: 提交密码
     if let Some(ref cb) = context.step_callback {
-        cb("info", &format!("[Step 5] 提交用户安全凭证 (Password: {})...", context.password));
+        cb(
+            "info",
+            &format!(
+                "[Step 5] 提交用户安全凭证 (Password: {})...",
+                context.password
+            ),
+        );
     }
     let password_response = client
         .post(constants::AUTH_PASSWORD_URL)
         .header("content-type", "application/x-www-form-urlencoded")
         .header("origin", "https://auth0.openai.com")
-        .header("referer", format!("https://auth0.openai.com/u/signup/password?state={}", &state))
+        .header(
+            "referer",
+            format!(
+                "https://auth0.openai.com/u/signup/password?state={}",
+                &state
+            ),
+        )
         .header("sec-ch-ua-mobile", "?0")
         .header("sec-fetch-dest", "document")
         .header("sec-fetch-mode", "navigate")
@@ -231,19 +257,24 @@ pub async fn execute_registration(
     // --- 自动化测试注入逻辑 ---
     if context.email.ends_with(".test") {
         if let Some(ref cb) = context.step_callback {
-            cb("warn", "[Test Mode] 检测到测试域名，正在向 DataLake 注入模拟验证码...");
+            cb(
+                "warn",
+                "[Test Mode] 检测到测试域名，正在向 DataLake 注入模拟验证码...",
+            );
         }
-        let _ = dl.record_email(
-            &format!("mock-id-{}", uuid::Uuid::new_v4().simple()),
-            "noreply@tm.openai.com",
-            &context.email,
-            "Verify your email",
-            "Your code is 123456",
-            "Your code is 123456",
-            Some("123456"),
-            None,
-            None
-        ).await;
+        let _ = dl
+            .record_email(
+                &format!("mock-id-{}", uuid::Uuid::new_v4().simple()),
+                "noreply@tm.openai.com",
+                &context.email,
+                "Verify your email",
+                "Your code is 123456",
+                "Your code is 123456",
+                Some("123456"),
+                None,
+                None,
+            )
+            .await;
     }
 
     let mut otp_code: Option<String> = None;
@@ -272,7 +303,10 @@ pub async fn execute_registration(
             if let Some(ref cb) = context.step_callback {
                 cb(
                     "info",
-                    &format!("持续等待 OTP 验证码或链接流入 (已等待 {}s)...", (attempt + 1) * 3),
+                    &format!(
+                        "持续等待 OTP 验证码或链接流入 (已等待 {}s)...",
+                        (attempt + 1) * 3
+                    ),
                 );
             }
         }
@@ -300,7 +334,13 @@ pub async fn execute_registration(
     } else if let Some(link) = verification_link {
         if let Some(ref cb) = context.step_callback {
             cb("success", "检测到验证链接，正在模拟点击进行激活...");
-            cb("info", &format!("[Step 7] 正在访问验证端点: {}...", &link[..40.min(link.len())]));
+            cb(
+                "info",
+                &format!(
+                    "[Step 7] 正在访问验证端点: {}...",
+                    &link[..40.min(link.len())]
+                ),
+            );
         }
 
         let link_res = client
@@ -326,12 +366,33 @@ pub async fn execute_registration(
     }
 
     let (final_full_name, final_age) = {
-        let first_names = ["Oliver", "Jack", "Harry", "Jacob", "Charlie", "Thomas", "George", "Oscar", "James", "William", "Alice", "Emma", "Sophia", "Isabella", "Mia"];
-        let last_names = ["Smith", "Jones", "Taylor", "Williams", "Brown", "Davies", "Evans", "Wilson", "Thomas", "Roberts", "Johnson", "Walker", "White", "Edwards", "Churchill"];
-        
+        let first_names = [
+            "Oliver", "Jack", "Harry", "Jacob", "Charlie", "Thomas", "George", "Oscar", "James",
+            "William", "Alice", "Emma", "Sophia", "Isabella", "Mia",
+        ];
+        let last_names = [
+            "Smith",
+            "Jones",
+            "Taylor",
+            "Williams",
+            "Brown",
+            "Davies",
+            "Evans",
+            "Wilson",
+            "Thomas",
+            "Roberts",
+            "Johnson",
+            "Walker",
+            "White",
+            "Edwards",
+            "Churchill",
+        ];
+
         let mut rng = rand::thread_rng();
-        
-        let name = context.full_name.as_deref()
+
+        let name = context
+            .full_name
+            .as_deref()
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
@@ -339,13 +400,16 @@ pub async fn execute_registration(
                 let l = last_names[rng.gen_range(0..last_names.len())];
                 format!("{} {}", f, l)
             });
-            
+
         let age = context.age.unwrap_or_else(|| rng.gen_range(19..45));
         (name, age)
     };
 
     if let Some(ref cb) = context.step_callback {
-        cb("info", &format!("资料详情 -> 姓名: {}, 年龄: {}", final_full_name, final_age));
+        cb(
+            "info",
+            &format!("资料详情 -> 姓名: {}, 年龄: {}", final_full_name, final_age),
+        );
     }
 
     let create_user_response = client
@@ -358,29 +422,41 @@ pub async fn execute_registration(
         .send()
         .await
         .map_err(|e| format!("账号创建请求失败: {}", e))?;
-        
+
     if !create_user_response.status().is_success() {
         return Err(format!("创建账号失败: {}", create_user_response.status()));
     }
-    
+
     if let Some(ref cb) = context.step_callback {
-        cb("success", "UserProfile 创建成功，账号注册(Phase A)基础流程完成");
+        cb(
+            "success",
+            "UserProfile 创建成功，账号注册(Phase A)基础流程完成",
+        );
     }
 
     // 步骤 9: 手机号验证 (可选)
     if let Some(sms_key) = &context.sms_key {
         if !sms_key.trim().is_empty() {
             if let Some(ref cb) = context.step_callback {
-                cb("info", "[Step 9] 检测到接码配置，正在启动手机号自动化验证...");
+                cb(
+                    "info",
+                    "[Step 9] 检测到接码配置，正在启动手机号自动化验证...",
+                );
             }
-            
+
             let sms_client = SmsActivateClient::new(sms_key.clone());
-            
+
             // 9.1 获取号码 (OpenAI 服务代码: dr)
-            let (order_id, phone_number) = sms_client.get_number("dr", None).await.map_err(|e| format!("获取手机号失败: {}", e))?;
-            
+            let (order_id, phone_number) = sms_client
+                .get_number("dr", None)
+                .await
+                .map_err(|e| format!("获取手机号失败: {}", e))?;
+
             if let Some(ref cb) = context.step_callback {
-                cb("success", &format!("已成功申领号码: {} (Order ID: {})", phone_number, order_id));
+                cb(
+                    "success",
+                    &format!("已成功申领号码: {} (Order ID: {})", phone_number, order_id),
+                );
                 cb("info", "正在向 OpenAI 提交号码并请求验证码...");
             }
 
@@ -408,7 +484,7 @@ pub async fn execute_registration(
                 cb("info", "短信指令已下发，正在等待平台同步验证码...");
             }
             let sms_code = sms_client.wait_for_code(&order_id, 300).await?;
-            
+
             if let Some(ref cb) = context.step_callback {
                 cb("success", &format!("已捕获手机验证码: {}", sms_code));
                 cb("info", "正在提交验证码以解除账号限制...");
@@ -432,7 +508,7 @@ pub async fn execute_registration(
 
             // 标记接码完成
             sms_client.set_status(&order_id, "3").await.ok();
-            
+
             if let Some(ref cb) = context.step_callback {
                 cb("success", "手机号验证通过，账号已升级为全功能状态");
             }
@@ -441,7 +517,10 @@ pub async fn execute_registration(
 
     // === Phase B: 全协议登录捕获 Access Token ===
     if let Some(ref cb) = context.step_callback {
-        cb("info", "[Phase B] Step 11: 初始化登录会话并发起 OAuth 授权流...");
+        cb(
+            "info",
+            "[Phase B] Step 11: 初始化登录会话并发起 OAuth 授权流...",
+        );
     }
 
     // 第 11 步：发起 OAuth 登录
@@ -469,16 +548,19 @@ pub async fn execute_registration(
     if let Some(ref cb) = context.step_callback {
         cb("info", "[Step 12] 提交账户密令至 Auth0 验证网关...");
     }
-    
+
     // 这里模拟真实的 Auth0 登录提交，获取授权码
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     let auth_code = format!("code_{}", uuid::Uuid::new_v4().simple());
 
     // 第 13 步: 最终的 Token Exchange (使用授权码换取 JWT)
     if let Some(ref cb) = context.step_callback {
-        cb("info", "[Step 13] 正在通过 OAuth Code 交换最终访问令牌 (Access Token)...");
+        cb(
+            "info",
+            "[Step 13] 正在通过 OAuth Code 交换最终访问令牌 (Access Token)...",
+        );
     }
-    
+
     let token_payload = [
         ("grant_type", "authorization_code"),
         ("client_id", constants::OPENAI_CLIENT_ID),
@@ -497,13 +579,25 @@ pub async fn execute_registration(
     let (final_access, final_refresh) = match token_exchange_res {
         Ok(res) if res.status().is_success() => {
             // 在实盘中应解析 JSON 获取 token
-            (format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple()), Some(format!("ref_{}", uuid::Uuid::new_v4().simple())))
-        },
+            (
+                format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple()),
+                Some(format!("ref_{}", uuid::Uuid::new_v4().simple())),
+            )
+        }
         _ => {
             if let Some(ref cb) = context.step_callback {
-                cb("warn", "Token 交换未获得完全响应，启用生产级 Session 仿真兜底...");
+                cb(
+                    "warn",
+                    "Token 交换未获得完全响应，启用生产级 Session 仿真兜底...",
+                );
             }
-            (format!("eyJhbGciOiJSUzI1NiI.simulated_{}", uuid::Uuid::new_v4().simple()), None)
+            (
+                format!(
+                    "eyJhbGciOiJSUzI1NiI.simulated_{}",
+                    uuid::Uuid::new_v4().simple()
+                ),
+                None,
+            )
         }
     };
 

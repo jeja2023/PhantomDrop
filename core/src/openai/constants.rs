@@ -25,13 +25,16 @@ pub const AUTH_SIGNUP_URL: &str = "https://auth0.openai.com/u/signup";
 pub const AUTH_PASSWORD_URL: &str = "https://auth0.openai.com/u/signup/password";
 
 /// 提交 OTP 验证端点
-pub const AUTH_OTP_VALIDATE_URL: &str = "https://chatgpt.com/backend-api/accounts/email-otp/validate";
+pub const AUTH_OTP_VALIDATE_URL: &str =
+    "https://chatgpt.com/backend-api/accounts/email-otp/validate";
 
 /// 请求手机号验证码端点
-pub const AUTH_SMS_OTP_REQUEST_URL: &str = "https://chatgpt.com/backend-api/accounts/sms-otp/request";
+pub const AUTH_SMS_OTP_REQUEST_URL: &str =
+    "https://chatgpt.com/backend-api/accounts/sms-otp/request";
 
 /// 提交手机号验证码端点
-pub const AUTH_SMS_OTP_VALIDATE_URL: &str = "https://chatgpt.com/backend-api/accounts/sms-otp/validate";
+pub const AUTH_SMS_OTP_VALIDATE_URL: &str =
+    "https://chatgpt.com/backend-api/accounts/sms-otp/validate";
 
 /// 创建用户信息端点
 pub const AUTH_CREATE_USER_URL: &str = "https://chatgpt.com/backend-api/accounts/user/register";

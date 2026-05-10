@@ -1,5 +1,3 @@
-
-
 /// 以 JSON 格式推送账号 (适用于 Sub2API, NewAPI 等)
 /// 以 JSON 格式推送账号 (适用于 Sub2API, NewAPI 等)
 pub async fn upload_account_json(
@@ -39,7 +37,7 @@ pub async fn upload_account_multipart(
     };
 
     let json_content = serde_json::to_string(&payload).unwrap_or_default();
-    
+
     // 创建 multipart form
     // 关键点：CLIProxyAPI 要求字段名为 "file"，且内容为 JSON 文件
     let part = reqwest::multipart::Part::text(json_content)

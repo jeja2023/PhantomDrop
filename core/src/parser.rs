@@ -213,7 +213,12 @@ impl NeuralParser {
                 OPENAI_SPACED_OTP_REGEX
                     .captures(text)
                     .and_then(|caps| caps.get(1))
-                    .map(|m| m.as_str().chars().filter(|c| c.is_ascii_digit()).collect::<String>())
+                    .map(|m| {
+                        m.as_str()
+                            .chars()
+                            .filter(|c| c.is_ascii_digit())
+                            .collect::<String>()
+                    })
             })
     }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, Square } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { fetchJson, postJson, buildApiUrl } from '../lib/api'
@@ -11,6 +11,15 @@ import type {
 import SnapshotModal from '../ui/SnapshotModal'
 
 type RegistrationPlatform = 'openai' | 'custom'
+type WorkflowSavePayload = {
+  id: string
+  kind: WorkflowDefinition['kind']
+  title: string
+  summary: string
+  status: WorkflowDefinition['status']
+  parameters_json: string
+}
+type EmptyBody = Record<string, never>
 
 export default function RegistrationView({ refreshIntervalMs }: { refreshIntervalMs: number }) {
   const [activePlatform, setActivePlatform] = useState<RegistrationPlatform>('openai')
@@ -33,7 +42,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const [age, setAge] = useState<number | ''>('')
   const [headless, setHeadless] = useState(true) // 默认开启无头模式
 
-  const loadWorkflows = async (platform: RegistrationPlatform) => {
+  const loadWorkflows = useCallback(async (platform: RegistrationPlatform) => {
     try {
       const data = await fetchJson<WorkflowDefinition[]>('/api/workflows')
       const targetId = platform === 'custom' ? 'openai_browser_register' : 'openai_register_default'
@@ -51,9 +60,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     } catch (error) {
       console.error('Failed to load workflows:', error)
     }
-  }
+  }, [])
 
-  const loadRuns = async (preserveSelection = true) => {
+  const loadRuns = useCallback(async (preserveSelection = true) => {
     try {
       const data = await fetchJson<WorkflowRunPageResponse>(`/api/workflow-runs?page=1&page_size=20&status=running`)
       const registerRuns = data.items.filter((run) => run.workflow_title.includes('注册') || run.workflow_id.includes('register'))
@@ -81,9 +90,9 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     } catch (error) {
       console.error('Failed to load runs:', error)
     }
-  }
+  }, [selectedRunId])
 
-  const loadSteps = async (runId: string, silent = false) => {
+  const loadSteps = useCallback(async (runId: string, silent = false) => {
     if (!silent) setIsStepsLoading(true)
     try {
       const data = await fetchJson<WorkflowStepRecord[]>(`/api/workflow-runs/${runId}/steps`)
@@ -94,19 +103,19 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
     } finally {
       if (!silent) setIsStepsLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     void loadWorkflows(activePlatform)
     void loadRuns(false)
-  }, [activePlatform])
+  }, [activePlatform, loadRuns, loadWorkflows])
 
   useEffect(() => {
     const interval = setInterval(() => {
       void loadRuns(true)
     }, refreshIntervalMs)
     return () => clearInterval(interval)
-  }, [refreshIntervalMs, selectedRunId])
+  }, [loadRuns, refreshIntervalMs, selectedRunId])
 
   useEffect(() => {
     if (!selectedRunId) return
@@ -116,7 +125,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       void loadSteps(selectedRunId, true)
     }, refreshIntervalMs)
     return () => clearInterval(interval)
-  }, [selectedRunId, refreshIntervalMs])
+  }, [loadSteps, selectedRunId, refreshIntervalMs])
 
   const handleSaveConfig = async (targetId?: string) => {
     try {
@@ -125,8 +134,8 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       const currentDef = workflows.find((w) => w.id === workflowId)
 
       if (currentDef) {
-        const cleanParameters = (params: any) => {
-          const cleaned: any = { ...params };
+        const cleanParameters = (params: WorkflowDefinition['parameters']) => {
+          const cleaned: WorkflowDefinition['parameters'] = { ...params };
           // 确保数值类参数绝对是整数
           cleaned.batch_size = Math.floor(Number(batchSize) || 1);
           cleaned.concurrency = Math.floor(Number(concurrency) || 1);
@@ -144,7 +153,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
           return cleaned;
         };
 
-        await postJson<any, any>('/api/workflows/save', {
+        await postJson<{ status: string }, WorkflowSavePayload>('/api/workflows/save', {
           id: currentDef.id,
           kind: currentDef.kind,
           title: currentDef.title,
@@ -185,15 +194,19 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       }
 
       void loadRuns(false)
-    } catch (error) {}
-    finally {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '鍚姩澶辫触'
+      setToastContent({ title: '鍚姩澶辫触', desc: message })
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 3000)
+    } finally {
       setRunningId(null)
     }
   }
 
   const handleStop = async (runId: string) => {
     try {
-      await postJson<any, any>(`/api/workflow-runs/${runId}/stop`, {})
+      await postJson<{ status: string }, EmptyBody>(`/api/workflow-runs/${runId}/stop`, {})
       setToastContent({ title: '停止指令已发送', desc: '正在强制终止当前注册流水线...' })
       setShowToast(true)
       setTimeout(() => setShowToast(false), 2000)
@@ -446,7 +459,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                       if (match.index > lastIndex) {
                         parts.push(msg.substring(lastIndex, match.index));
                       }
-                      const [_, text, url] = match;
+                      const [, text, url] = match;
                       parts.push(
                         <button 
                           key={match.index} 

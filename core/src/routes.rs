@@ -1,4 +1,4 @@
-﻿mod emails;
+mod emails;
 
 use crate::cloudflare_automation::{CloudflareAutomationManager, CloudflareAutomationRunPayload};
 use crate::config::AppConfig;
@@ -60,6 +60,7 @@ struct SettingsPayload {
     cpa_key: Option<String>,
     sub2api_url: Option<String>,
     sub2api_key: Option<String>,
+    cpa_auth_json: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -116,28 +117,289 @@ async fn debug_asset(name: String, enabled: bool) -> axum::response::Response {
     axum::response::Response::builder()
         .header("Content-Type", "image/png")
         .body(axum::body::Body::from(content))
-        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Response build error").into_response())
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Response build error").into_response()
+        })
+}
+
+pub fn validate_ssrf_url(url_str: &str) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(url_str).map_err(|e| format!("无效的 URL 格式: {}", e))?;
+
+    let scheme = parsed.scheme().to_lowercase();
+    if scheme != "https" {
+        if scheme == "http" {
+            if let Some(host) = parsed.host_str() {
+                if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+                    return Err(
+                        "非 HTTPS 协议仅允许在 localhost/127.0.0.1 环回地址下使用".to_string()
+                    );
+                }
+            } else {
+                return Err("仅支持 HTTPS 协议".to_string());
+            }
+        } else {
+            return Err("仅支持 HTTPS 或本地 HTTP 协议".to_string());
+        }
+    }
+
+    if let Some(host) = parsed.host_str() {
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if is_intranet_ip(ip) {
+                return Err("禁止使用内网 IP 地址进行外联".to_string());
+            }
+        } else {
+            use std::net::ToSocketAddrs;
+            let host_str = host.to_string();
+            let is_intranet = std::thread::spawn(move || {
+                if let Ok(addrs) = (host_str.as_str(), 80).to_socket_addrs() {
+                    for addr in addrs {
+                        if is_intranet_ip(addr.ip()) {
+                            if addr.ip().is_loopback() {
+                                continue;
+                            }
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .join()
+            .unwrap_or(false);
+
+            if is_intranet {
+                return Err("DNS 解析结果包含内网 IP 地址，禁止外联".to_string());
+            }
+        }
+    } else {
+        return Err("无效的主机名".to_string());
+    }
+
+    Ok(parsed)
+}
+
+fn is_intranet_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local() || ipv4.is_unspecified()
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            ipv6.is_loopback()
+                || ipv6.is_unspecified()
+                || (ipv6.segments()[0] & 0xfe00) == 0xfc00
+                || (ipv6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn extract_cookie_token(cookie_header: &str) -> Option<String> {
+    for cookie in cookie_header.split(';') {
+        let mut parts = cookie.trim().splitn(2, '=');
+        if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
+            if key == "phantom_auth_token" {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn auth_error_response(status: StatusCode, message: &str, html: bool) -> axum::response::Response {
+    if !html {
+        return axum::response::Response::builder()
+            .status(status)
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(format!(
+                r#"{{"status":"error","message":"{}"}}"#,
+                message
+            )))
+            .unwrap_or_else(|_| {
+                (StatusCode::INTERNAL_SERVER_ERROR, "Response build error").into_response()
+            });
+    }
+
+    let login_html = r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>PhantomDrop - Auth</title>
+    <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+        .card{background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.05);width:320px;text-align:center;border:1px solid #e2e8f0}
+        h2{margin-top:0;color:#0f172a;font-size:1.5rem}p{color:#64748b;font-size:.875rem;margin-bottom:24px}
+        input{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;margin-bottom:16px;font-size:14px;outline:none}
+        input:focus{border-color:#2563eb}button{width:100%;padding:10px;background:#2563eb;color:white;border:0;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer}
+        button:hover{background:#1d4ed8}.error{color:#ef4444;font-size:12px;margin-top:10px;display:none}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>System Auth</h2>
+        <p>Enter auth_secret to continue.</p>
+        <input type="password" id="secret" placeholder="auth_secret" onkeydown="if(event.key==='Enter')login()">
+        <button onclick="login()">Login</button>
+        <div id="error" class="error">Invalid secret or auth is not configured.</div>
+    </div>
+    <script>
+        function login(){
+            var val=document.getElementById('secret').value;
+            if(!val)return;
+            var secure=location.protocol==='https:'?'; Secure':'';
+            document.cookie='phantom_auth_token='+encodeURIComponent(val)+'; path=/; max-age=31536000; SameSite=Lax'+secure;
+            window.location.reload();
+        }
+        if(document.cookie.indexOf('phantom_auth_token')>-1){document.getElementById('error').style.display='block';}
+    </script>
+</body>
+</html>"#;
+
+    axum::response::Response::builder()
+        .status(status)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(axum::body::Body::from(login_html))
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Response build error").into_response()
+        })
+}
+
+async fn get_auth_secret(dl: &DataLake) -> Option<String> {
+    if let Ok(Some(secret)) = dl.get_setting("auth_secret").await {
+        let trimmed = secret.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    if let Ok(secret) = std::env::var("HUB_SECRET") {
+        let trimmed = secret.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    None
+}
+
+async fn auth_middleware(
+    axum::extract::State(data_lake): axum::extract::State<Arc<DataLake>>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, StatusCode> {
+    let path = req.uri().path();
+
+    if path == "/health" || path == "/ingest" {
+        return Ok(next.run(req).await);
+    }
+
+    let is_protected = path.starts_with("/api/")
+        || path == "/stream"
+        || path == "/stream/"
+        || path.starts_with("/console");
+
+    if is_protected {
+        let wants_html = !(path.starts_with("/api/") || path.starts_with("/stream"));
+        let Some(expected_secret) = get_auth_secret(&data_lake).await else {
+            return Ok(auth_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "认证密钥未配置，管理接口已锁定",
+                wants_html,
+            ));
+        };
+
+        let mut provided_secret = None;
+
+        if let Some(auth_val) = req
+            .headers()
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+        {
+            if auth_val.to_lowercase().starts_with("bearer ") {
+                provided_secret = Some(auth_val[7..].trim().to_string());
+            }
+        }
+
+        if provided_secret.is_none() {
+            if let Some(token_val) = req
+                .headers()
+                .get("x-auth-token")
+                .and_then(|h| h.to_str().ok())
+            {
+                provided_secret = Some(token_val.trim().to_string());
+            }
+        }
+
+        if provided_secret.is_none() {
+            if let Some(cookie_val) = req.headers().get("cookie").and_then(|h| h.to_str().ok()) {
+                provided_secret = extract_cookie_token(cookie_val);
+            }
+        }
+
+        let authenticated = match provided_secret {
+            Some(secret) => secret == expected_secret,
+            None => false,
+        };
+
+        if !authenticated {
+            return Ok(auth_error_response(
+                StatusCode::UNAUTHORIZED,
+                "未授权，请输入正确的接口密钥",
+                wants_html,
+            ));
+        }
+    }
+
+    Ok(next.run(req).await)
+}
+
+fn mask_credential(val: Option<String>) -> Option<String> {
+    val.map(|s| {
+        if s.trim().is_empty() {
+            "".to_string()
+        } else {
+            "******".to_string()
+        }
+    })
 }
 
 fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
     SettingsPayload {
         webhook_url: map.get("webhook_url").cloned().filter(|v| !v.is_empty()),
         update_rate: map.get("update_rate").and_then(|v| v.parse::<u64>().ok()),
-        auth_secret: map.get("auth_secret").cloned().filter(|v| !v.is_empty()),
+        auth_secret: mask_credential(map.get("auth_secret").cloned().filter(|v| !v.is_empty())),
         decode_depth: map.get("decode_depth").cloned().filter(|v| !v.is_empty()),
         public_hub_url: map.get("public_hub_url").cloned().filter(|v| !v.is_empty()),
         account_domain: map.get("account_domain").cloned().filter(|v| !v.is_empty()),
-        cloudflare_default_mode: map.get("cloudflare_default_mode").cloned().filter(|v| !v.is_empty()),
-        cloudflare_public_url: map.get("cloudflare_public_url").cloned().filter(|v| !v.is_empty()),
-        cloudflare_route_local_part: map.get("cloudflare_route_local_part").cloned().filter(|v| !v.is_empty()),
-        cloudflare_zone_domain: map.get("cloudflare_zone_domain").cloned().filter(|v| !v.is_empty()),
-        cloudflare_api_token: map.get("cloudflare_api_token").cloned().filter(|v| !v.is_empty()),
-        cloudflare_zone_id: map.get("cloudflare_zone_id").cloned().filter(|v| !v.is_empty()),
-        cloudflare_account_id: map.get("cloudflare_account_id").cloned().filter(|v| !v.is_empty()),
+        cloudflare_default_mode: map
+            .get("cloudflare_default_mode")
+            .cloned()
+            .filter(|v| !v.is_empty()),
+        cloudflare_public_url: map
+            .get("cloudflare_public_url")
+            .cloned()
+            .filter(|v| !v.is_empty()),
+        cloudflare_route_local_part: map
+            .get("cloudflare_route_local_part")
+            .cloned()
+            .filter(|v| !v.is_empty()),
+        cloudflare_zone_domain: map
+            .get("cloudflare_zone_domain")
+            .cloned()
+            .filter(|v| !v.is_empty()),
+        cloudflare_api_token: mask_credential(
+            map.get("cloudflare_api_token")
+                .cloned()
+                .filter(|v| !v.is_empty()),
+        ),
+        cloudflare_zone_id: map
+            .get("cloudflare_zone_id")
+            .cloned()
+            .filter(|v| !v.is_empty()),
+        cloudflare_account_id: map
+            .get("cloudflare_account_id")
+            .cloned()
+            .filter(|v| !v.is_empty()),
         cpa_url: map.get("cpa_url").cloned().filter(|v| !v.is_empty()),
-        cpa_key: map.get("cpa_key").cloned().filter(|v| !v.is_empty()),
+        cpa_key: mask_credential(map.get("cpa_key").cloned().filter(|v| !v.is_empty())),
         sub2api_url: map.get("sub2api_url").cloned().filter(|v| !v.is_empty()),
-        sub2api_key: map.get("sub2api_key").cloned().filter(|v| !v.is_empty()),
+        sub2api_key: mask_credential(map.get("sub2api_key").cloned().filter(|v| !v.is_empty())),
+        cpa_auth_json: mask_credential(map.get("cpa_auth_json").cloned().filter(|v| !v.is_empty())),
     }
 }
 
@@ -647,25 +909,29 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 let dl = dl.clone();
                 async move {
                     let ids = payload.get("ids").cloned().unwrap_or_default();
-                    
+
                     // 获取设置
                     let settings = match dl.list_settings().await {
                         Ok(s) => s,
                         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "无法读取设置").into_response(),
                     };
-                    
+
                     let mut cpa_url = match settings.get("cpa_url") {
                          Some(u) if !u.trim().is_empty() => u.trim().to_string(),
                          _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 CPA 接口地址").into_response(),
                     };
-                    
+
+                    if let Err(e) = validate_ssrf_url(&cpa_url) {
+                        return (StatusCode::BAD_REQUEST, format!("CPA 接口地址安全校验失败: {}", e)).into_response();
+                    }
+
                     // 自动补全路径 (针对 CLIProxyAPI)
                     if !cpa_url.contains("/v0/") && !cpa_url.contains("/api/") {
                         cpa_url = format!("{}/v0/management/auth-files", cpa_url.trim_end_matches('/'));
                     }
-                    
+
                     let mut cpa_key = settings.get("cpa_key").cloned().unwrap_or_default();
-                    
+
                     // 增强逻辑：如果配置中 cpa_key 为空，则尝试使用 Codex OAuth 授权得到的令牌
                     if cpa_key.trim().is_empty() {
                         if let Ok(Some(auth_json)) = dl.get_setting("cpa_auth_json").await {
@@ -682,7 +948,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     let client = reqwest::Client::new();
                     let mut success_count = 0;
                     let mut fail_count = 0;
-                    
+
                     for id in ids {
                         if let Ok(Some(acc)) = dl.get_generated_account(&id).await {
                              let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Cpa);
@@ -703,9 +969,9 @@ pub fn build_router(ctx: RouterContext) -> Router {
                              }
                         }
                     }
-                    
+
                     Json(serde_json::json!({
-                        "status": "success", 
+                        "status": "success",
                         "message": format!("成功 {} 条, 失败 {} 条", success_count, fail_count),
                         "success_count": success_count,
                         "fail_count": fail_count
@@ -720,17 +986,21 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 async move {
                     let ids = payload.get("ids").cloned().unwrap_or_default();
                     let settings = dl.list_settings().await.unwrap_or_default();
-                    
+
                     let sub2api_url = match settings.get("sub2api_url") {
                          Some(u) if !u.trim().is_empty() => u.clone(),
                          _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 Sub2API 接口地址").into_response(),
                     };
+
+                    if let Err(e) = validate_ssrf_url(&sub2api_url) {
+                        return (StatusCode::BAD_REQUEST, format!("Sub2API 接口地址安全校验失败: {}", e)).into_response();
+                    }
                     let sub2api_key = settings.get("sub2api_key").cloned().unwrap_or_default();
-                    
+
                     let client = reqwest::Client::new();
                     let mut success_count = 0;
                     let mut fail_count = 0;
-                    
+
                     for id in ids {
                         if let Ok(Some(acc)) = dl.get_generated_account(&id).await {
                              let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Sub2api);
@@ -751,9 +1021,9 @@ pub fn build_router(ctx: RouterContext) -> Router {
                              }
                         }
                     }
-                    
+
                     Json(serde_json::json!({
-                        "status": "success", 
+                        "status": "success",
                         "message": format!("成功 {} 条, 失败 {} 条", success_count, fail_count),
                         "success_count": success_count,
                         "fail_count": fail_count
@@ -858,8 +1128,16 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     if let Some(webhook_url) = payload.webhook_url.as_deref() {
                         let trimmed = webhook_url.trim();
                         if !trimmed.is_empty() {
+                            if let Err(e) = validate_ssrf_url(trimmed) {
+                                return (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(serde_json::json!({"status": "error", "message": format!("推送地址不合法: {}", e)}))
+                                ).into_response();
+                            }
                             let _ = dl.upsert_setting("webhook_url", trimmed).await;
                             let _ = dl.upsert_webhook(trimmed).await;
+                        } else {
+                            let _ = dl.upsert_setting("webhook_url", "").await;
                         }
                     }
 
@@ -868,7 +1146,10 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     }
 
                     if let Some(auth_secret) = payload.auth_secret.as_deref() {
-                        let _ = dl.upsert_setting("auth_secret", auth_secret).await;
+                        let trimmed = auth_secret.trim();
+                        if trimmed != "******" {
+                            let _ = dl.upsert_setting("auth_secret", trimmed).await;
+                        }
                     }
 
                     if let Some(decode_depth) = payload.decode_depth.as_deref() {
@@ -920,7 +1201,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
 
                     if let Some(cloudflare_api_token) = payload.cloudflare_api_token.as_deref() {
                         let trimmed = cloudflare_api_token.trim();
-                        if !trimmed.is_empty() {
+                        if trimmed != "******" {
                             let _ = dl.upsert_setting("cloudflare_api_token", trimmed).await;
                         }
                     }
@@ -942,13 +1223,21 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     if let Some(cpa_url) = payload.cpa_url.as_deref() {
                         let trimmed = cpa_url.trim();
                         if !trimmed.is_empty() {
+                            if let Err(e) = validate_ssrf_url(trimmed) {
+                                return (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(serde_json::json!({"status": "error", "message": format!("CPA 接口地址不合法: {}", e)}))
+                                ).into_response();
+                            }
                             let _ = dl.upsert_setting("cpa_url", trimmed).await;
+                        } else {
+                            let _ = dl.upsert_setting("cpa_url", "").await;
                         }
                     }
 
                     if let Some(cpa_key) = payload.cpa_key.as_deref() {
                         let trimmed = cpa_key.trim();
-                        if !trimmed.is_empty() {
+                        if trimmed != "******" {
                             let _ = dl.upsert_setting("cpa_key", trimmed).await;
                         }
                     }
@@ -956,18 +1245,33 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     if let Some(sub2api_url) = payload.sub2api_url.as_deref() {
                         let trimmed = sub2api_url.trim();
                         if !trimmed.is_empty() {
+                            if let Err(e) = validate_ssrf_url(trimmed) {
+                                return (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(serde_json::json!({"status": "error", "message": format!("Sub2API 接口地址不合法: {}", e)}))
+                                ).into_response();
+                            }
                             let _ = dl.upsert_setting("sub2api_url", trimmed).await;
+                        } else {
+                            let _ = dl.upsert_setting("sub2api_url", "").await;
                         }
                     }
 
                     if let Some(sub2api_key) = payload.sub2api_key.as_deref() {
                         let trimmed = sub2api_key.trim();
-                        if !trimmed.is_empty() {
+                        if trimmed != "******" {
                             let _ = dl.upsert_setting("sub2api_key", trimmed).await;
                         }
                     }
 
-                    Json(serde_json::json!({"status": "success"}))
+                    if let Some(cpa_auth_json) = payload.cpa_auth_json.as_deref() {
+                        let trimmed = cpa_auth_json.trim();
+                        if trimmed != "******" {
+                            let _ = dl.upsert_setting("cpa_auth_json", trimmed).await;
+                        }
+                    }
+
+                    Json(serde_json::json!({"status": "success"})).into_response()
                 }
             }
         }))
@@ -1071,10 +1375,10 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 debug_asset(name, enabled).await
             }
         }))
+        .layer(axum::middleware::from_fn_with_state(Arc::clone(&data_lake), auth_middleware))
         .fallback_service(
             ServeDir::new(web_dist)
                 .append_index_html_on_directories(true)
         )
         .with_state(stream_hub)
 }
-

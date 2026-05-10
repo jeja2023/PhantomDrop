@@ -1,5 +1,5 @@
 use crate::db::DataLake;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE};
+use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue};
 use std::sync::Arc;
 
 /**
@@ -12,7 +12,9 @@ pub async fn check_account_status(
     account_id: &str,
 ) -> Result<String, String> {
     // 1. 从数据库读取账号信息
-    let account = data_lake.get_generated_account(account_id).await
+    let account = data_lake
+        .get_generated_account(account_id)
+        .await
         .map_err(|e| format!("数据库读取失败: {}", e))?
         .ok_or_else(|| "账号不存在".to_string())?;
 
@@ -87,7 +89,7 @@ pub async fn check_account_status(
                             final_status = "Banned (API)".to_string();
                             details.push("账号封禁或权限不足 (403)".to_string());
                         } else {
-                             details.push(format!("API 检查返回异常状态: {}", resp.status()));
+                            details.push(format!("API 检查返回异常状态: {}", resp.status()));
                         }
                     }
                     Err(e) => {
@@ -104,10 +106,10 @@ pub async fn check_account_status(
         let display_status = if details.is_empty() {
             final_status.clone()
         } else {
-             // 如果是 Banned 则标记为异常
-             final_status.clone()
+            // 如果是 Banned 则标记为异常
+            final_status.clone()
         };
-        
+
         let _ = data_lake
             .update_account_status(account_id, &display_status)
             .await;

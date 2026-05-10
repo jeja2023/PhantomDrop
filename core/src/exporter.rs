@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use crate::db::GeneratedAccountRecord;
+use serde::{Deserialize, Serialize};
 
 /// 支持的导出格式类型
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ impl AccountExporter {
                 // 兼容 CLIProxyAPI / Codex 协议
                 // 必须包含 type: codex, email, account_id 以及 mock 的 id_token
                 let account_id = acc.workspace_id.as_deref().unwrap_or("");
-                
+
                 // 合成一个符合 CLIProxyAPI 要求的 Mock id_token
                 // 结构为 header.payload.signature
                 let mock_id_token = format!(
@@ -41,7 +41,7 @@ impl AccountExporter {
                     "platform": "openai",
                     "status": "ready"
                 })
-            },
+            }
             ExportFormat::Sub2api | ExportFormat::NewApi => {
                 // Sub2API/NewAPI 偏好 access_token 命名
                 serde_json::json!({
@@ -52,7 +52,7 @@ impl AccountExporter {
                     "sessionToken": acc.session_token.as_deref().unwrap_or(""),
                     "type": "openai"
                 })
-            },
+            }
             ExportFormat::KiroGo => {
                 // Kiro-Go 风格
                 serde_json::json!({
@@ -61,7 +61,7 @@ impl AccountExporter {
                     "at": acc.access_token.as_deref().unwrap_or(""),
                     "rt": acc.refresh_token.as_deref().unwrap_or("")
                 })
-            },
+            }
             ExportFormat::StandardJson => {
                 serde_json::to_value(acc).unwrap_or(serde_json::json!({}))
             }
@@ -70,7 +70,13 @@ impl AccountExporter {
 
     /// 批量转换
     #[allow(dead_code)]
-    pub fn transform_batch(accounts: &[GeneratedAccountRecord], format: ExportFormat) -> Vec<serde_json::Value> {
-        accounts.iter().map(|acc| Self::transform(acc, format)).collect()
+    pub fn transform_batch(
+        accounts: &[GeneratedAccountRecord],
+        format: ExportFormat,
+    ) -> Vec<serde_json::Value> {
+        accounts
+            .iter()
+            .map(|acc| Self::transform(acc, format))
+            .collect()
     }
 }

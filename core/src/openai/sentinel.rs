@@ -100,7 +100,6 @@ pub fn solve_pow(seed: &str, difficulty: u32) -> String {
     "0x0000000000000000".to_string()
 }
 
-
 /// IP 质量与归属地信息
 #[derive(serde::Serialize)]
 pub struct IpQualityInfo {
@@ -126,13 +125,20 @@ pub async fn check_ip_quality(client: &reqwest::Client) -> Result<IpQualityInfo,
         .map_err(|e| format!("环境预检失败 (解析异常): {}", e))?;
 
     if data["status"].as_str() != Some("success") {
-        return Err(format!("IP 环境检测服务返回异常: {}", data["message"].as_str().unwrap_or("unknown")));
+        return Err(format!(
+            "IP 环境检测服务返回异常: {}",
+            data["message"].as_str().unwrap_or("unknown")
+        ));
     }
 
     let ip = data["query"].as_str().unwrap_or("Unknown").to_string();
-    let org = data["org"].as_str().or(data["as"].as_str()).unwrap_or("Unknown").to_string();
-    let is_datacenter = data["hosting"].as_bool().unwrap_or(false) 
-        || org.to_lowercase().contains("cloud") 
+    let org = data["org"]
+        .as_str()
+        .or(data["as"].as_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let is_datacenter = data["hosting"].as_bool().unwrap_or(false)
+        || org.to_lowercase().contains("cloud")
         || org.to_lowercase().contains("server")
         || org.to_lowercase().contains("datacenter");
 

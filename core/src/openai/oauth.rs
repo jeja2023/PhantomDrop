@@ -74,7 +74,10 @@ impl CodexAuthData {
             use base64::Engine;
             if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
-                    return json.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    return json
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                 }
             }
         }

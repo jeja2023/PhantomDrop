@@ -1,15 +1,15 @@
-use headless_chrome::{Browser, LaunchOptions};
-use std::time::Duration;
-use crate::openai::register::{RegisterContext, build_client};
 use crate::db::DataLake;
-use std::sync::Arc;
+use crate::openai::register::{RegisterContext, build_client};
 use crate::openai::sentinel;
 use anyhow::Result;
 use chrono;
+use headless_chrome::{Browser, LaunchOptions};
+use std::sync::Arc;
+use std::time::Duration;
 
 /**
  * PhantomBrowser 驱动程序
- * 借鉴 SimpleAuthFlow 的插件逻辑，使用 CDP (Chrome DevTools Protocol) 
+ * 借鉴 SimpleAuthFlow 的插件逻辑，使用 CDP (Chrome DevTools Protocol)
  * 实现绕过检测的自动化注册。
  */
 
@@ -25,10 +25,17 @@ impl BrowserDriver {
 
     pub async fn run(&self) -> Result<crate::openai::register::RegisterResult, String> {
         let callback = &self.context.step_callback;
-        
-        let mode_text = if self.context.headless { "无头模式" } else { "有头模式 (Xvfb)" };
+
+        let mode_text = if self.context.headless {
+            "无头模式"
+        } else {
+            "有头模式 (Xvfb)"
+        };
         if let Some(cb) = callback {
-            cb("info", &format!("🚀 正在初始化 PhantomBrowser 仿真容器 ({})...", mode_text));
+            cb(
+                "info",
+                &format!("🚀 正在初始化 PhantomBrowser 仿真容器 ({})...", mode_text),
+            );
         }
 
         // --- 核心增强：环境预检 (IP 检查) ---
@@ -45,9 +52,20 @@ impl BrowserDriver {
                         info.ip,
                         info.country,
                         info.org,
-                        if info.is_datacenter { "⚠️ 机房/数据中心 (高风险)" } else { "✅ 住宅/基站 (低风险)" }
+                        if info.is_datacenter {
+                            "⚠️ 机房/数据中心 (高风险)"
+                        } else {
+                            "✅ 住宅/基站 (低风险)"
+                        }
                     );
-                    cb(if info.is_datacenter { "warn" } else { "success" }, &msg);
+                    cb(
+                        if info.is_datacenter {
+                            "warn"
+                        } else {
+                            "success"
+                        },
+                        &msg,
+                    );
                 }
             }
             Err(e) => {
@@ -86,15 +104,23 @@ impl BrowserDriver {
         }
 
         let options = LaunchOptions::default_builder()
-            .headless(self.context.headless)  // 根据配置决定是否开启无头模式
+            .headless(self.context.headless) // 根据配置决定是否开启无头模式
             .window_size(Some((1920, 1080)))
             .idle_browser_timeout(Duration::from_secs(300))
-            .args(launch_args.iter().map(|s| std::ffi::OsStr::new(s)).collect())
+            .args(
+                launch_args
+                    .iter()
+                    .map(|s| std::ffi::OsStr::new(s))
+                    .collect(),
+            )
             .build()
             .map_err(|e| format!("浏览器启动失败: {}", e))?;
 
-        let browser = Browser::new(options).map_err(|e| format!("无法连接到 Chrome 实例: {}", e))?;
-        let tab = browser.new_tab().map_err(|e| format!("打开标签页失败: {}", e))?;
+        let browser =
+            Browser::new(options).map_err(|e| format!("无法连接到 Chrome 实例: {}", e))?;
+        let tab = browser
+            .new_tab()
+            .map_err(|e| format!("打开标签页失败: {}", e))?;
 
         // 注入增强型指纹伪装脚本 (极致风控过级)
         let stealth_script = r#"
@@ -136,33 +162,49 @@ impl BrowserDriver {
             Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
         "#;
 
-        let _ = tab.call_method(headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument {
-            source: stealth_script.to_string(),
-            world_name: None,
-            include_command_line_api: None,
-            run_immediately: None,
-        });
+        let _ = tab.call_method(
+            headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument {
+                source: stealth_script.to_string(),
+                world_name: None,
+                include_command_line_api: None,
+                run_immediately: None,
+            },
+        );
 
         // 2. 导航至 OpenAI 注册入口 (使用 screen_hint 强制跳转至注册页)
         if let Some(cb) = callback {
-            cb("info", "🌐 正在隐身访问 OpenAI 注册中心 (chatgpt.com/signup)...");
+            cb(
+                "info",
+                "🌐 正在隐身访问 OpenAI 注册中心 (chatgpt.com/signup)...",
+            );
         }
-        
-        tab.navigate_to("https://chatgpt.com/auth/login?screen_hint=signup").map_err(|e| format!("导航失败: {}", e))?;
-        tab.wait_until_navigated().map_err(|e| format!("页面加载超时: {}", e))?;
+
+        tab.navigate_to("https://chatgpt.com/auth/login?screen_hint=signup")
+            .map_err(|e| format!("导航失败: {}", e))?;
+        tab.wait_until_navigated()
+            .map_err(|e| format!("页面加载超时: {}", e))?;
 
         // 记录导航后的状态
         let current_url = tab.get_url();
-        let page_title = tab.evaluate("document.title", false)
-            .ok().and_then(|r| r.value.and_then(|v| v.as_str().map(|s| s.to_string())))
+        let page_title = tab
+            .evaluate("document.title", false)
+            .ok()
+            .and_then(|r| r.value.and_then(|v| v.as_str().map(|s| s.to_string())))
             .unwrap_or_else(|| "未知标题".to_string());
-            
+
         if let Some(cb) = callback {
-            cb("info", &format!("📍 页面已加载 | 标题: {} | URL: {}", page_title, current_url));
+            cb(
+                "info",
+                &format!(
+                    "📍 页面已加载 | 标题: {} | URL: {}",
+                    page_title, current_url
+                ),
+            );
         }
 
         // 2.2 中转页处理：新版 ChatGPT 会先展示 Get started 页，需要主动点入注册表单。
-        let email_selectors = "input#email, input#username, input[name='email'], input[type='email']";
+        let email_selectors =
+            "input#email, input#username, input[name='email'], input[type='email']";
         tokio::time::sleep(Duration::from_secs(4)).await;
         let signup_urls = [
             "https://chatgpt.com/auth/login?screen_hint=signup",
@@ -174,10 +216,11 @@ impl BrowserDriver {
         ];
 
         for attempt in 0..5 {
-            let has_email_form = tab.evaluate(
-                &format!("document.querySelector({:?}) !== null", email_selectors),
-                false,
-            )
+            let has_email_form = tab
+                .evaluate(
+                    &format!("document.querySelector({:?}) !== null", email_selectors),
+                    false,
+                )
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
 
@@ -237,14 +280,20 @@ impl BrowserDriver {
 
             if !clicked_signup {
                 if let Some(cb) = callback {
-                    cb("warn", "未在当前页面识别到注册按钮，尝试切换备用注册入口...");
+                    cb(
+                        "warn",
+                        "未在当前页面识别到注册按钮，尝试切换备用注册入口...",
+                    );
                 }
                 let target = signup_urls[(attempt + 1) % signup_urls.len()];
                 let _ = tab.navigate_to(target);
                 let _ = tab.wait_until_navigated();
             } else if attempt >= 2 && tab.get_url().contains("/auth/login") {
                 if let Some(cb) = callback {
-                    cb("warn", "点击注册入口后仍停留在登录页，尝试切换备用注册入口...");
+                    cb(
+                        "warn",
+                        "点击注册入口后仍停留在登录页，尝试切换备用注册入口...",
+                    );
                 }
                 let target = signup_urls[(attempt + 1) % signup_urls.len()];
                 let _ = tab.navigate_to(target);
@@ -259,16 +308,28 @@ impl BrowserDriver {
         let take_shot = |name: &str, tab: &std::sync::Arc<headless_chrome::Tab>| {
             let _ = std::fs::create_dir_all("./data");
             // 使用时间戳和邮箱后缀，确保快照唯一不被覆盖
-            let filename = format!("snap_{}_{}_{}.png", 
+            let filename = format!(
+                "snap_{}_{}_{}.png",
                 chrono::Utc::now().timestamp(),
                 email_tag,
                 name
             );
-            if let Ok(png) = tab.capture_screenshot(headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png, None, None, true) {
+            if let Ok(png) = tab.capture_screenshot(
+                headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+                None,
+                None,
+                true,
+            ) {
                 let path = format!("./data/{}", filename);
                 let _ = std::fs::write(&path, png);
                 if let Some(cb) = callback {
-                    cb("warn", &format!("📸 [{} 步骤快照] 已存证: [点击预览](/debug/{})", name, filename));
+                    cb(
+                        "warn",
+                        &format!(
+                            "📸 [{} 步骤快照] 已存证: [点击预览](/debug/{})",
+                            name, filename
+                        ),
+                    );
                 }
                 return Some(path);
             }
@@ -289,14 +350,23 @@ impl BrowserDriver {
 
             if cf_retry >= 5 {
                 take_shot("CF验证拦截", &tab);
-                 if let Some(cb) = callback {
-                    cb("error", "🛡️ 遭遇 Cloudflare 持续拦截，已尝试点击但未能通过，建议检查 Proxy 质量。");
+                if let Some(cb) = callback {
+                    cb(
+                        "error",
+                        "🛡️ 遭遇 Cloudflare 持续拦截，已尝试点击但未能通过，建议检查 Proxy 质量。",
+                    );
                 }
                 return Err("Cloudflare 验证拦截超时".to_string());
             }
 
             if let Some(cb) = callback {
-                cb("warn", &format!("🛡️ 正在尝试通过 Cloudflare 验证 (第 {}/5 次尝试)...", cf_retry + 1));
+                cb(
+                    "warn",
+                    &format!(
+                        "🛡️ 正在尝试通过 Cloudflare 验证 (第 {}/5 次尝试)...",
+                        cf_retry + 1
+                    ),
+                );
             }
 
             // 1. 尝试将验证框滚动到视野中心
@@ -321,7 +391,10 @@ impl BrowserDriver {
 
         // 3. 进入注册表单并输入邮箱
         if let Some(cb) = callback {
-            cb("info", &format!("📧 正在输入邮箱并核验表单: {}", self.context.email));
+            cb(
+                "info",
+                &format!("📧 正在输入邮箱并核验表单: {}", self.context.email),
+            );
         }
 
         let continue_selectors = "button[type='submit'], button[data-action-button-primary='true']";
@@ -374,9 +447,10 @@ impl BrowserDriver {
                 }
                 format!("未找到邮箱输入框，环境检测可能未通过或注册入口结构已变化 (当前 URL: {})", current_url)
             })?;
-        
+
         email_input.click().ok();
-        tab.type_str(&self.context.email).map_err(|e| format!("邮箱输入失败: {}", e))?;
+        tab.type_str(&self.context.email)
+            .map_err(|e| format!("邮箱输入失败: {}", e))?;
         take_shot("邮箱输入后", &tab);
 
         if let Ok(btn) = tab.find_element(continue_selectors) {
@@ -411,7 +485,7 @@ impl BrowserDriver {
             Err(_) => {
                 let on_otp_page = tab.evaluate(
                     &format!(
-                        "document.querySelector({:?}) !== null || document.body.innerText.includes('Check your inbox')",
+                        "document.querySelector({:?}) !== null || document.body.innerText.includes('Check your inbox') || document.body.innerText.includes('检查你的收件箱')",
                         otp_selectors
                     ),
                     false,
@@ -421,7 +495,10 @@ impl BrowserDriver {
 
                 if on_otp_page {
                     if let Some(cb) = callback {
-                        cb("info", "📨 当前流程先要求邮箱验证码，完成验证后再继续设置密码...");
+                        cb(
+                            "info",
+                            "📨 当前流程先要求邮箱验证码，完成验证后再继续设置密码...",
+                        );
                     }
                 } else {
                     take_shot("password_not_found", &tab);
@@ -434,7 +511,7 @@ impl BrowserDriver {
         if let Some(cb) = callback {
             cb("warn", "📩 正在监控 Catch-all 通道并等待验证邮件流入...");
         }
-        
+
         let mut otp_code: Option<String> = None;
         let mut verification_link: Option<String> = None;
 
@@ -446,20 +523,33 @@ impl BrowserDriver {
             let on_profile_page = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
-            
+
             if on_profile_page {
-                if let Some(cb) = callback { cb("success", "✅ 浏览器已自动进入资料填写页，跳过邮件验证轮询。"); }
+                if let Some(cb) = callback {
+                    cb(
+                        "success",
+                        "✅ 浏览器已自动进入资料填写页，跳过邮件验证轮询。",
+                    );
+                }
                 break;
             }
 
             // 轮询数据库
-            match self.dl.poll_otp_by_email(&self.context.email, poll_start).await {
+            match self
+                .dl
+                .poll_otp_by_email(&self.context.email, poll_start)
+                .await
+            {
                 Ok(Some(code)) => {
                     otp_code = Some(code);
                     break;
                 }
                 _ => {
-                    if let Ok(Some(link)) = self.dl.poll_link_by_email(&self.context.email, poll_start).await {
+                    if let Ok(Some(link)) = self
+                        .dl
+                        .poll_link_by_email(&self.context.email, poll_start)
+                        .await
+                    {
                         verification_link = Some(link);
                         break;
                     }
@@ -468,15 +558,26 @@ impl BrowserDriver {
 
             if attempt % 10 == 9 {
                 if let Some(cb) = callback {
-                    cb("info", &format!("持续等待 OTP 验证码或链接流入 (已等待 {}s)...", (attempt + 1) * 3));
+                    cb(
+                        "info",
+                        &format!(
+                            "持续等待 OTP 验证码或链接流入 (已等待 {}s)...",
+                            (attempt + 1) * 3
+                        ),
+                    );
                 }
                 take_shot(&format!("waiting_email_retry_{}", attempt), &tab);
             }
         }
 
         if let Some(otp) = otp_code {
-            if let Some(cb) = callback { cb("success", &format!("成功提取 OTP 验证码: {}，正在浏览器中注入...", otp)); }
-            
+            if let Some(cb) = callback {
+                cb(
+                    "success",
+                    &format!("成功提取 OTP 验证码: {}，正在浏览器中注入...", otp),
+                );
+            }
+
             match tab.wait_for_element_with_custom_timeout(otp_selectors, Duration::from_secs(15)) {
                 Ok(el) => {
                     el.click().ok();
@@ -489,7 +590,12 @@ impl BrowserDriver {
                     take_shot("OTP输入后", &tab);
                 }
                 Err(_) => {
-                    if let Some(cb) = callback { cb("warn", "⚠️ 提取到验证码但未能在页面找到输入框，尝试执行 JS 注入..."); }
+                    if let Some(cb) = callback {
+                        cb(
+                            "warn",
+                            "⚠️ 提取到验证码但未能在页面找到输入框，尝试执行 JS 注入...",
+                        );
+                    }
                     let _ = tab.evaluate(&format!(r#"
                         (function() {{
                             const input = document.querySelector("{otp_selectors}") || document.querySelector("input[type='text'], input[type='number']");
@@ -505,58 +611,130 @@ impl BrowserDriver {
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         } else if let Some(link) = verification_link {
-            if let Some(cb) = callback { cb("success", "检测到验证链接，正在浏览器中导航以完成激活..."); }
+            if let Some(cb) = callback {
+                cb("success", "检测到验证链接，正在浏览器中导航以完成激活...");
+            }
             let _ = tab.navigate_to(&link);
             tab.wait_until_navigated().ok();
             take_shot("验证链接导航后", &tab);
             tokio::time::sleep(Duration::from_secs(5)).await;
         } else {
-             // 如果既没有 OTP 也没有 Link 且没在资料页，则可能是失败了
-             let on_profile_page_final = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
+            // 如果既没有 OTP 也没有 Link 且没在资料页，则可能是失败了
+            let on_profile_page_final = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
-             
-             if !on_profile_page_final {
+
+            if !on_profile_page_final {
                 return Err("等待验证邮件超时或页面未响应".to_string());
-             }
+            }
         }
 
         if !password_filled {
             if let Some(cb) = callback {
-                cb("info", "🔐 邮箱验证完成，正在继续设置安全密码...");
+                cb("info", "🔐 邮箱验证完成，正在等待跳转下一个页面...");
             }
 
-            let pwd_input = tab.wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(45))
-                .map_err(|_| {
-                    take_shot("password_after_otp_not_found", &tab);
-                    "邮箱验证完成后仍未进入密码设置页".to_string()
-                })?;
+            let profile_selectors = "input[name='name'], input[name='full_name'], input#name";
+            let mut detected_type = 0; // 1 = password field, 2 = profile field
 
-            pwd_input.click().ok();
-            tab.type_str(&self.context.password).ok();
-            take_shot("密码输入后", &tab);
+            for _ in 0..45 {
+                let has_pwd = tab
+                    .evaluate(
+                        &format!("document.querySelector({:?}) !== null", pwd_selectors),
+                        false,
+                    )
+                    .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                    .unwrap_or(false);
+                let has_profile = tab
+                    .evaluate(
+                        &format!("document.querySelector({:?}) !== null", profile_selectors),
+                        false,
+                    )
+                    .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                    .unwrap_or(false);
 
-            if let Ok(btn) = tab.find_element(continue_selectors) {
-                btn.click().ok();
+                if has_pwd {
+                    detected_type = 1;
+                    break;
+                }
+                if has_profile {
+                    detected_type = 2;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+
+            if detected_type == 1 {
+                if let Some(cb) = callback {
+                    cb("info", "🔐 检测到密码设置页，正在注入安全密码...");
+                }
+                let pwd_input = tab
+                    .wait_for_element_with_custom_timeout(pwd_selectors, Duration::from_secs(5))
+                    .map_err(|_| {
+                        take_shot("password_after_otp_not_found", &tab);
+                        "邮箱验证完成后仍未进入密码设置页".to_string()
+                    })?;
+
+                pwd_input.click().ok();
+                tab.type_str(&self.context.password).ok();
+                take_shot("密码输入后", &tab);
+
+                if let Ok(btn) = tab.find_element(continue_selectors) {
+                    btn.click().ok();
+                } else {
+                    tab.press_key("Enter").ok();
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            } else if detected_type == 2 {
+                if let Some(cb) = callback {
+                    cb(
+                        "success",
+                        "✅ 检测到无密码注册流 (Passwordless Flow)，已自动跳过密码设置步骤。",
+                    );
+                }
             } else {
-                tab.press_key("Enter").ok();
+                take_shot("password_after_otp_not_found", &tab);
+                return Err(
+                    "邮箱验证完成后，既未检测到密码设置页，也未检测到个人资料填写页".to_string(),
+                );
             }
-            tokio::time::sleep(Duration::from_secs(5)).await;
         }
 
         // 6. 个人资料填写 (姓名和生日)
         if let Some(cb) = callback {
             cb("info", "👤 正在同步个人资料 (姓名/生日)...");
         }
-        
+
         // 提前生成随机值，避免 ThreadRng 在 await 期间被持有
         let (full_name, age) = {
             let mut rng = rand::thread_rng();
             use rand::Rng;
-            let first_names = ["Oliver", "Jack", "Harry", "Jacob", "Charlie", "Thomas", "George", "Oscar", "James", "William", "Alice", "Emma", "Sophia", "Isabella", "Mia"];
-            let last_names = ["Smith", "Jones", "Taylor", "Williams", "Brown", "Davies", "Evans", "Wilson", "Thomas", "Roberts", "Johnson", "Walker", "White", "Edwards", "Churchill"];
+            let first_names = [
+                "Oliver", "Jack", "Harry", "Jacob", "Charlie", "Thomas", "George", "Oscar",
+                "James", "William", "Alice", "Emma", "Sophia", "Isabella", "Mia",
+            ];
+            let last_names = [
+                "Smith",
+                "Jones",
+                "Taylor",
+                "Williams",
+                "Brown",
+                "Davies",
+                "Evans",
+                "Wilson",
+                "Thomas",
+                "Roberts",
+                "Johnson",
+                "Walker",
+                "White",
+                "Edwards",
+                "Churchill",
+            ];
 
-            let n = self.context.full_name.as_deref()
+            let n = self
+                .context
+                .full_name
+                .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| {
@@ -564,41 +742,51 @@ impl BrowserDriver {
                     let l = last_names[rng.gen_range(0..last_names.len())];
                     format!("{} {}", f, l)
                 });
-                
+
             let a = self.context.age.unwrap_or_else(|| rng.gen_range(19..45));
             (n, a)
         };
 
         if let Some(cb) = callback {
-            cb("info", &format!("资料生成 -> 姓名: {}, 年龄: {}", full_name, age));
+            cb(
+                "info",
+                &format!("资料生成 -> 姓名: {}, 年龄: {}", full_name, age),
+            );
         }
 
         // 严格等待姓名输入框出现，若超时则认为注册失败 (账号可能被拦截或环境检测通过但未跳转)
-        tab.wait_for_element_with_custom_timeout("input[name='name'], input[name='full_name'], input#name", Duration::from_secs(60))
-            .map_err(|_| {
-                take_shot("资料页超时", &tab);
-                "已完成注册表单提交，但无法进入个人资料填写页 (可能是 IP 质量较差导致被拦截)"
-            })?;
-        
+        tab.wait_for_element_with_custom_timeout(
+            "input[name='name'], input[name='full_name'], input#name",
+            Duration::from_secs(60),
+        )
+        .map_err(|_| {
+            take_shot("资料页超时", &tab);
+            "已完成注册表单提交，但无法进入个人资料填写页 (可能是 IP 质量较差导致被拦截)"
+        })?;
+
         // 进入资料填写页，开始录像/快照
         take_shot("个人资料页入口", &tab);
 
-        if let Ok(name_input) = tab.find_element("input[name='name'], input[name='full_name'], input#name") {
-             name_input.click().ok();
-             tab.type_str(&full_name).ok();
-             take_shot("姓名填写后", &tab);
+        if let Ok(name_input) =
+            tab.find_element("input[name='name'], input[name='full_name'], input#name")
+        {
+            name_input.click().ok();
+            tab.type_str(&full_name).ok();
+            take_shot("姓名填写后", &tab);
         }
 
-        if let Ok(age_input) = tab.find_element("input[name='age'], input[type='number'], input#age") {
-             age_input.click().ok();
-             tab.type_str(&age.to_string()).ok();
-             take_shot("年龄填写后", &tab);
+        if let Ok(age_input) =
+            tab.find_element("input[name='age'], input[type='number'], input#age")
+        {
+            age_input.click().ok();
+            tab.type_str(&age.to_string()).ok();
+            take_shot("年龄填写后", &tab);
         } else if let Ok(birthday_input) = tab.find_element("input[name='birthday']") {
-             // 兜底逻辑：如果还是旧版的生日输入框
-             let bday = format!("{}-01-01", 2024 - age); 
-             birthday_input.click().ok();
-             tab.type_str(&bday).ok();
-             take_shot("生日填写后", &tab);
+            // 兜底逻辑：如果还是旧版的生日输入框
+            let bday = format!("{}-01-01", 2024 - age);
+            birthday_input.click().ok();
+            tab.type_str(&bday).ok();
+            take_shot("生日填写后", &tab);
         }
 
         take_shot("提交资料前", &tab);
@@ -610,14 +798,14 @@ impl BrowserDriver {
             );
             if(btn) { btn.click(); }
         })()"#, false);
-        
+
         tokio::time::sleep(Duration::from_secs(1)).await;
         tab.press_key("Enter").ok();
 
         // 6.5 处理可能的后续确认弹窗或引导页 (关键：确保进入最终的聊天界面)
         tokio::time::sleep(Duration::from_secs(2)).await;
         let _ = tab.evaluate(r#"(function(){ 
-            const keywords = ['Finish creating account', 'Continue', '继续', '确认', 'Agree', '同意', 'Next', '下一步', 'Done', '完成', 'Okay', 'Finish'];
+            const keywords = ['Finish creating account', 'Continue', '继续', '确认', 'Agree', '同意', 'Next', '下一步', 'Done', '完成', 'Okay', 'Finish', 'Skip', '跳过'];
             const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
             for (const btn of buttons) {
                 if (keywords.some(k => btn.innerText.includes(k))) {
@@ -628,18 +816,21 @@ impl BrowserDriver {
 
         // 再次兜底等待，确保页面跳转至 chatgpt.com 首页
         if let Some(cb) = callback {
-            cb("info", "⌛ 正在等待 Dashboard 界面加载 (可能需要绕过引导弹窗)...");
+            cb(
+                "info",
+                "⌛ 正在等待 Dashboard 界面加载 (可能需要绕过引导弹窗)...",
+            );
         }
-        
+
         take_shot("waiting_for_dashboard", &tab);
 
         let mut dash_found = false;
         for i in 0..15 {
-             // 检查是否出现了聊天输入框或侧边栏，这代表进入了主界面
+            // 检查是否出现了聊天输入框或侧边栏，这代表进入了主界面
             let is_dash = tab.evaluate("document.querySelector('#prompt-textarea, [data-testid=\"composer-input\"], nav') !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
-            
+
             if is_dash {
                 dash_found = true;
                 take_shot("主控制台已加载", &tab);
@@ -647,7 +838,7 @@ impl BrowserDriver {
             }
 
             // 再次尝试点击可能的引导按钮
-            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成', 'Okay', 'Skip'].some(k => b.innerText.includes(k))) b.click(); })", false);
+            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成', 'Okay', 'Skip', '跳过'].some(k => b.innerText.includes(k))) b.click(); })", false);
             if i % 4 == 3 {
                 take_shot(&format!("dashboard_waiting_step_{}", i), &tab);
             }
@@ -655,19 +846,30 @@ impl BrowserDriver {
         }
 
         if dash_found {
-             if let Some(cb) = callback { cb("success", "📍 已成功抵达 ChatGPT 主控台界面"); }
+            if let Some(cb) = callback {
+                cb("success", "📍 已成功抵达 ChatGPT 主控台界面");
+            }
         } else {
-             let final_url = tab.get_url();
-             if let Some(cb) = callback { 
-                 cb("warn", &format!("📍 未能识别到主控台特征 (当前 URL: {}), 正在尝试强行重定向并提取...", final_url)); 
-             }
-             take_shot("dashboard_not_detected", &tab);
-             
-             // 如果停留在了 auth0 或者错误的页面，强行跳转到首页
-             if final_url.contains("auth0") || final_url.contains("signup") || final_url.contains("profile") {
-                 let _ = tab.navigate_to("https://chatgpt.com/");
-                 tokio::time::sleep(Duration::from_secs(8)).await;
-             }
+            let final_url = tab.get_url();
+            if let Some(cb) = callback {
+                cb(
+                    "warn",
+                    &format!(
+                        "📍 未能识别到主控台特征 (当前 URL: {}), 正在尝试强行重定向并提取...",
+                        final_url
+                    ),
+                );
+            }
+            take_shot("dashboard_not_detected", &tab);
+
+            // 如果停留在了 auth0 或者错误的页面，强行跳转到首页
+            if final_url.contains("auth0")
+                || final_url.contains("signup")
+                || final_url.contains("profile")
+            {
+                let _ = tab.navigate_to("https://chatgpt.com/");
+                tokio::time::sleep(Duration::from_secs(8)).await;
+            }
         }
 
         // 7. 提取 Access Token (关键步骤)
@@ -679,7 +881,7 @@ impl BrowserDriver {
         let mut refresh_token_extracted = None;
         for i in 0..30 {
             tokio::time::sleep(Duration::from_secs(3)).await;
-            
+
             let js = r#"
                 (async function() {
                     const isJwt = (s) => typeof s === 'string' && s.startsWith('eyJ') && s.split('.').length === 3;
@@ -765,16 +967,28 @@ impl BrowserDriver {
 
             if let Ok(eval_res) = tab.evaluate(js, true) {
                 if let Some(obj) = eval_res.value {
-                    let at = obj.get("at").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    let rt = obj.get("rt").and_then(|v| v.as_str()).map(|s| s.to_string());
-                    
+                    let at = obj
+                        .get("at")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let rt = obj
+                        .get("rt")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
                     if let Some(token) = at {
                         if token.len() > 100 {
                             if let Some(cb) = callback {
-                                cb("success", &format!("✅ 凭证提取成功 | AT: {} | RT: {}", 
-                                    token.len(), 
-                                    rt.as_ref().map(|s| s.len().to_string()).unwrap_or("无".to_string())
-                                ));
+                                cb(
+                                    "success",
+                                    &format!(
+                                        "✅ 凭证提取成功 | AT: {} | RT: {}",
+                                        token.len(),
+                                        rt.as_ref()
+                                            .map(|s| s.len().to_string())
+                                            .unwrap_or("无".to_string())
+                                    ),
+                                );
                             }
                             token_extracted = Some(token);
                             refresh_token_extracted = rt;
@@ -787,9 +1001,16 @@ impl BrowserDriver {
             if i % 6 == 5 {
                 let current_url = tab.get_url();
                 if let Some(cb) = callback {
-                    cb("info", &format!("正在扫描凭证池 (第 {}/30 次) [URL: {}]...", i + 1, current_url));
+                    cb(
+                        "info",
+                        &format!(
+                            "正在扫描凭证池 (第 {}/30 次) [URL: {}]...",
+                            i + 1,
+                            current_url
+                        ),
+                    );
                 }
-                
+
                 if i == 11 || i == 23 {
                     if current_url.contains("chatgpt.com") {
                         let _ = tab.reload(false, None);
@@ -807,7 +1028,7 @@ impl BrowserDriver {
             let session_cookie_names = [
                 "__Secure-next-auth.session-token",
                 "__Host-next-auth.session-token",
-                "next-auth.session-token"
+                "next-auth.session-token",
             ];
             for name in session_cookie_names {
                 if let Some(cookie) = cookies.iter().find(|c| c.name == name) {
@@ -826,12 +1047,15 @@ impl BrowserDriver {
                     password: self.context.password.clone(),
                     access_token: token_extracted,
                     refresh_token: refresh_token_extracted,
-                    session_token: session_extracted, 
+                    session_token: session_extracted,
                     device_id: self.context.device_id.clone(),
                     workspace_id: Some("ws-browser-org".to_string()),
                 })
             } else {
-                cb("error", "❌ 注册流程可能已走完，但未能在规定时间内提取到任何有效 Token。请检查快照确认为何未进入主控台。");
+                cb(
+                    "error",
+                    "❌ 注册流程可能已走完，但未能在规定时间内提取到任何有效 Token。请检查快照确认为何未进入主控台。",
+                );
                 take_shot("凭证提取失败点", &tab);
                 Err("凭证提取完全失败 (Access Token & Session Token 均为 None)".to_string())
             }

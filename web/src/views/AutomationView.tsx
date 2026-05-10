@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy, Square } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
@@ -13,6 +13,24 @@ import type {
   WorkflowStepRecord,
 } from '../types'
 import SnapshotModal from '../ui/SnapshotModal'
+
+function buildRunQuery(
+  page: number,
+  pageSize: number,
+  status: string,
+  workflowId: string,
+  match: 'fuzzy' | 'exact',
+) {
+  const search = new URLSearchParams()
+  search.set('page', String(page))
+  search.set('page_size', String(pageSize))
+  if (status) search.set('status', status)
+  if (workflowId.trim()) {
+    search.set('workflow_id', workflowId.trim())
+    search.set('workflow_exact', match === 'exact' ? 'true' : 'false')
+  }
+  return search.toString()
+}
 
 export default function AutomationView({ refreshIntervalMs }: { refreshIntervalMs: number }) {
   const [showToast, setShowToast] = useState(false)
@@ -56,25 +74,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     },
   })
 
-  const buildRunQuery = (
-    page: number,
-    pageSize: number,
-    status = runStatusFilter,
-    workflowId = runWorkflowFilter,
-    match = runWorkflowMatch,
-  ) => {
-    const search = new URLSearchParams()
-    search.set('page', String(page))
-    search.set('page_size', String(pageSize))
-    if (status) search.set('status', status)
-    if (workflowId.trim()) {
-      search.set('workflow_id', workflowId.trim())
-      search.set('workflow_exact', match === 'exact' ? 'true' : 'false')
-    }
-    return search.toString()
-  }
-
-  const loadRuns = async (
+  const loadRuns = useCallback(async (
     page = runPage,
     pageSize = runPageSize,
     preserveSelection = true,
@@ -92,7 +92,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
       return data.items[0]?.id ?? null
     })
     return data.items
-  }
+  }, [runPage, runPageSize, runStatusFilter, runWorkflowFilter, runWorkflowMatch])
 
   const loadSteps = async (runId: string, silent = false) => {
     if (!silent) setIsStepsLoading(true)
@@ -141,7 +141,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     }, refreshIntervalMs)
 
     return () => clearInterval(interval)
-  }, [refreshIntervalMs, runPage, runPageSize, runStatusFilter, runWorkflowFilter, runWorkflowMatch])
+  }, [loadRuns, refreshIntervalMs, runPage, runPageSize])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -274,7 +274,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
 
   useEffect(() => {
     void loadRuns(1, runPageSize, false, runStatusFilter, runWorkflowFilter, runWorkflowMatch)
-  }, [runPageSize, runStatusFilter, runWorkflowFilter, runWorkflowMatch])
+  }, [loadRuns, runPageSize, runStatusFilter, runWorkflowFilter, runWorkflowMatch])
 
   const totalRunPages = Math.max(1, Math.ceil(runTotal / runPageSize))
 
@@ -543,7 +543,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                     if (match.index > lastIndex) {
                       parts.push(msg.substring(lastIndex, match.index));
                     }
-                    const [_, text, url] = match;
+                    const [, text, url] = match;
                     parts.push(
                       <button 
                         key={match.index} 

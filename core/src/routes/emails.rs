@@ -24,8 +24,9 @@ struct EmailIngestPayload {
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct AttachmentMeta {
+    #[serde(default)]
     filename: Option<String>,
-    #[serde(alias = "mimeType")]
+    #[serde(alias = "mimeType", default)]
     mime_type: Option<String>,
 }
 
@@ -34,13 +35,17 @@ struct AttachmentMeta {
 struct EmailMeta {
     from: String,
     to: String,
+    #[serde(default)]
     subject: Option<String>,
+    #[serde(default)]
     date: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct EmailContent {
+    #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
     html: Option<String>,
 }
 
@@ -303,6 +308,10 @@ pub fn routes(data_lake: Arc<DataLake>, stream_hub: Arc<StreamHub>) -> Router<Ar
                             if let Ok(hooks) = dl_for_hook.get_active_webhooks().await {
                                 let client = reqwest::Client::new();
                                 for (url, _) in hooks {
+                                    if let Err(e) = crate::routes::validate_ssrf_url(&url) {
+                                        eprintln!("安全拦截：Webhook 推送地址 [{}] 校验失败: {}", url, e);
+                                        continue;
+                                    }
                                     let _ = client.post(&url)
                                         .json(&payload_for_hook)
                                         .timeout(std::time::Duration::from_secs(5))

@@ -24,6 +24,12 @@ jobs:
         with:
           workspaces: core
 
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy check
+        run: cargo clippy --target-dir target-ci -- -D warnings
+
       - name: Test
         run: cargo test --target-dir target-ci
 
@@ -46,6 +52,9 @@ jobs:
 
       - name: Install
         run: npm ci --legacy-peer-deps
+
+      - name: Lint check
+        run: npm run lint
 
       - name: Build
         run: npm run build

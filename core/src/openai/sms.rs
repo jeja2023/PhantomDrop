@@ -1,7 +1,6 @@
 use std::time::Duration;
 use tokio::time::sleep;
 
-
 pub struct SmsActivateClient {
     api_key: String,
     client: reqwest::Client,
@@ -16,14 +15,23 @@ impl SmsActivateClient {
     }
 
     /// 获取号码，返回 (id, number)
-    pub async fn get_number(&self, service: &str, country: Option<&str>) -> Result<(String, String), String> {
+    pub async fn get_number(
+        &self,
+        service: &str,
+        country: Option<&str>,
+    ) -> Result<(String, String), String> {
         let country = country.unwrap_or("0");
         let url = format!(
             "https://sms-activate.org/stubs/handler_api.php?api_key={}&action=getNumber&service={}&country={}",
             self.api_key, service, country
         );
 
-        let response = self.client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         let text = response.text().await.map_err(|e| e.to_string())?;
 
         if text.starts_with("ACCESS_NUMBER") {
@@ -45,7 +53,12 @@ impl SmsActivateClient {
                 self.api_key, id
             );
 
-            let response = self.client.get(&url).send().await.map_err(|e| e.to_string())?;
+            let response = self
+                .client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
             let text = response.text().await.map_err(|e| e.to_string())?;
 
             if text.starts_with("STATUS_OK") {
@@ -75,7 +88,12 @@ impl SmsActivateClient {
             self.api_key, id, status
         );
 
-        let response = self.client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         let _ = response.text().await.map_err(|e| e.to_string())?;
         Ok(())
     }

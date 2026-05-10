@@ -20,7 +20,27 @@ export async function parseApiError(response: Response): Promise<string> {
 }
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(buildApiUrl(path), init)
+  const token = localStorage.getItem('phantom_auth_token')
+  
+  const headers = new Headers(init?.headers)
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+    headers.set('X-Auth-Token', token)
+  }
+  const credentials = init?.credentials ?? (token ? 'include' : 'same-origin')
+
+  const response = await fetch(buildApiUrl(path), {
+    ...init,
+    headers,
+    credentials,
+  })
+
+  if (response.status === 401) {
+    localStorage.removeItem('phantom_auth_token')
+    window.dispatchEvent(new CustomEvent('phantom-unauthorized'))
+    throw new Error('未授权，请重新登录')
+  }
+
   if (!response.ok) {
     throw new Error(await parseApiError(response))
   }
@@ -52,5 +72,7 @@ export async function deleteJson<TResponse>(path: string): Promise<TResponse> {
 }
 
 export function createApiEventSource(path: string): EventSource {
-  return new EventSource(buildApiUrl(path))
+  const baseUrl = buildApiUrl(path)
+  const url = new URL(baseUrl, window.location.href)
+  return new EventSource(url.toString(), { withCredentials: true })
 }

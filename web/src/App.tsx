@@ -83,6 +83,30 @@ function App() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([])
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStepRecord[]>([])
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [authPassword, setAuthPassword] = useState('')
+  
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setIsAuthModalOpen(true)
+    }
+    window.addEventListener('phantom-unauthorized', handleUnauthorized)
+    return () => {
+      window.removeEventListener('phantom-unauthorized', handleUnauthorized)
+    }
+  }, [])
+
+  const handleAuthSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const token = authPassword.trim()
+    if (!token) return
+    localStorage.setItem('phantom_auth_token', token)
+    const secure = window.location.protocol === 'https:' ? '; Secure' : ''
+    document.cookie = `phantom_auth_token=${encodeURIComponent(token)}; path=/; max-age=31536000; SameSite=Lax${secure}`
+    setIsAuthModalOpen(false)
+    window.location.reload()
+  }
+
   const [logs, setLogs] = useState<AppLog[]>([
     {
       id: `ui-${Date.now()}`,
@@ -393,6 +417,40 @@ function App() {
 
         <Cmd isOpen={isCmdOpen} onClose={() => setIsCmdOpen(false)} />
       </main>
+
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-md">
+          <div className="w-[360px] rounded-2xl border border-slate-200 bg-white p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex flex-col items-center text-center">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                <Command size={24} />
+              </div>
+              <h2 className="text-xl font-bold text-slate-900">系统认证</h2>
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                该节点已启用安全保护，请输入您的认证密钥 (auth_secret) 以继续。
+              </p>
+              
+              <form onSubmit={handleAuthSubmit} className="mt-6 w-full">
+                <input
+                  type="password"
+                  placeholder="请输入密钥"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  autoFocus
+                />
+                
+                <button
+                  type="submit"
+                  className="mt-4 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
+                >
+                  确认登录
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

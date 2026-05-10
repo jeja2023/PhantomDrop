@@ -167,18 +167,35 @@ impl DataLake {
     async fn ensure_legacy_columns(pool: &Pool<Sqlite>) {
         Self::add_column_if_missing(pool, "emails", "extracted_link", "TEXT").await;
         Self::add_column_if_missing(pool, "emails", "extracted_text", "TEXT").await;
-        Self::add_column_if_missing(pool, "workflow_definitions", "kind", "TEXT NOT NULL DEFAULT 'account_generate'").await;
+        Self::add_column_if_missing(
+            pool,
+            "workflow_definitions",
+            "kind",
+            "TEXT NOT NULL DEFAULT 'account_generate'",
+        )
+        .await;
         Self::add_column_if_missing(pool, "generated_accounts", "access_token", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "refresh_token", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "session_token", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "device_id", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "workspace_id", "TEXT").await;
-        Self::add_column_if_missing(pool, "generated_accounts", "upload_status", "TEXT DEFAULT 'pending'").await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "upload_status",
+            "TEXT DEFAULT 'pending'",
+        )
+        .await;
         Self::add_column_if_missing(pool, "generated_accounts", "account_type", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "proxy_url", "TEXT").await;
     }
 
-    async fn add_column_if_missing(pool: &Pool<Sqlite>, table: &str, column: &str, definition: &str) {
+    async fn add_column_if_missing(
+        pool: &Pool<Sqlite>,
+        table: &str,
+        column: &str,
+        definition: &str,
+    ) {
         if Self::table_has_column(pool, table, column).await {
             return;
         }
@@ -195,7 +212,10 @@ impl DataLake {
         sqlx::query(&sql)
             .fetch_all(pool)
             .await
-            .map(|rows| rows.iter().any(|row| row.get::<String, _>("name") == column))
+            .map(|rows| {
+                rows.iter()
+                    .any(|row| row.get::<String, _>("name") == column)
+            })
             .unwrap_or(false)
     }
 
@@ -1065,7 +1085,10 @@ impl DataLake {
     }
 
     /// 获取所有符合条件的账号 ID
-    pub async fn list_all_account_ids(&self, query: Option<&str>) -> Result<Vec<String>, sqlx::Error> {
+    pub async fn list_all_account_ids(
+        &self,
+        query: Option<&str>,
+    ) -> Result<Vec<String>, sqlx::Error> {
         let ids = if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
             let like = format!("%{}%", q.trim().to_lowercase());
             let rows = sqlx::query(
@@ -1076,20 +1099,24 @@ impl DataLake {
             .bind(&like)
             .fetch_all(&self.pool)
             .await?;
-            
-            rows.into_iter().map(|r| {
-                use sqlx::Row;
-                r.get::<String, _>("id")
-            }).collect()
+
+            rows.into_iter()
+                .map(|r| {
+                    use sqlx::Row;
+                    r.get::<String, _>("id")
+                })
+                .collect()
         } else {
             let rows = sqlx::query("SELECT id FROM generated_accounts ORDER BY created_at DESC")
                 .fetch_all(&self.pool)
                 .await?;
-                
-            rows.into_iter().map(|r| {
-                use sqlx::Row;
-                r.get::<String, _>("id")
-            }).collect()
+
+            rows.into_iter()
+                .map(|r| {
+                    use sqlx::Row;
+                    r.get::<String, _>("id")
+                })
+                .collect()
         };
         Ok(ids)
     }
@@ -1124,7 +1151,7 @@ impl DataLake {
         let result = sqlx::query(
             "DELETE FROM generated_accounts 
              WHERE status NOT LIKE '%registered%' 
-             AND LOWER(status) NOT LIKE '%success%'"
+             AND LOWER(status) NOT LIKE '%success%'",
         )
         .execute(&self.pool)
         .await?;
@@ -1132,11 +1159,7 @@ impl DataLake {
     }
 
     /// 更新账号状态
-    pub async fn update_account_status(
-        &self,
-        id: &str,
-        status: &str,
-    ) -> Result<u64, sqlx::Error> {
+    pub async fn update_account_status(&self, id: &str, status: &str) -> Result<u64, sqlx::Error> {
         let result = sqlx::query("UPDATE generated_accounts SET status = ? WHERE id = ?")
             .bind(status)
             .bind(id)

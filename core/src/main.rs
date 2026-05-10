@@ -1,4 +1,14 @@
-﻿mod cloudflare_automation;
+#![allow(
+    clippy::collapsible_if,
+    clippy::empty_line_after_doc_comments,
+    clippy::manual_div_ceil,
+    clippy::needless_borrow,
+    clippy::redundant_closure,
+    clippy::too_many_arguments,
+    clippy::useless_format
+)]
+
+mod cloudflare_automation;
 mod config;
 mod db;
 mod exporter;
@@ -97,8 +107,9 @@ async fn main() {
     .layer(app_config.cors_layer());
 
     // 4. 开启监听
-    let listener = tokio::net::TcpListener::bind(app_config.bind_addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(app_config.bind_addr)
+        .await
+        .unwrap();
     println!("⚡ 监听中枢已就绪: http://{}", app_config.bind_addr);
     axum::serve(listener, app).await.unwrap();
 }
-

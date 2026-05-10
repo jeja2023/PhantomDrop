@@ -23,13 +23,23 @@ impl ImpersonateProvider {
 
         // 注入标准的 Chrome 124 Client Hints 和基本头部，确保与 TLS 指纹匹配
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("user-agent", crate::openai::constants::DEFAULT_USER_AGENT.parse().unwrap());
-        headers.insert("sec-ch-ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\"".parse().unwrap());
+        headers.insert(
+            "user-agent",
+            crate::openai::constants::DEFAULT_USER_AGENT
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(
+            "sec-ch-ua",
+            "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\""
+                .parse()
+                .unwrap(),
+        );
         headers.insert("sec-ch-ua-mobile", "?0".parse().unwrap());
         headers.insert("sec-ch-ua-platform", "\"Windows\"".parse().unwrap());
         headers.insert("upgrade-insecure-requests", "1".parse().unwrap());
         headers.insert("accept-language", "en-US,en;q=0.9".parse().unwrap());
-        
+
         builder
             .default_headers(headers)
             .build()

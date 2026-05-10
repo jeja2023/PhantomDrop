@@ -172,7 +172,11 @@ impl WorkflowEngine {
 
     pub async fn ensure_builtin_definitions(&self) {
         // 先获取现有定义以检查是否需要保留参数
-        let existing = self.dl.list_workflow_definitions().await.unwrap_or_default();
+        let existing = self
+            .dl
+            .list_workflow_definitions()
+            .await
+            .unwrap_or_default();
 
         for definition in Self::builtin_definitions() {
             let mut parameters_json =
@@ -316,7 +320,8 @@ impl WorkflowEngine {
                         }
                         Err(message) if message == "cancelled" => {
                             // 保持数据库中的 cancelled 状态，仅记录一条结束语
-                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行").await;
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行")
+                                .await;
                         }
                         Err(message) => {
                             let _ = dl
@@ -403,7 +408,8 @@ impl WorkflowEngine {
                                 .await;
                         }
                         Err(message) if message == "cancelled" => {
-                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行").await;
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行")
+                                .await;
                         }
                         Err(message) => {
                             Self::log_step(&hub, &dl, &mut context, "error", &message).await;
@@ -428,7 +434,8 @@ impl WorkflowEngine {
                                 .await;
                         }
                         Err(message) if message == "cancelled" => {
-                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行").await;
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行")
+                                .await;
                         }
                         Err(message) => {
                             Self::log_step(&hub, &dl, &mut context, "error", &message).await;
@@ -481,7 +488,14 @@ impl WorkflowEngine {
             // 实时检查是否已被用户手动停止
             if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
                 if current_status == "cancelled" {
-                    Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
+                    Self::log_step(
+                        hub,
+                        dl,
+                        context,
+                        "warn",
+                        "检测到用户终止指令，正在退出工作流...",
+                    )
+                    .await;
                     return Err("cancelled".to_string());
                 }
             }
@@ -499,12 +513,12 @@ impl WorkflowEngine {
 
             match dl
                 .create_generated_account(
-                    &context.run_id, 
-                    &address, 
-                    &password, 
-                    "ready", 
+                    &context.run_id,
+                    &address,
+                    &password,
+                    "ready",
                     parameters.account_type.as_deref(),
-                    parameters.proxy_url.as_deref()
+                    parameters.proxy_url.as_deref(),
                 )
                 .await
             {
@@ -713,7 +727,14 @@ impl WorkflowEngine {
         let require_webhook = parameters.require_webhook.unwrap_or(false);
 
         if saved_secret.is_some() {
-            Self::log_step(hub, dl, context, "success", "全局设置中已配置接口令牌 auth_secret").await;
+            Self::log_step(
+                hub,
+                dl,
+                context,
+                "success",
+                "全局设置中已配置接口令牌 auth_secret",
+            )
+            .await;
         } else {
             Self::log_step(
                 hub,
@@ -726,9 +747,23 @@ impl WorkflowEngine {
         }
 
         if fallback_env_secret.is_some() {
-            Self::log_step(hub, dl, context, "info", "检测到可选兜底环境变量 HUB_SECRET").await;
+            Self::log_step(
+                hub,
+                dl,
+                context,
+                "info",
+                "检测到可选兜底环境变量 HUB_SECRET",
+            )
+            .await;
         } else {
-            Self::log_step(hub, dl, context, "info", "未配置兜底环境变量 HUB_SECRET，将完全使用全局设置接口令牌").await;
+            Self::log_step(
+                hub,
+                dl,
+                context,
+                "info",
+                "未配置兜底环境变量 HUB_SECRET，将完全使用全局设置接口令牌",
+            )
+            .await;
         }
 
         if public_hub_url.is_some() {
@@ -818,7 +853,14 @@ impl WorkflowEngine {
             // 实时检查是否已被用户手动停止
             if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
                 if current_status == "cancelled" {
-                    Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
+                    Self::log_step(
+                        hub,
+                        dl,
+                        context,
+                        "warn",
+                        "检测到用户终止指令，正在退出工作流...",
+                    )
+                    .await;
                     return Err("cancelled".to_string());
                 }
             }
@@ -843,7 +885,12 @@ impl WorkflowEngine {
                 dl,
                 context,
                 "info",
-                &format!("[{}/{}] 开始注册: {} | 密令: {}", index + 1, batch_size, email, password),
+                &format!(
+                    "[{}/{}] 开始注册: {} | 密令: ******",
+                    index + 1,
+                    batch_size,
+                    email
+                ),
             )
             .await;
 
@@ -874,7 +921,7 @@ impl WorkflowEngine {
 
             // 监听回调并更新日志
             while let Some((level, msg)) = rx.recv().await {
-                Self::log_step(hub, dl, context, &level, &format!("{}", msg)).await;
+                Self::log_step(hub, dl, context, &level, &msg).await;
             }
 
             // 等待最终结果
@@ -1058,21 +1105,55 @@ impl WorkflowEngine {
             // 实时检查是否已被用户手动停止
             if let Ok(current_status) = dl.get_workflow_run_status(&context.run_id).await {
                 if current_status == "cancelled" {
-                    Self::log_step(hub, dl, context, "warn", "检测到用户终止指令，正在退出工作流...").await;
+                    Self::log_step(
+                        hub,
+                        dl,
+                        context,
+                        "warn",
+                        "检测到用户终止指令，正在退出工作流...",
+                    )
+                    .await;
                     return Err("cancelled".to_string());
                 }
             }
 
-            Self::log_step(hub, dl, context, "info", &format!("[{}/{}] 正在初始化浏览器仿真环境...", index + 1, batch_size)).await;
-            
-            let domain = dl.get_setting("account_domain").await.ok().flatten().unwrap_or_else(|| "phantom.local".to_string());
+            Self::log_step(
+                hub,
+                dl,
+                context,
+                "info",
+                &format!("[{}/{}] 正在初始化浏览器仿真环境...", index + 1, batch_size),
+            )
+            .await;
+
+            let domain = dl
+                .get_setting("account_domain")
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "phantom.local".to_string());
             let len = rand::thread_rng().gen_range(8..=12);
-            let local_part: String = rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(len).map(|b| char::from(b).to_ascii_lowercase()).collect();
+            let local_part: String = rand::thread_rng()
+                .sample_iter(&rand::distributions::Alphanumeric)
+                .take(len)
+                .map(|b| char::from(b).to_ascii_lowercase())
+                .collect();
             let email = format!("{}@{}", local_part, domain);
-            let password: String = rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(12).map(char::from).collect();
-            
-            Self::log_step(hub, dl, context, "info", &format!("🚀 准备注册: {} | 密码: {}", email, password)).await;
-            
+            let password: String = rand::thread_rng()
+                .sample_iter(&rand::distributions::Alphanumeric)
+                .take(12)
+                .map(char::from)
+                .collect();
+
+            Self::log_step(
+                hub,
+                dl,
+                context,
+                "info",
+                &format!("🚀 准备注册: {} | 密码: ******", email),
+            )
+            .await;
+
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
 
             let register_ctx = crate::openai::register::RegisterContext {
@@ -1091,12 +1172,11 @@ impl WorkflowEngine {
                 })),
             };
 
-            let driver = crate::openai::browser_driver::BrowserDriver::new(register_ctx, dl.clone());
-            
+            let driver =
+                crate::openai::browser_driver::BrowserDriver::new(register_ctx, dl.clone());
+
             // 运行驱动
-            let driver_task = tokio::spawn(async move {
-                driver.run().await
-            });
+            let driver_task = tokio::spawn(async move { driver.run().await });
 
             // 监听回调
             while let Some((level, msg)) = rx.recv().await {
@@ -1106,41 +1186,69 @@ impl WorkflowEngine {
             match driver_task.await {
                 Ok(Ok(result)) => {
                     success_count += 1;
-                    if let Ok(account_id) = dl.create_generated_account(
-                        &context.run_id, 
-                        &result.email, 
-                        &result.password, 
-                        "openai_registered",
-                        parameters.account_type.as_deref(),
-                        parameters.proxy_url.as_deref()
-                    ).await {
-                        let _ = dl.update_account_tokens(
-                            &account_id,
-                            result.access_token.as_deref(),
-                            result.refresh_token.as_deref(),
-                            result.session_token.as_deref(),
-                            Some(&result.device_id),
-                            result.workspace_id.as_deref()
-                        ).await;
-                        Self::log_step(hub, dl, context, "success", &format!("✅ 账号及其凭证已保存至数据库: {}", email)).await;
+                    if let Ok(account_id) = dl
+                        .create_generated_account(
+                            &context.run_id,
+                            &result.email,
+                            &result.password,
+                            "openai_registered",
+                            parameters.account_type.as_deref(),
+                            parameters.proxy_url.as_deref(),
+                        )
+                        .await
+                    {
+                        let _ = dl
+                            .update_account_tokens(
+                                &account_id,
+                                result.access_token.as_deref(),
+                                result.refresh_token.as_deref(),
+                                result.session_token.as_deref(),
+                                Some(&result.device_id),
+                                result.workspace_id.as_deref(),
+                            )
+                            .await;
+                        Self::log_step(
+                            hub,
+                            dl,
+                            context,
+                            "success",
+                            &format!("✅ 账号及其凭证已保存至数据库: {}", email),
+                        )
+                        .await;
                     } else {
-                        Self::log_step(hub, dl, context, "error", &format!("账号入库失败: {}", email)).await;
+                        Self::log_step(
+                            hub,
+                            dl,
+                            context,
+                            "error",
+                            &format!("账号入库失败: {}", email),
+                        )
+                        .await;
                     }
-                },
+                }
                 Ok(Err(e)) => {
                     fail_count += 1;
-                    Self::log_step(hub, dl, context, "error", &format!("单次注册失败: {}", e)).await;
-                },
+                    Self::log_step(hub, dl, context, "error", &format!("单次注册失败: {}", e))
+                        .await;
+                }
                 Err(e) => {
                     fail_count += 1;
-                    Self::log_step(hub, dl, context, "error", &format!("任务意外崩溃: {:?}", e)).await;
+                    Self::log_step(hub, dl, context, "error", &format!("任务意外崩溃: {:?}", e))
+                        .await;
                 }
             }
 
             // 批量间隔，防止操作过快被检测
             if index + 1 < batch_size {
                 let sleep_secs = rand::thread_rng().gen_range(5..15);
-                Self::log_step(hub, dl, context, "info", &format!("💤 等待 {} 秒后开始下一个任务...", sleep_secs)).await;
+                Self::log_step(
+                    hub,
+                    dl,
+                    context,
+                    "info",
+                    &format!("💤 等待 {} 秒后开始下一个任务...", sleep_secs),
+                )
+                .await;
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }
         }
@@ -1166,8 +1274,9 @@ impl WorkflowEngine {
         msg: &str,
     ) {
         context.step_index += 1;
+        let msg = redact_log_message(msg);
         let _ = dl
-            .add_workflow_step(&context.run_id, context.step_index, level, msg)
+            .add_workflow_step(&context.run_id, context.step_index, level, &msg)
             .await;
 
         hub.broadcast(StreamPayload {
@@ -1192,6 +1301,30 @@ impl WorkflowEngine {
             }),
         });
     }
+}
+
+fn redact_log_message(message: &str) -> String {
+    let mut output = message.to_string();
+    let patterns = [
+        (
+            r"(?i)(password|密码|密令)\s*[:：]\s*[^\s,，|]+",
+            "$1: ******",
+        ),
+        (
+            r"(?i)(access_token|refresh_token|session_token|id_token|api[_-]?key|secret|token)\s*[:：=]\s*[^\s,，|]+",
+            "$1: ******",
+        ),
+        (r"eyJ[A-Za-z0-9_\-\.]{20,}", "eyJ***"),
+        (r"sess_[A-Za-z0-9_\-]{8,}", "sess_***"),
+    ];
+
+    for (pattern, replacement) in patterns {
+        if let Ok(regex) = regex::Regex::new(pattern) {
+            output = regex.replace_all(&output, replacement).to_string();
+        }
+    }
+
+    output
 }
 
 #[cfg(test)]
