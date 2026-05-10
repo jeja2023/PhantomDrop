@@ -516,17 +516,18 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
       </div>
 
       {selectedEmail || loadingDetail ? (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md sm:p-6 pl-16 md:pl-64">
-          <div className="flex w-full max-w-5xl max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-white/20 bg-white shadow-2xl animate-in zoom-in-95 duration-400">
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-white px-6 py-4">
-              <div className="flex items-center gap-4">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                  <Mail size={20} />
+        <div className="fixed inset-0 z-[3000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md sm:p-6">
+          <div className="flex h-[calc(100vh-48px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/20 bg-white shadow-2xl animate-in zoom-in-95 duration-400">
+            <div className="flex min-h-[72px] shrink-0 items-center justify-between border-b border-slate-100 bg-white px-5 py-3 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Mail size={22} />
                 </div>
-                <div className="flex flex-col">
-                  <h3 className="text-lg font-black leading-tight text-slate-900">邮件深度详情</h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[9px] font-mono tracking-widest text-slate-400 uppercase">TRACE ID: {selectedEmail?.id?.slice(0, 8)}</span>
+                <div className="flex min-w-0 flex-col">
+                  <h3 className="truncate text-base font-black leading-tight text-slate-900 sm:text-lg">邮件深度详情</h3>
+                  <div className="mt-1 flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 text-[9px] font-black tracking-widest text-slate-400 uppercase">TRACE ID</span>
+                    <span className="truncate font-mono text-[10px] font-bold tracking-widest text-slate-500">{selectedEmail?.id?.slice(0, 8) || '--------'}</span>
                   </div>
                 </div>
               </div>
@@ -535,7 +536,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                 aria-label="关闭邮件详情"
                 title="关闭邮件详情"
                 onClick={() => setSelectedEmail(null)}
-                className="rounded-xl p-2.5 text-slate-400 transition-all hover:bg-slate-200 hover:text-slate-800 hover:rotate-90"
+                className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-800"
               >
                 <X size={20} />
               </button>
@@ -547,9 +548,9 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                 <span className="font-bold tracking-widest text-xs">正在解析深度上下文...</span>
               </div>
             ) : selectedEmail ? (
-              <div className="grid flex-1 overflow-hidden lg:grid-cols-[1fr_1.4fr]">
+              <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[0.95fr_1.45fr]">
                 {/* 左侧：邮件主体信息 */}
-                <div className="flex flex-col gap-4 overflow-y-auto border-r border-slate-100 bg-slate-50/30 p-8 custom-scrollbar">
+                <div className="flex min-h-0 flex-col gap-4 overflow-y-auto border-r border-slate-100 bg-slate-50/30 p-5 custom-scrollbar sm:p-6">
                   <div className="space-y-3">
                     <InfoCard label="发件人" value={selectedEmail.from_addr} />
                     <InfoCard label="收件人" value={selectedEmail.to_addr} />
@@ -612,7 +613,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
                 </div>
 
                 {/* 右侧：提取结果与源代码 */}
-                <div className="flex flex-col gap-5 overflow-y-auto p-6 custom-scrollbar">
+                <div className="flex min-h-0 flex-col gap-5 overflow-y-auto p-5 custom-scrollbar sm:p-6">
                   <div className="grid grid-cols-2 gap-4">
                     <InfoCard label="捕获时间" value={new Date(selectedEmail.created_at * 1000).toLocaleString()} />
                     <InfoCard 
