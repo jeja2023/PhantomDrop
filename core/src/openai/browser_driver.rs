@@ -161,29 +161,87 @@ impl BrowserDriver {
             cb("info", &format!("📍 页面已加载 | 标题: {} | URL: {}", page_title, current_url));
         }
 
-        // 2.2 首页中转处理：如果跳转到了首页而非注册页，尝试点击“Sign up”按钮
+        // 2.2 中转页处理：新版 ChatGPT 会先展示 Get started 页，需要主动点入注册表单。
+        let email_selectors = "input#email, input#username, input[name='email'], input[type='email']";
         tokio::time::sleep(Duration::from_secs(4)).await;
-        // 增加对中文落地页“开始使用”的识别
-        let is_home_page = tab.evaluate("document.body.innerText.includes('Where should we begin?') || document.body.innerText.includes('开始使用') || (document.body.innerText.includes('ChatGPT') && document.querySelectorAll('button, a').length < 50)", false)
-            .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
-            .unwrap_or(false);
 
-        if is_home_page {
-            if let Some(cb) = callback {
-                cb("info", "📍 识别到落地页中转，正在寻找注册入口...");
+        for attempt in 0..5 {
+            let has_email_form = tab.evaluate(
+                &format!("document.querySelector({:?}) !== null", email_selectors),
+                false,
+            )
+                .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                .unwrap_or(false);
+
+            if has_email_form {
+                break;
             }
-            // 尝试多种可能的注册按钮选择器，增加“免费注册”文案支持
-            let _ = tab.evaluate(&format!("(function(){{ 
-                const keywords = ['Sign up', '免费注册', '注册', 'Get started', '开始使用', 'Sign Up'];
-                const btn = Array.from(document.querySelectorAll('a, button')).find(el => 
-                    keywords.some(k => el.innerText.includes(k)) || 
-                    (el.getAttribute('href') && el.getAttribute('href').includes('signup'))
-                );
-                if(btn) {{
-                    btn.click();
-                }}
-            }})()"), false);
-            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            if let Some(cb) = callback {
+                cb("info", "📍 当前仍在登录/落地中转页，正在点击注册入口...");
+            }
+
+            let clicked_signup = tab.evaluate(r#"
+                (function() {
+                    const candidates = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+                    const textOf = (el) => (
+                        el.innerText ||
+                        el.textContent ||
+                        el.getAttribute('aria-label') ||
+                        el.getAttribute('title') ||
+                        ''
+                    ).trim().toLowerCase();
+                    const hrefOf = (el) => (el.getAttribute('href') || '').toLowerCase();
+                    const isVisible = (el) => {
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                    };
+
+                    const preferred = candidates.find((el) => {
+                        if (!isVisible(el)) return false;
+                        const text = textOf(el);
+                        return text.includes('sign up for free') ||
+                            text === 'sign up' ||
+                            text.includes('免费注册') ||
+                            text === '注册';
+                    }) || candidates.find((el) => {
+                        if (!isVisible(el)) return false;
+                        const href = hrefOf(el);
+                        return href.includes('signup') || href.includes('screen_hint=signup');
+                    }) || candidates.find((el) => {
+                        if (!isVisible(el)) return false;
+                        const text = textOf(el);
+                        return text.includes('get started') || text.includes('开始使用');
+                    });
+
+                    if (!preferred) return false;
+                    preferred.scrollIntoView({ block: 'center', inline: 'center' });
+                    preferred.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window }));
+                    preferred.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                    preferred.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                    preferred.click();
+                    return true;
+                })()
+            "#, false)
+                .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
+                .unwrap_or(false);
+
+            if !clicked_signup {
+                if let Some(cb) = callback {
+                    cb("warn", "未在当前页面识别到注册按钮，尝试直接进入 ChatGPT 注册路径...");
+                }
+                let _ = tab.navigate_to("https://chatgpt.com/auth/signup");
+                let _ = tab.wait_until_navigated();
+            } else if attempt >= 2 && tab.get_url().contains("/auth/login") {
+                if let Some(cb) = callback {
+                    cb("warn", "点击注册入口后仍停留在登录页，尝试直接切换到注册路径...");
+                }
+                let _ = tab.navigate_to("https://chatgpt.com/auth/signup");
+                let _ = tab.wait_until_navigated();
+            }
+
+            tokio::time::sleep(Duration::from_secs(4)).await;
         }
 
         // 调试截图辅助
@@ -256,7 +314,6 @@ impl BrowserDriver {
             cb("info", &format!("📧 正在输入邮箱并核验表单: {}", self.context.email));
         }
 
-        let email_selectors = "input#email, input#username, input[name='email'], input[type='email']";
         let continue_selectors = "button[type='submit'], button[data-action-button-primary='true']";
 
         let email_input = tab.wait_for_element_with_custom_timeout(email_selectors, Duration::from_secs(30))
