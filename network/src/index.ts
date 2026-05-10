@@ -76,8 +76,9 @@ function json(data: unknown, init?: ResponseInit): Response {
 async function relayToHub(payload: HubPayload, env: Env): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
+  const hubUrl = normalizedHubUrl(env);
 
-  return fetch(`${normalizedHubUrl(env)}/ingest`, {
+  return fetch(`${hubUrl}/ingest`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -145,7 +146,9 @@ export default {
             status: response.ok ? 'success' : 'error',
             hub_status: response.status,
             hub_response: responseText,
+            hub_url: normalizedHubUrl(env),
             forwarded_subject: payload.meta.subject,
+            forwarded_to: payload.meta.to,
           },
           { status: response.ok ? 200 : 502 },
         );
@@ -191,11 +194,31 @@ export default {
       };
 
       const response = await relayToHub(payload, env);
+      const responseText = await response.text();
       if (!response.ok) {
-        console.error('Failed to relay message to PhantomDrop hub:', await response.text());
+        console.error(
+          'Failed to relay message to PhantomDrop hub:',
+          JSON.stringify({
+            hub_status: response.status,
+            hub_response: responseText,
+            from: payload.meta.from,
+            to: payload.meta.to,
+            subject: payload.meta.subject,
+          }),
+        );
+        throw new Error(`PhantomDrop hub relay failed with status ${response.status}`);
       }
+      console.log(
+        'Relayed message to PhantomDrop hub:',
+        JSON.stringify({
+          from: payload.meta.from,
+          to: payload.meta.to,
+          subject: payload.meta.subject,
+        }),
+      );
     } catch (error) {
       console.error('Email Worker processing failed:', error);
+      throw error;
     }
   },
 };

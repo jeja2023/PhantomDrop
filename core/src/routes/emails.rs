@@ -259,8 +259,19 @@ pub fn routes(data_lake: Arc<DataLake>, stream_hub: Arc<StreamHub>) -> Router<Ar
                         parsed.link.as_deref(),
                         parsed.custom_text.as_deref(),
                     ).await {
-                        eprintln!("入库失败: {:?}", e);
+                        eprintln!(
+                            "邮件入库失败: id={}, from={}, to={}, subject={}, error={:?}",
+                            id, from, to, subject, e
+                        );
                     } else {
+                        eprintln!(
+                            "邮件已入库: id={}, from={}, to={}, subject={}, code={}",
+                            id,
+                            from,
+                            to,
+                            subject,
+                            parsed.code.as_deref().unwrap_or("")
+                        );
                         hub.broadcast(StreamPayload {
                             id: id.clone(),
                             event_type: "new_email".into(),

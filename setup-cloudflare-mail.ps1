@@ -238,7 +238,7 @@ function Update-WranglerToml([string]$BaseUrl, [string]$Secret) {
     Write-Step "Updating network/wrangler.toml"
     $content = Get-Content $wranglerTomlPath -Raw
     $content = [regex]::Replace($content, '(?m)^PHANTOM_HUB_URL\s*=\s*".*"$', "PHANTOM_HUB_URL = `"$BaseUrl`"")
-    $content = [regex]::Replace($content, '(?m)^HUB_SECRET\s*=\s*".*"$', "HUB_SECRET = `"$Secret`"")
+    $content = [regex]::Replace($content, '(?m)^HUB_SECRET\s*=\s*".*"\r?\n?', "")
     if ($content -notmatch '(?m)^workers_dev\s*=\s*true$') {
         $content = $content -replace '(?m)^compatibility_date\s*=\s*".*"$', "$0`r`nworkers_dev = true"
     }
@@ -295,6 +295,36 @@ function Invoke-WranglerDeploy([string]$ApiToken) {
         WorkerUrl = $workerUrl
     }
     return $result
+}
+
+function Set-WorkerSecret([string]$Secret, [string]$ApiToken) {
+    if ([string]::IsNullOrWhiteSpace($Secret)) {
+        throw "Hub Secret is empty. Configure the interface token in Global Settings before deploying Worker."
+    }
+    if ($Secret -eq "local_dev_secret") {
+        throw "Hub Secret is still using the development default. Please configure a production interface token first."
+    }
+
+    Write-Step "Syncing HUB_SECRET to Cloudflare Worker secret store"
+
+    if (-not [string]::IsNullOrWhiteSpace($ApiToken)) {
+        $env:CLOUDFLARE_API_TOKEN = $ApiToken
+    }
+
+    Push-Location $networkDir
+    try {
+        $output = ($Secret | & npx wrangler secret put HUB_SECRET 2>&1) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            throw "wrangler secret put HUB_SECRET failed. $output"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($output)) {
+            Write-Info $output.Trim()
+        }
+    } finally {
+        Pop-Location
+    }
+
+    Write-Ok "Worker HUB_SECRET synced."
 }
 
 function Resolve-ZoneDomain([string]$ExplicitDomain, [string]$BaseUrl) {
@@ -484,48 +514,47 @@ function Invoke-PublicIngestSmokeTest([string]$BaseUrl, [string]$Secret) {
 
 function Invoke-WorkerSmokeTest([string]$WorkerUrl) {
     if ([string]::IsNullOrWhiteSpace($WorkerUrl)) {
-        Write-Warn "未检测到 Worker URL。跳过冒烟测试。"
+        Write-Warn "Worker URL was not detected. Skipping smoke test."
         return
     }
 
     $MaxRetries = 5
     $RetryDelaySec = 5
 
-    Write-Step "正在检查已部署 Worker 的健康状态: $WorkerUrl/health"
+    Write-Step "Checking deployed Worker health: $WorkerUrl/health"
     $healthPassed = $false
     for ($i = 1; $i -le $MaxRetries; $i++) {
         try {
             $null = Invoke-RestMethod -Uri "$WorkerUrl/health" -TimeoutSec 10
-            Write-Ok "Worker 健康检查通过。"
+            Write-Ok "Worker health check passed."
             $healthPassed = $true
             break
         }
         catch {
             $msg = $_.Exception.Message
             if ($i -lt $MaxRetries) {
-                Write-Info "Worker 健康检查尝试 $i 失败 ($msg)，正在重试 ($RetryDelaySec 秒后)..."
+                Write-Info "Worker health attempt $i failed ($msg). Retrying in $RetryDelaySec seconds..."
                 Start-Sleep -Seconds $RetryDelaySec
             } else {
-                Write-Warn "Worker 健康检查最终失败: $msg"
+                Write-Warn "Worker health check ultimately failed: $msg"
             }
         }
     }
 
-    Write-Step "正在运行 Worker 中继冒烟测试: $WorkerUrl/relay-test"
+    Write-Step "Running Worker relay smoke test: $WorkerUrl/relay-test"
     for ($i = 1; $i -le $MaxRetries; $i++) {
         try {
-            # 为 /relay-test 使用 POST 方法
             $null = Invoke-RestMethod -Uri "$WorkerUrl/relay-test" -Method Post -ContentType "application/json; charset=utf-8" -Body "{}" -TimeoutSec 20
-            Write-Ok "Worker 中继测试通过。"
+            Write-Ok "Worker relay smoke test passed."
             return
         }
         catch {
             $msg = $_.Exception.Message
             if ($i -lt $MaxRetries) {
-                Write-Info "Worker 中继测试尝试 $i 失败 ($msg)，正在重试 ($RetryDelaySec 秒后)..."
+                Write-Info "Worker relay attempt $i failed ($msg). Retrying in $RetryDelaySec seconds..."
                 Start-Sleep -Seconds $RetryDelaySec
             } else {
-                Write-Warn "Worker 中继测试最终失败: $msg (非阻塞)"
+                Write-Warn "Worker relay smoke test ultimately failed: $msg"
             }
         }
     }
@@ -543,7 +572,7 @@ $backendAutomationConfig = Get-BackendAutomationConfig
 $effectiveHubSecret = if ($PSBoundParameters.ContainsKey("HubSecret")) {
     $HubSecret
 } else {
-    Select-Value @($env:HUB_SECRET, $backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $HubSecret)
+    Select-Value @($backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $env:HUB_SECRET, $HubSecret)
 }
 
 if ($null -ne $effectiveHubSecret) {
@@ -598,6 +627,7 @@ $deployResult = $null
 if (-not $SkipWorkerDeploy) {
     Initialize-NetworkDependencies
     $deployResult = Invoke-WranglerDeploy -ApiToken $effectiveCloudflareApiToken
+    Set-WorkerSecret -Secret $effectiveHubSecret -ApiToken $effectiveCloudflareApiToken
     Invoke-WorkerSmokeTest -WorkerUrl $deployResult.WorkerUrl
 }
 
