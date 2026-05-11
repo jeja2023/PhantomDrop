@@ -846,7 +846,7 @@ impl BrowserDriver {
                                 return text.includes('full name') || text.includes('fullname') || text.includes('full_name') ||
                                     text.includes('name') || text.includes('姓名');
                             }});
-                            if (!nameInput) return {{ ok: false, reason: 'name_not_found' }};
+                            if (!nameInput) return JSON.stringify({{ ok: false, reason: 'name_not_found' }});
                             setValue(nameInput, fullName);
 
                             const remaining = inputs.filter((el) => el !== nameInput);
@@ -856,7 +856,7 @@ impl BrowserDriver {
                             }});
                             if (ageInput) {{
                                 setValue(ageInput, ageValue);
-                                return {{ ok: true, mode: 'age' }};
+                                return JSON.stringify({{ ok: true, mode: 'age' }});
                             }}
 
                             const birthdayInput = remaining.find((el) => {{
@@ -866,12 +866,12 @@ impl BrowserDriver {
                             }});
                             if (birthdayInput) {{
                                 setValue(birthdayInput, birthdayValue);
-                                return {{ ok: true, mode: 'birthday' }};
+                                return JSON.stringify({{ ok: true, mode: 'birthday' }});
                             }}
 
-                            return {{ ok: false, reason: 'age_or_birthday_not_found' }};
+                            return JSON.stringify({{ ok: false, reason: 'age_or_birthday_not_found' }});
                         }} catch (e) {{
-                            return {{ ok: false, reason: 'exception', error: e.toString(), stack: e.stack }};
+                            return JSON.stringify({{ ok: false, reason: 'exception', error: e.toString(), stack: e.stack }});
                         }}
                     }})()
                     "#
@@ -880,14 +880,21 @@ impl BrowserDriver {
             )
             .map_err(|error| format!("个人资料填写脚本执行失败: {error}"))?;
 
-        let profile_fill_value = profile_fill_result.value.unwrap_or_default();
-        let profile_fill_ok = profile_fill_value
+        let profile_fill_value = profile_fill_result.value.unwrap_or(serde_json::Value::Null);
+        let parsed_value: serde_json::Value = if let Some(s) = profile_fill_value.as_str() {
+            serde_json::from_str(s).unwrap_or(profile_fill_value.clone())
+        } else {
+            profile_fill_value.clone()
+        };
+
+        let profile_fill_ok = parsed_value
             .get("ok")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+            
         if !profile_fill_ok {
             take_shot("资料填写失败", &tab);
-            return Err(format!("个人资料填写失败: {}", profile_fill_value));
+            return Err(format!("个人资料填写失败: {} (原始返回: {})", parsed_value, profile_fill_value));
         }
         if let Some(cb) = callback {
             let mode = profile_fill_value
