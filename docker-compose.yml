@@ -6,7 +6,7 @@ services:
     container_name: phantom-drop-app
     restart: unless-stopped
     # 针对低内存 VPS 优化：弃用 xvfb-run，直接运行后端程序
-    command: ["/app/phantom-core"]
+    command: [ "/app/phantom-core" ]
     tty: true
     stdin_open: true
     environment:
@@ -24,7 +24,7 @@ services:
       - ./data:/app/data
       - ./.automation:/app/.automation
     ports:
-      - "127.0.0.1:9010:9010"
+      - "9010:9010"
     logging:
       driver: "json-file"
       options:
