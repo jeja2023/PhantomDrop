@@ -90,8 +90,16 @@ pub struct GeneratedAccountRecord {
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub session_token: Option<String>,
+    pub id_token: Option<String>,
     pub device_id: Option<String>,
     pub workspace_id: Option<String>,
+    pub chatgpt_account_id: Option<String>,
+    pub chatgpt_user_id: Option<String>,
+    pub organization_id: Option<String>,
+    pub plan_type: Option<String>,
+    pub expires_in: Option<i64>,
+    pub token_version: Option<i64>,
+    pub oauth_credentials_json: Option<String>,
     pub upload_status: Option<String>,
     pub account_type: Option<String>,
     pub proxy_url: Option<String>,
@@ -125,6 +133,13 @@ pub struct DataLake {
 }
 
 impl DataLake {
+    const GENERATED_ACCOUNT_COLUMNS: &'static str =
+        "id, run_id, address, password, status, created_at,
+                    access_token, refresh_token, session_token, id_token,
+                    device_id, workspace_id, chatgpt_account_id, chatgpt_user_id,
+                    organization_id, plan_type, expires_in, token_version, oauth_credentials_json,
+                    upload_status, account_type, proxy_url";
+
     /// 初始化数据湖连接并确保表结构存在
     pub async fn new(database_url: &str) -> Arc<Self> {
         // 使用高性能连接池
@@ -177,8 +192,17 @@ impl DataLake {
         Self::add_column_if_missing(pool, "generated_accounts", "access_token", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "refresh_token", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "session_token", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "id_token", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "device_id", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "workspace_id", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "chatgpt_account_id", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "chatgpt_user_id", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "organization_id", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "plan_type", "TEXT").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "expires_in", "INTEGER").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "token_version", "INTEGER").await;
+        Self::add_column_if_missing(pool, "generated_accounts", "oauth_credentials_json", "TEXT")
+            .await;
         Self::add_column_if_missing(
             pool,
             "generated_accounts",
@@ -954,11 +978,21 @@ impl DataLake {
         session_token: Option<&str>,
         device_id: Option<&str>,
         workspace_id: Option<&str>,
+        id_token: Option<&str>,
+        chatgpt_account_id: Option<&str>,
+        chatgpt_user_id: Option<&str>,
+        organization_id: Option<&str>,
+        plan_type: Option<&str>,
+        expires_in: Option<i64>,
+        token_version: Option<i64>,
+        oauth_credentials_json: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             "UPDATE generated_accounts
              SET access_token = ?, refresh_token = ?, session_token = ?,
-                 device_id = ?, workspace_id = ?
+                 device_id = ?, workspace_id = ?, id_token = ?,
+                 chatgpt_account_id = ?, chatgpt_user_id = ?, organization_id = ?,
+                 plan_type = ?, expires_in = ?, token_version = ?, oauth_credentials_json = ?
              WHERE id = ?",
         )
         .bind(access_token)
@@ -966,6 +1000,14 @@ impl DataLake {
         .bind(session_token)
         .bind(device_id)
         .bind(workspace_id)
+        .bind(id_token)
+        .bind(chatgpt_account_id)
+        .bind(chatgpt_user_id)
+        .bind(organization_id)
+        .bind(plan_type)
+        .bind(expires_in)
+        .bind(token_version)
+        .bind(oauth_credentials_json)
         .bind(account_id)
         .execute(&self.pool)
         .await?;
@@ -993,23 +1035,25 @@ impl DataLake {
         limit: i64,
     ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
         let sql = if run_id == "all" {
-            "SELECT id, run_id, address, password, status, created_at,
-                    access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type, proxy_url
+            format!(
+                "SELECT {}
              FROM generated_accounts
              ORDER BY created_at DESC
-             LIMIT ?"
+             LIMIT ?",
+                Self::GENERATED_ACCOUNT_COLUMNS
+            )
         } else {
-            "SELECT id, run_id, address, password, status, created_at,
-                    access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type, proxy_url
+            format!(
+                "SELECT {}
              FROM generated_accounts
              WHERE run_id = ?
              ORDER BY created_at DESC
-             LIMIT ?"
+             LIMIT ?",
+                Self::GENERATED_ACCOUNT_COLUMNS
+            )
         };
 
-        let mut query = sqlx::query_as::<_, GeneratedAccountRecord>(sql);
+        let mut query = sqlx::query_as::<_, GeneratedAccountRecord>(&sql);
         if run_id != "all" {
             query = query.bind(run_id);
         }
@@ -1030,36 +1074,36 @@ impl DataLake {
     ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
         if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
             let like = format!("%{}%", q.trim().to_lowercase());
-            let records = sqlx::query_as::<_, GeneratedAccountRecord>(
-                "SELECT id, run_id, address, password, status, created_at,
-                        access_token, refresh_token, session_token,
-                        device_id, workspace_id, upload_status, account_type, proxy_url
+            let sql = format!(
+                "SELECT {}
                  FROM generated_accounts
                  WHERE lower(address) LIKE ? OR lower(status) LIKE ? OR lower(run_id) LIKE ?
                  ORDER BY created_at DESC
                  LIMIT ? OFFSET ?",
-            )
-            .bind(&like)
-            .bind(&like)
-            .bind(&like)
-            .bind(limit.clamp(1, 1000))
-            .bind(offset.max(0))
-            .fetch_all(&self.pool)
-            .await?;
+                Self::GENERATED_ACCOUNT_COLUMNS
+            );
+            let records = sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+                .bind(&like)
+                .bind(&like)
+                .bind(&like)
+                .bind(limit.clamp(1, 1000))
+                .bind(offset.max(0))
+                .fetch_all(&self.pool)
+                .await?;
             Ok(records)
         } else {
-            let records = sqlx::query_as::<_, GeneratedAccountRecord>(
-                "SELECT id, run_id, address, password, status, created_at,
-                        access_token, refresh_token, session_token,
-                        device_id, workspace_id, upload_status, account_type, proxy_url
+            let sql = format!(
+                "SELECT {}
                  FROM generated_accounts
                  ORDER BY created_at DESC
                  LIMIT ? OFFSET ?",
-            )
-            .bind(limit.clamp(1, 1000))
-            .bind(offset.max(0))
-            .fetch_all(&self.pool)
-            .await?;
+                Self::GENERATED_ACCOUNT_COLUMNS
+            );
+            let records = sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+                .bind(limit.clamp(1, 1000))
+                .bind(offset.max(0))
+                .fetch_all(&self.pool)
+                .await?;
             Ok(records)
         }
     }
@@ -1173,17 +1217,17 @@ impl DataLake {
         &self,
         id: &str,
     ) -> Result<Option<GeneratedAccountRecord>, sqlx::Error> {
-        let record = sqlx::query_as::<_, GeneratedAccountRecord>(
-            "SELECT id, run_id, address, password, status, created_at,
-                    access_token, refresh_token, session_token,
-                    device_id, workspace_id, upload_status, account_type, proxy_url
+        let sql = format!(
+            "SELECT {}
              FROM generated_accounts
              WHERE id = ?
              LIMIT 1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+            Self::GENERATED_ACCOUNT_COLUMNS
+        );
+        let record = sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(record)
     }

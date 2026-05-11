@@ -35,6 +35,7 @@ pub struct RegisterResult {
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
     pub session_token: Option<String>,
+    pub id_token: Option<String>,
     pub device_id: String,
     pub workspace_id: Option<String>,
 }
@@ -575,14 +576,35 @@ pub async fn execute_registration(
         .send()
         .await;
 
-    // 模拟成功获取
-    let (final_access, final_refresh) = match token_exchange_res {
+    // 模拟或真实获取 Token 以及相关的 ID Token
+    let (final_access, final_refresh, final_id_token) = match token_exchange_res {
         Ok(res) if res.status().is_success() => {
-            // 在实盘中应解析 JSON 获取 token
-            (
-                format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple()),
-                Some(format!("ref_{}", uuid::Uuid::new_v4().simple())),
-            )
+            if let Ok(data) = res.json::<serde_json::Value>().await {
+                let access_token = data
+                    .get("access_token")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple())
+                    });
+                let refresh_token = data
+                    .get("refresh_token")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| Some(format!("ref_{}", uuid::Uuid::new_v4().simple())));
+                let id_token = data
+                    .get("id_token")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| super::oauth::generate_mock_id_token(&context.email));
+                (access_token, refresh_token, Some(id_token))
+            } else {
+                (
+                    format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple()),
+                    Some(format!("ref_{}", uuid::Uuid::new_v4().simple())),
+                    Some(super::oauth::generate_mock_id_token(&context.email)),
+                )
+            }
         }
         _ => {
             if let Some(ref cb) = context.step_callback {
@@ -597,6 +619,7 @@ pub async fn execute_registration(
                     uuid::Uuid::new_v4().simple()
                 ),
                 None,
+                Some(super::oauth::generate_mock_id_token(&context.email)),
             )
         }
     };
@@ -611,6 +634,7 @@ pub async fn execute_registration(
         access_token: Some(final_access),
         refresh_token: final_refresh,
         session_token: Some(format!("sess_{}", uuid::Uuid::new_v4().simple())),
+        id_token: final_id_token,
         device_id: device_id.clone(),
         workspace_id: Some("ws-default-org".to_string()),
     })

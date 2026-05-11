@@ -117,8 +117,8 @@ export default function DashboardView({ emails, logs, stats, updateRate = 1000 }
           </div>
         </div>
 
-        <div className="page-panel flex-grow lg:flex-1 p-4 flex flex-col justify-between bg-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] min-h-0 overflow-hidden relative">
-          <div className="space-y-4 min-h-0 relative z-10">
+        <div className="page-panel flex-grow lg:flex-1 p-5 flex flex-col gap-4 bg-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] min-h-[360px] overflow-y-auto relative">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 relative z-10">
             <div className="flex items-center justify-between shrink-0">
               <div className="flex flex-col">
                 <span className="text-[12px] font-black text-indigo-600 tracking-tighter leading-none">决策核心 / CORE</span>
@@ -130,43 +130,43 @@ export default function DashboardView({ emails, logs, stats, updateRate = 1000 }
               </span>
             </div>
 
-            <div className="space-y-2.5 pr-1">
+            <div className="grid shrink-0 gap-2.5 pr-1">
               <ProgressItem label="校验引擎覆盖率" percent={metrics.coverage} color="blue" />
               <ProgressItem label="神经元解析成功率" percent={metrics.successRate} color="cyan" />
               <ProgressItem label="异常信号密度" percent={metrics.alertDensity} color="indigo" />
               <ProgressItem label="实时邮件活跃度" percent={metrics.activity} color="amber" />
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-3 shadow-sm">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-bold text-slate-800 tracking-tight">感应层实时统计</div>
+            <div className="shrink-0 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-[11px] font-bold text-slate-800 tracking-tight">感应层实时统计</div>
                 <Database size={12} className="text-slate-400" />
               </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[10px]">
-                <div className="flex flex-col">
-                  <span className="text-slate-400 text-[8px] uppercase">活跃节点</span>
-                  <span className="text-slate-700 font-bold">{metrics.activeEmails}</span>
+              <div className="grid grid-cols-2 gap-x-5 gap-y-3 font-mono text-[11px]">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">活跃节点</span>
+                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.activeEmails}</span>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-slate-400 text-[8px] uppercase">归档节点</span>
-                  <span className="text-slate-700 font-bold">{metrics.archivedEmails}</span>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">归档节点</span>
+                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.archivedEmails}</span>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-slate-400 text-[8px] uppercase">24H 工作流</span>
-                  <span className="text-slate-700 font-bold">{metrics.workflowRuns}</span>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">24H 工作流</span>
+                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.workflowRuns}</span>
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-slate-400 text-[8px] uppercase">今日注入</span>
-                  <span className="text-slate-700 font-bold">{stats?.recent_emails_24h ?? emails.length}</span>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">今日注入</span>
+                  <span className="font-bold leading-tight tabular-nums text-slate-700">{stats?.recent_emails_24h ?? emails.length}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="pt-4 mt-2 relative z-10">
+          <div className="relative z-10 mt-auto shrink-0 border-t border-slate-100 pt-3">
             <button
               onClick={handleExpertMode}
-              className={`w-full py-2.5 rounded-xl text-[10px] font-black tracking-[0.2em] transition-all flex items-center justify-center gap-2 ${
+              className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-3 text-[10px] font-black leading-none tracking-[0.08em] transition-all sm:tracking-[0.16em] ${
                 isExpertMode
                   ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200'
                   : 'bg-slate-900 text-white hover:bg-slate-800'

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Zap, Activity, Settings, Mail, Loader2 } from 'lucide-react'
 import { fetchJson, postJson } from '../lib/api'
@@ -176,7 +177,7 @@ export default function Cmd({ isOpen, onClose }: CmdProps) {
     }
   }
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {isOpen ? (
         <>
@@ -185,13 +186,13 @@ export default function Cmd({ isOpen, onClose }: CmdProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={handleClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 transition-all cursor-none"
+            className="fixed inset-0 z-[9000] bg-black/60 backdrop-blur-sm transition-all cursor-none"
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: -20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -20 }}
-            className="fixed left-1/2 top-[15%] -translate-x-1/2 w-full max-w-xl z-[60] px-4"
+            className="fixed left-1/2 top-[15%] z-[9010] w-full max-w-xl -translate-x-1/2 px-4"
           >
             <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-2xl overflow-hidden ring-1 ring-black/5">
               <div className="p-4 border-b border-slate-100 flex items-center gap-4 px-6 bg-slate-50/50">
@@ -280,7 +281,8 @@ export default function Cmd({ isOpen, onClose }: CmdProps) {
           </motion.div>
         </>
       ) : null}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 

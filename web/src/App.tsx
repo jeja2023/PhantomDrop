@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { RefreshCw, Command, Activity, RadioTower } from 'lucide-react'
 import Sidebar from './ui/Sidebar'
 import Cmd from './cmd/Cmd'
@@ -418,8 +419,8 @@ function App() {
         <Cmd isOpen={isCmdOpen} onClose={() => setIsCmdOpen(false)} />
       </main>
 
-      {isAuthModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-md">
+      {isAuthModalOpen && createPortal(
+        <div className="fixed inset-0 z-[11000] flex items-center justify-center bg-slate-900/60 backdrop-blur-md">
           <div className="w-[360px] rounded-2xl border border-slate-200 bg-white p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
             <div className="flex flex-col items-center text-center">
               <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600">
@@ -449,7 +450,8 @@ function App() {
               </form>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

@@ -783,14 +783,123 @@ pub fn build_router(ctx: RouterContext) -> Router {
             move |Path(id): Path<String>, Json(payload): Json<HashMap<String, String>>| {
                 let dl = dl.clone();
                 async move {
-                    let access_token = payload.get("access_token").map(|s| s.as_str());
-                    let refresh_token = payload.get("refresh_token").map(|s| s.as_str());
-                    let session_token = payload.get("session_token").map(|s| s.as_str());
-                    let device_id = payload.get("device_id").map(|s| s.as_str());
-                    let workspace_id = payload.get("workspace_id").map(|s| s.as_str());
+                    let existing = match dl.get_generated_account(&id).await {
+                        Ok(Some(account)) => account,
+                        Ok(None) => {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({"status": "error", "message": "账号不存在"}))
+                            ).into_response();
+                        }
+                        Err(e) => {
+                            eprintln!("读取账号 Token 失败: {:?}", e);
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({"status": "error", "message": "读取账号 Token 失败"}))
+                            ).into_response();
+                        }
+                    };
+
+                    let access_token = payload
+                        .get("access_token")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .or(existing.access_token.as_deref());
+                    let refresh_token = payload
+                        .get("refresh_token")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .or(existing.refresh_token.as_deref());
+                    let session_token = payload
+                        .get("session_token")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .or(existing.session_token.as_deref());
+                    let device_id = payload
+                        .get("device_id")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .or(existing.device_id.as_deref());
+                    let workspace_id = payload
+                        .get("workspace_id")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .or(existing.workspace_id.as_deref());
+                    let id_token = payload
+                        .get("id_token")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .or(existing.id_token.as_deref());
+
+                    let auth_info = id_token.map(|idt| crate::openai::oauth::extract_auth_info_from_jwt(idt));
+                    let chatgpt_account_id = auth_info
+                        .as_ref()
+                        .and_then(|info| info.chatgpt_account_id.as_deref())
+                        .or(existing.chatgpt_account_id.as_deref());
+                    let chatgpt_user_id = auth_info
+                        .as_ref()
+                        .and_then(|info| info.chatgpt_user_id.as_deref())
+                        .or(existing.chatgpt_user_id.as_deref());
+                    let organization_id = auth_info
+                        .as_ref()
+                        .and_then(|info| info.organization_id.as_deref())
+                        .or(existing.organization_id.as_deref());
+                    let plan_type = auth_info
+                        .as_ref()
+                        .and_then(|info| info.plan_type.as_deref())
+                        .or(existing.plan_type.as_deref());
+                    let account_email = payload
+                        .get("email")
+                        .map(String::as_str)
+                        .and_then(|value| crate::openai::oauth::parse_non_empty(value))
+                        .unwrap_or(existing.address.as_str());
+                    let expires_in = payload
+                        .get("expires_in")
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .or(existing.expires_in)
+                        .unwrap_or(crate::openai::oauth::DEFAULT_OAUTH_EXPIRES_IN);
+                    let token_version = payload
+                        .get("_token_version")
+                        .or_else(|| payload.get("token_version"))
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .or(existing.token_version)
+                        .unwrap_or(crate::openai::oauth::DEFAULT_OAUTH_TOKEN_VERSION);
+                    let stored_credentials = existing
+                        .oauth_credentials_json
+                        .as_deref()
+                        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+                    let oauth_credentials = crate::openai::oauth::build_oauth_credentials(
+                        crate::openai::oauth::OAuthCredentialInput {
+                            email: account_email,
+                            access_token,
+                            refresh_token,
+                            id_token,
+                            workspace_id,
+                            chatgpt_account_id,
+                            chatgpt_user_id,
+                            organization_id,
+                            plan_type,
+                            expires_in: Some(expires_in),
+                            token_version: Some(token_version),
+                            stored_credentials: stored_credentials.as_ref(),
+                        },
+                    );
 
                     match dl.update_account_tokens(
-                        &id, access_token, refresh_token, session_token, device_id, workspace_id
+                        &id,
+                        access_token,
+                        refresh_token,
+                        session_token,
+                        device_id,
+                        workspace_id,
+                        Some(oauth_credentials.id_token.as_str()),
+                        Some(oauth_credentials.chatgpt_account_id.as_str()),
+                        Some(oauth_credentials.chatgpt_user_id.as_str()),
+                        Some(oauth_credentials.organization_id.as_str()),
+                        Some(oauth_credentials.plan_type.as_str()),
+                        Some(oauth_credentials.expires_in),
+                        Some(oauth_credentials.token_version),
+                        oauth_credentials.json.as_deref(),
                     ).await {
                         Ok(_) => Json(serde_json::json!({"status": "success"})).into_response(),
                         Err(e) => {
@@ -1033,7 +1142,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
         }))
         .route("/api/accounts/batch/export", post({
             let dl = Arc::clone(&data_lake);
-            move |Json(payload): Json<HashMap<String, Vec<String>>>| {
+            move |Query(params): Query<HashMap<String, String>>, Json(payload): Json<HashMap<String, Vec<String>>>| {
                 let dl = dl.clone();
                 async move {
                     let ids = payload.get("ids").cloned().unwrap_or_default();
@@ -1043,7 +1152,13 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             results.push(acc);
                         }
                     }
-                    Json(results).into_response()
+
+                    if params.get("format").map(|s| s.as_str()) == Some("oauth") {
+                        let oauth_json = crate::exporter::AccountExporter::export_to_oauth_json(&results);
+                        Json(oauth_json).into_response()
+                    } else {
+                        Json(results).into_response()
+                    }
                 }
             }
         }))

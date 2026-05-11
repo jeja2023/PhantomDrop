@@ -188,8 +188,16 @@ export interface GeneratedAccountRecord {
   access_token?: string | null
   refresh_token?: string | null
   session_token?: string | null
+  id_token?: string | null
   device_id?: string | null
   workspace_id?: string | null
+  chatgpt_account_id?: string | null
+  chatgpt_user_id?: string | null
+  organization_id?: string | null
+  plan_type?: string | null
+  expires_in?: number | null
+  token_version?: number | null
+  oauth_credentials_json?: string | null
   upload_status?: string | null
   account_type?: string | null
   proxy_url?: string | null

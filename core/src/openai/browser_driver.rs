@@ -879,13 +879,14 @@ impl BrowserDriver {
 
         let mut token_extracted = None;
         let mut refresh_token_extracted = None;
+        let mut id_token_extracted = None;
         for i in 0..30 {
             tokio::time::sleep(Duration::from_secs(3)).await;
 
             let js = r#"
                 (async function() {
                     const isJwt = (s) => typeof s === 'string' && s.startsWith('eyJ') && s.split('.').length === 3;
-                    const res = { at: null, rt: null };
+                    const res = { at: null, rt: null, idt: null };
                     const jwtCandidates = [];
                     const rtCandidates = [];
 
@@ -906,7 +907,7 @@ impl BrowserDriver {
                         }
                     };
 
-                    // 1. Try standard NextAuth session endpoint
+                    // 1. 优先尝试标准 NextAuth 会话接口
                     try {
                         const resp = await fetch('/api/auth/session', { credentials: 'same-origin' });
                         if (resp.ok) {
@@ -915,7 +916,7 @@ impl BrowserDriver {
                         }
                     } catch (e) {}
 
-                    // 2. Try alternative backend session endpoint
+                    // 2. 尝试备用后端会话接口
                     if (!res.at) {
                         try {
                             const resp2 = await fetch('/backend-api/session', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
@@ -927,7 +928,7 @@ impl BrowserDriver {
                     }
 
                     
-                    // 3. Scan Storage
+                    // 3. 扫描浏览器本地存储
                     try {
                         const stores = [localStorage, sessionStorage];
                         for (const store of stores) {
@@ -949,15 +950,50 @@ impl BrowserDriver {
                         }
                     } catch (e) {}
 
-                    // 4. Try scanning window.__NEXT_DATA__
+                    // 4. 扫描 Next.js 注入的页面数据
                     try {
                         scan(window.__NEXT_DATA__);
                     } catch (e) {}
 
-                    if (!res.at && jwtCandidates.length > 0) {
-                        // Default to the longest JWT found, typically the Access Token is the most data-heavy JWT
-                        res.at = jwtCandidates.sort((a, b) => b.length - a.length)[0];
+                    // 5. 解码候选 JWT，区分 Access Token 与 ID Token
+                    const decodeJwt = (token) => {
+                        try {
+                            const parts = token.split('.');
+                            if (parts.length < 2) return null;
+                            let body = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+                            body = body.padEnd(body.length + ((4 - body.length % 4) % 4), '=');
+                            const payload = JSON.parse(atob(body));
+                            return payload;
+                        } catch (e) {
+                            return null;
+                        }
+                    };
+
+                    const jwts = Array.from(new Set(jwtCandidates));
+                    let idToken = null;
+                    let accessToken = null;
+
+                    for (const token of jwts) {
+                        const payload = decodeJwt(token);
+                        if (payload) {
+                            const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud].filter(Boolean);
+                            const isApiAccessToken = aud.some((item) => String(item).includes('api.openai.com'));
+                            const isClientIdToken = aud.some((item) => String(item).startsWith('app_')) || payload.at_hash || payload.auth_provider;
+                            if (isApiAccessToken) {
+                                accessToken = token;
+                            } else if (isClientIdToken || payload.email || payload['https://api.openai.com/auth']) {
+                                idToken = token;
+                            } else {
+                                accessToken = token;
+                            }
+                        }
                     }
+
+                    if (!res.at) {
+                        res.at = accessToken || (jwts.length > 0 ? jwts[0] : null);
+                    }
+                    res.idt = idToken;
+
                     if (!res.rt && rtCandidates.length > 0) {
                         res.rt = rtCandidates.sort((a, b) => b.length - a.length)[0];
                     }
@@ -975,6 +1011,10 @@ impl BrowserDriver {
                         .get("rt")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
+                    let idt = obj
+                        .get("idt")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
 
                     if let Some(token) = at {
                         if token.len() > 100 {
@@ -982,9 +1022,12 @@ impl BrowserDriver {
                                 cb(
                                     "success",
                                     &format!(
-                                        "✅ 凭证提取成功 | AT: {} | RT: {}",
+                                        "✅ 凭证提取成功 | AT: {} | RT: {} | IDT: {}",
                                         token.len(),
                                         rt.as_ref()
+                                            .map(|s| s.len().to_string())
+                                            .unwrap_or("无".to_string()),
+                                        idt.as_ref()
                                             .map(|s| s.len().to_string())
                                             .unwrap_or("无".to_string())
                                     ),
@@ -992,6 +1035,7 @@ impl BrowserDriver {
                             }
                             token_extracted = Some(token);
                             refresh_token_extracted = rt;
+                            id_token_extracted = idt;
                             break;
                         }
                     }
@@ -1048,6 +1092,7 @@ impl BrowserDriver {
                     access_token: token_extracted,
                     refresh_token: refresh_token_extracted,
                     session_token: session_extracted,
+                    id_token: id_token_extracted,
                     device_id: self.context.device_id.clone(),
                     workspace_id: Some("ws-browser-org".to_string()),
                 })

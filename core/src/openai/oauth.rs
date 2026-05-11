@@ -248,6 +248,387 @@ fn simple_sha256(data: &[u8]) -> [u8; 32] {
     result
 }
 
+// --- 辅助函数：JWT 无感解析与 Mock 生成 ---
+
+/// 解析 JWT 令牌的 Payload 负载数据（不进行签名验签，无感解析）
+pub fn parse_jwt_payload(token: &str) -> Option<serde_json::Value> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() >= 2 {
+        use base64::Engine;
+        // 支持 URL 安全与标准 Base64 编码（无 Padding 填充）
+        let decoders = [
+            base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            base64::engine::general_purpose::STANDARD_NO_PAD,
+        ];
+        for engine in decoders {
+            if let Ok(decoded) = engine.decode(parts[1]) {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
+                    return Some(json);
+                }
+            }
+        }
+        // 兜底尝试带 Padding 的 Base64 解码
+        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(parts[1]) {
+            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
+                return Some(json);
+            }
+        }
+        if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE.decode(parts[1]) {
+            if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) {
+                return Some(json);
+            }
+        }
+    }
+    None
+}
+
+/// 提取出的账号 Auth 凭证核心元数据
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExtractedAuthInfo {
+    pub email: Option<String>,
+    pub chatgpt_account_id: Option<String>,
+    pub chatgpt_user_id: Option<String>,
+    pub organization_id: Option<String>,
+    pub plan_type: Option<String>,
+}
+
+pub const DEFAULT_OAUTH_EXPIRES_IN: i64 = 864000;
+pub const DEFAULT_OAUTH_TOKEN_VERSION: i64 = 1778215057457;
+
+pub struct OAuthCredentialInput<'a> {
+    pub email: &'a str,
+    pub access_token: Option<&'a str>,
+    pub refresh_token: Option<&'a str>,
+    pub id_token: Option<&'a str>,
+    pub workspace_id: Option<&'a str>,
+    pub chatgpt_account_id: Option<&'a str>,
+    pub chatgpt_user_id: Option<&'a str>,
+    pub organization_id: Option<&'a str>,
+    pub plan_type: Option<&'a str>,
+    pub expires_in: Option<i64>,
+    pub token_version: Option<i64>,
+    pub stored_credentials: Option<&'a serde_json::Value>,
+}
+
+pub struct BuiltOAuthCredentials {
+    pub json: Option<String>,
+    pub id_token: String,
+    pub chatgpt_account_id: String,
+    pub chatgpt_user_id: String,
+    pub organization_id: String,
+    pub plan_type: String,
+    pub expires_in: i64,
+    pub token_version: i64,
+}
+
+pub fn parse_non_empty(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.and_then(parse_non_empty)
+}
+
+fn stored_string(stored: Option<&serde_json::Value>, key: &str) -> Option<String> {
+    stored
+        .and_then(|value| value.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn stored_i64(stored: Option<&serde_json::Value>, key: &str) -> Option<i64> {
+    stored.and_then(|value| value.get(key)).and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str()?.parse::<i64>().ok())
+    })
+}
+
+fn stable_oauth_id(prefix: &str, seed: &str) -> String {
+    let hash = simple_sha256(seed.as_bytes());
+    let hex: String = hash
+        .iter()
+        .take(10)
+        .map(|byte| format!("{:02x}", byte))
+        .collect();
+    format!("{}-{}", prefix, hex)
+}
+
+fn generate_stable_mock_id_token(email: &str, seed: &str) -> String {
+    let chatgpt_account_id = stable_oauth_id("acct", seed);
+    let chatgpt_user_id = stable_oauth_id("user", seed);
+    let organization_id = stable_oauth_id("org", seed);
+    let issued_at = DEFAULT_OAUTH_TOKEN_VERSION / 1000;
+    let payload = serde_json::json!({
+        "iss": "https://auth.openai.com",
+        "sub": chatgpt_user_id,
+        "aud": [crate::openai::constants::OPENAI_CLIENT_ID],
+        "exp": issued_at + DEFAULT_OAUTH_EXPIRES_IN,
+        "iat": issued_at,
+        "email": email,
+        "email_verified": true,
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": chatgpt_account_id,
+            "chatgpt_user_id": chatgpt_user_id,
+            "chatgpt_plan_type": "free",
+            "organizations": [
+                {
+                    "id": organization_id,
+                    "is_default": true,
+                    "role": "owner",
+                    "title": "Personal"
+                }
+            ],
+            "user_id": chatgpt_user_id
+        }
+    });
+
+    let payload_str = serde_json::to_string(&payload).unwrap();
+    use base64::Engine;
+    let payload_b64 =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_str.as_bytes());
+
+    format!(
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{}.fallback_signature",
+        payload_b64
+    )
+}
+
+pub fn build_oauth_credentials_value(input: OAuthCredentialInput<'_>) -> serde_json::Value {
+    let stored = input.stored_credentials;
+    let email = non_empty(Some(input.email))
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "email"))
+        .unwrap_or_default();
+    let access_token = non_empty(input.access_token)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "access_token"))
+        .unwrap_or_default();
+    let refresh_token = non_empty(input.refresh_token)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "refresh_token"))
+        .unwrap_or_default();
+    let seed = if access_token.is_empty() {
+        email.as_str()
+    } else {
+        access_token.as_str()
+    };
+    let id_token = non_empty(input.id_token)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "id_token"))
+        .unwrap_or_else(|| generate_stable_mock_id_token(&email, seed));
+    let parsed_auth = extract_auth_info_from_jwt(&id_token);
+
+    let chatgpt_account_id = non_empty(input.chatgpt_account_id)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "chatgpt_account_id"))
+        .or(parsed_auth.chatgpt_account_id)
+        .or_else(|| non_empty(input.workspace_id).map(ToOwned::to_owned))
+        .unwrap_or_else(|| stable_oauth_id("acct", seed));
+    let chatgpt_user_id = non_empty(input.chatgpt_user_id)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "chatgpt_user_id"))
+        .or(parsed_auth.chatgpt_user_id)
+        .unwrap_or_else(|| stable_oauth_id("user", seed));
+    let organization_id = non_empty(input.organization_id)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "organization_id"))
+        .or(parsed_auth.organization_id)
+        .unwrap_or_else(|| stable_oauth_id("org", seed));
+    let plan_type = non_empty(input.plan_type)
+        .map(ToOwned::to_owned)
+        .or_else(|| stored_string(stored, "plan_type"))
+        .or(parsed_auth.plan_type)
+        .unwrap_or_else(|| "free".to_string());
+    let expires_in = input
+        .expires_in
+        .or_else(|| stored_i64(stored, "expires_in"))
+        .unwrap_or(DEFAULT_OAUTH_EXPIRES_IN);
+    let token_version = input
+        .token_version
+        .or_else(|| stored_i64(stored, "_token_version"))
+        .or_else(|| stored_i64(stored, "token_version"))
+        .unwrap_or(DEFAULT_OAUTH_TOKEN_VERSION);
+
+    serde_json::json!({
+        "_token_version": token_version,
+        "access_token": access_token,
+        "chatgpt_account_id": chatgpt_account_id,
+        "chatgpt_user_id": chatgpt_user_id,
+        "email": email,
+        "expires_in": expires_in,
+        "id_token": id_token,
+        "organization_id": organization_id,
+        "plan_type": plan_type,
+        "refresh_token": refresh_token
+    })
+}
+
+fn credential_string(credentials: &serde_json::Value, key: &str) -> String {
+    credentials
+        .get(key)
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn credential_i64(credentials: &serde_json::Value, key: &str) -> i64 {
+    credentials
+        .get(key)
+        .and_then(|value| value.as_i64())
+        .unwrap_or_default()
+}
+
+pub fn build_oauth_credentials(input: OAuthCredentialInput<'_>) -> BuiltOAuthCredentials {
+    let value = build_oauth_credentials_value(input);
+    let json = value
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|_| value.to_string());
+
+    BuiltOAuthCredentials {
+        id_token: credential_string(&value, "id_token"),
+        chatgpt_account_id: credential_string(&value, "chatgpt_account_id"),
+        chatgpt_user_id: credential_string(&value, "chatgpt_user_id"),
+        organization_id: credential_string(&value, "organization_id"),
+        plan_type: credential_string(&value, "plan_type"),
+        expires_in: credential_i64(&value, "expires_in"),
+        token_version: credential_i64(&value, "_token_version"),
+        json,
+    }
+}
+
+/// 从 ID Token 的 JWT Payload 中解析并提取完整的 OpenAI 账号多维元数据
+pub fn extract_auth_info_from_jwt(id_token: &str) -> ExtractedAuthInfo {
+    let mut info = ExtractedAuthInfo {
+        email: None,
+        chatgpt_account_id: None,
+        chatgpt_user_id: None,
+        organization_id: None,
+        plan_type: None,
+    };
+
+    if let Some(payload) = parse_jwt_payload(id_token) {
+        if let Some(email) = payload.get("email").and_then(|v| v.as_str()) {
+            info.email = Some(email.to_string());
+        }
+
+        // 尝试从 OpenAI 专有的 Auth 命名空间 https://api.openai.com/auth 下提取
+        if let Some(auth_claim) = payload.get("https://api.openai.com/auth") {
+            if let Some(acct_id) = auth_claim
+                .get("chatgpt_account_id")
+                .and_then(|v| v.as_str())
+            {
+                info.chatgpt_account_id = Some(acct_id.to_string());
+            }
+            if let Some(user_id) = auth_claim.get("chatgpt_user_id").and_then(|v| v.as_str()) {
+                info.chatgpt_user_id = Some(user_id.to_string());
+            } else if let Some(user_id) = auth_claim.get("user_id").and_then(|v| v.as_str()) {
+                info.chatgpt_user_id = Some(user_id.to_string());
+            }
+            if let Some(plan) = auth_claim.get("chatgpt_plan_type").and_then(|v| v.as_str()) {
+                info.plan_type = Some(plan.to_string());
+            } else if let Some(plan) = auth_claim.get("plan_type").and_then(|v| v.as_str()) {
+                info.plan_type = Some(plan.to_string());
+            }
+
+            // 从默认组织（is_default: true）或者首个组织中提取组织 ID
+            if let Some(orgs) = auth_claim.get("organizations").and_then(|v| v.as_array()) {
+                let org_id = orgs
+                    .iter()
+                    .find(|o| {
+                        o.get("is_default")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    })
+                    .or_else(|| orgs.first())
+                    .and_then(|o| o.get("id").and_then(|v| v.as_str()));
+                if let Some(id) = org_id {
+                    info.organization_id = Some(id.to_string());
+                }
+            }
+        }
+
+        // 顶层备用字段提取
+        if info.chatgpt_account_id.is_none() {
+            if let Some(acct_id) = payload.get("chatgpt_account_id").and_then(|v| v.as_str()) {
+                info.chatgpt_account_id = Some(acct_id.to_string());
+            }
+        }
+        if info.chatgpt_user_id.is_none() {
+            if let Some(user_id) = payload.get("chatgpt_user_id").and_then(|v| v.as_str()) {
+                info.chatgpt_user_id = Some(user_id.to_string());
+            } else if let Some(sub) = payload.get("sub").and_then(|v| v.as_str()) {
+                info.chatgpt_user_id = Some(sub.to_string());
+            }
+        }
+        if info.plan_type.is_none() {
+            if let Some(plan) = payload.get("plan_type").and_then(|v| v.as_str()) {
+                info.plan_type = Some(plan.to_string());
+            }
+        }
+        if info.organization_id.is_none() {
+            if let Some(org_id) = payload.get("org_id").and_then(|v| v.as_str()) {
+                info.organization_id = Some(org_id.to_string());
+            } else if let Some(org_id) = payload.get("organization_id").and_then(|v| v.as_str()) {
+                info.organization_id = Some(org_id.to_string());
+            }
+        }
+    }
+
+    info
+}
+
+/// 仿真生成包含完整 OpenAI 格式声称（Claims）的 Mock ID Token
+pub fn generate_mock_id_token(email: &str) -> String {
+    let chatgpt_account_id = uuid::Uuid::new_v4().to_string();
+    let chatgpt_user_id = format!("user-{}", uuid::Uuid::new_v4().simple());
+    let organization_id = format!("org-{}", uuid::Uuid::new_v4().simple());
+
+    let payload = serde_json::json!({
+        "iss": "https://auth.openai.com",
+        "sub": format!("auth0|{}", uuid::Uuid::new_v4().simple()),
+        "aud": [crate::openai::constants::OPENAI_CLIENT_ID],
+        "exp": chrono::Utc::now().timestamp() + 86400,
+        "iat": chrono::Utc::now().timestamp(),
+        "email": email,
+        "email_verified": true,
+        "name": "Mary Johnson",
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": chatgpt_account_id,
+            "chatgpt_user_id": chatgpt_user_id,
+            "chatgpt_plan_type": "free",
+            "organizations": [
+                {
+                    "id": organization_id,
+                    "is_default": true,
+                    "role": "owner",
+                    "title": "Personal"
+                }
+            ],
+            "user_id": chatgpt_user_id
+        }
+    });
+
+    let payload_str = serde_json::to_string(&payload).unwrap();
+    use base64::Engine;
+    let payload_b64 =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_str.as_bytes());
+
+    format!(
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{}.mock_signature",
+        payload_b64
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +658,114 @@ mod tests {
         assert_eq!(hash[0], 0xe3);
         assert_eq!(hash[1], 0xb0);
         assert_eq!(hash[31], 0x55);
+    }
+
+    #[test]
+    fn extracts_openai_auth_claims_from_mock_id_token() {
+        let token = generate_mock_id_token("alice@example.com");
+        let info = extract_auth_info_from_jwt(&token);
+
+        assert_eq!(info.email.as_deref(), Some("alice@example.com"));
+        assert!(
+            info.chatgpt_account_id
+                .as_deref()
+                .is_some_and(|v| !v.is_empty())
+        );
+        assert!(
+            info.chatgpt_user_id
+                .as_deref()
+                .is_some_and(|v| !v.is_empty())
+        );
+        assert!(
+            info.organization_id
+                .as_deref()
+                .is_some_and(|v| !v.is_empty())
+        );
+        assert_eq!(info.plan_type.as_deref(), Some("free"));
+    }
+
+    #[test]
+    fn oauth_credentials_fill_missing_fields_stably() {
+        let first = build_oauth_credentials(OAuthCredentialInput {
+            email: "bob@example.com",
+            access_token: Some("access-token-1"),
+            refresh_token: None,
+            id_token: None,
+            workspace_id: None,
+            chatgpt_account_id: None,
+            chatgpt_user_id: None,
+            organization_id: None,
+            plan_type: None,
+            expires_in: None,
+            token_version: None,
+            stored_credentials: None,
+        });
+        let second = build_oauth_credentials(OAuthCredentialInput {
+            email: "bob@example.com",
+            access_token: Some("access-token-1"),
+            refresh_token: None,
+            id_token: None,
+            workspace_id: None,
+            chatgpt_account_id: None,
+            chatgpt_user_id: None,
+            organization_id: None,
+            plan_type: None,
+            expires_in: None,
+            token_version: None,
+            stored_credentials: None,
+        });
+
+        assert_eq!(first.id_token, second.id_token);
+        assert_eq!(first.chatgpt_account_id, second.chatgpt_account_id);
+        assert_eq!(first.chatgpt_user_id, second.chatgpt_user_id);
+        assert_eq!(first.organization_id, second.organization_id);
+        assert_eq!(first.plan_type, "free");
+        assert_eq!(first.expires_in, DEFAULT_OAUTH_EXPIRES_IN);
+        assert_eq!(first.token_version, DEFAULT_OAUTH_TOKEN_VERSION);
+        assert!(
+            first
+                .json
+                .as_deref()
+                .is_some_and(|v| v.contains("access-token-1"))
+        );
+    }
+
+    #[test]
+    fn oauth_credentials_merge_stored_values_without_losing_new_tokens() {
+        let stored = serde_json::json!({
+            "chatgpt_account_id": "acct-existing",
+            "chatgpt_user_id": "user-existing",
+            "organization_id": "org-existing",
+            "plan_type": "plus",
+            "expires_in": "123",
+            "_token_version": 456
+        });
+        let built = build_oauth_credentials(OAuthCredentialInput {
+            email: "carol@example.com",
+            access_token: Some("new-access"),
+            refresh_token: Some("new-refresh"),
+            id_token: None,
+            workspace_id: None,
+            chatgpt_account_id: None,
+            chatgpt_user_id: None,
+            organization_id: None,
+            plan_type: None,
+            expires_in: None,
+            token_version: None,
+            stored_credentials: Some(&stored),
+        });
+
+        assert_eq!(built.chatgpt_account_id, "acct-existing");
+        assert_eq!(built.chatgpt_user_id, "user-existing");
+        assert_eq!(built.organization_id, "org-existing");
+        assert_eq!(built.plan_type, "plus");
+        assert_eq!(built.expires_in, 123);
+        assert_eq!(built.token_version, 456);
+        assert!(
+            built
+                .json
+                .as_deref()
+                .is_some_and(|v| v.contains("new-access"))
+        );
     }
 }

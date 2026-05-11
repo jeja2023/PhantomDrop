@@ -7,6 +7,7 @@
 ```powershell
 cd D:\project\PhantomDrop\core
 cargo test --target-dir target-local
+cargo test openai::oauth --target-dir target-local -- --nocapture
 ```
 
 如果遇到 `拒绝访问 (os error 5)`，通常是当前执行环境无法写入 Cargo target 目录。请换到普通用户终端，或清理被占用的 target 目录后重试。

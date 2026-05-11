@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
-import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy, Square } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy, Square, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
 import PageHeader from '../ui/PageHeader'
@@ -54,6 +55,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [copiedOutput, setCopiedOutput] = useState(false)
   const stepsContainerRef = useRef<HTMLDivElement>(null)
+  const editingWorkflow = workflows.find((workflow) => workflow.id === editingWorkflowId) ?? null
 
   useEffect(() => {
     if (stepsContainerRef.current) {
@@ -226,6 +228,10 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     setEditingWorkflowId(draft.id)
   }
 
+  const handleCloseWorkflowEditor = () => {
+    setEditingWorkflowId(null)
+  }
+
   const handleDeleteWorkflow = async (workflowId: string) => {
     try {
       await deleteJson<{ status: string }>(`/api/workflows/${workflowId}`)
@@ -330,77 +336,20 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                 <p className="break-all text-[10px] font-mono text-slate-500">后端标识：{workflow.id}</p>
               </div>
 
-              {editingWorkflowId === workflow.id ? (
-                <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  <input value={workflow.title} onChange={(event) => updateWorkflowField(workflow.id, { title: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-bold text-slate-900 outline-none" />
-                  <textarea value={workflow.summary} onChange={(event) => updateWorkflowField(workflow.id, { summary: event.target.value })} className="min-h-[84px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-700 outline-none" />
-                  <div className="grid grid-cols-3 gap-3">
-                    <select
-                      value={workflow.kind}
-                      onChange={(event) =>
-                        updateWorkflowField(workflow.id, {
-                          kind: event.target.value as WorkflowKind,
-                          parameters: normalizeParametersForKind(event.target.value as WorkflowKind, workflow.parameters),
-                        })
-                      }
-                      disabled={workflow.builtin}
-                      className="phantom-select"
-                    >
-                      <option value="account_generate">账户生成</option>
-                      <option value="openai_register">OpenAI 协议注册</option>
-                      <option value="openai_register_browser">OpenAI 浏览器模拟注册</option>
-                      <option value="data_cleanup">数据清理</option>
-                      <option value="status_report">状态报告</option>
-                      <option value="environment_check">环境巡检</option>
-                    </select>
-                    <select value={workflow.status} onChange={(event) => updateWorkflowField(workflow.id, { status: event.target.value as WorkflowDefinition['status'] })} className="phantom-select">
-                      <option value="ready">就绪</option>
-                      <option value="active">活跃</option>
-                      <option value="idle">空闲</option>
-                    </select>
-                    <input type="number" value={workflow.parameters.batch_size ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { batch_size: event.target.value ? Number(event.target.value) : undefined })} disabled={workflow.kind !== 'account_generate' && workflow.kind !== 'openai_register' && workflow.kind !== 'openai_register_browser'} placeholder="批量数量" className="phantom-input" />
-                  </div>
-                  <input value={workflow.parameters.account_domain ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { account_domain: event.target.value || undefined })} disabled={workflow.kind !== 'account_generate'} placeholder="账户域名" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" />
-                  {workflow.kind === 'data_cleanup' ? <input type="number" value={workflow.parameters.days_to_keep ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { days_to_keep: event.target.value ? Number(event.target.value) : undefined })} placeholder="保留天数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" /> : null}
-                  {workflow.kind === 'status_report' ? <input type="number" value={workflow.parameters.report_window_hours ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { report_window_hours: event.target.value ? Number(event.target.value) : undefined })} placeholder="统计窗口小时数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none" /> : null}
-                  {workflow.kind === 'openai_register' || workflow.kind === 'openai_register_browser' ? (
-                    <div className="grid grid-cols-1 gap-3">
-                      <input value={workflow.parameters.proxy_url ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { proxy_url: event.target.value || undefined })} placeholder="全局代理 (如 http://127.0.0.1:10809)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
-                      <input value={workflow.parameters.captcha_key ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { captcha_key: event.target.value || undefined })} placeholder="打码平台 API Key" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
-                      <div className="grid grid-cols-2 gap-3">
-                        <input value={workflow.parameters.cpa_url ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { cpa_url: event.target.value || undefined })} placeholder="账号分发 URL (CPA/NewAPI)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
-                        <input value={workflow.parameters.cpa_key ?? ''} onChange={(event) => updateWorkflowParameters(workflow.id, { cpa_key: event.target.value || undefined })} placeholder="分发密钥 (可选)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none text-sm" />
-                      </div>
-                    </div>
-                  ) : null}
-                  {workflow.kind === 'environment_check' ? (
-                    <div className="grid grid-cols-1 gap-3">
-                      <ToggleField label="检查环境密钥是否一致" checked={workflow.parameters.require_env_secret_match ?? true} onChange={(checked) => updateWorkflowParameters(workflow.id, { require_env_secret_match: checked })} />
-                      <ToggleField label="检查公网中枢地址" checked={workflow.parameters.require_public_hub_url ?? true} onChange={(checked) => updateWorkflowParameters(workflow.id, { require_public_hub_url: checked })} />
-                      <ToggleField label="检查 Webhook 配置" checked={workflow.parameters.require_webhook ?? false} onChange={(checked) => updateWorkflowParameters(workflow.id, { require_webhook: checked })} />
-                    </div>
-                  ) : null}
-                  <button type="button" onClick={() => void handleSaveWorkflow(workflow)} disabled={savingId === workflow.id} className="phantom-btn phantom-btn--primary w-full">
-                    {savingId === workflow.id ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                    {savingId === workflow.id ? '保存中...' : '保存定义'}
-                  </button>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2.5 text-[12px] leading-relaxed text-slate-600">
+                <div className="line-clamp-2">{workflow.summary}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono text-slate-500">
+                  <span className="rounded-full bg-white px-2 py-1">类型={translateWorkflowKind(workflow.kind)}</span>
+                  {workflow.parameters.batch_size ? <span className="rounded-full bg-white px-2 py-1">批量={workflow.parameters.batch_size}</span> : null}
+                  {workflow.parameters.account_domain ? <span className="rounded-full bg-white px-2 py-1">域名={workflow.parameters.account_domain}</span> : null}
+                  {workflow.parameters.days_to_keep ? <span className="rounded-full bg-white px-2 py-1">天数={workflow.parameters.days_to_keep}</span> : null}
+                  {workflow.parameters.report_window_hours ? <span className="rounded-full bg-white px-2 py-1">窗口={workflow.parameters.report_window_hours}小时</span> : null}
                 </div>
-              ) : (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2.5 text-[12px] leading-relaxed text-slate-600">
-                  <div className="line-clamp-2">{workflow.summary}</div>
-                  <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono text-slate-500">
-                    <span className="rounded-full bg-white px-2 py-1">类型={translateWorkflowKind(workflow.kind)}</span>
-                    {workflow.parameters.batch_size ? <span className="rounded-full bg-white px-2 py-1">批量={workflow.parameters.batch_size}</span> : null}
-                    {workflow.parameters.account_domain ? <span className="rounded-full bg-white px-2 py-1">域名={workflow.parameters.account_domain}</span> : null}
-                    {workflow.parameters.days_to_keep ? <span className="rounded-full bg-white px-2 py-1">天数={workflow.parameters.days_to_keep}</span> : null}
-                    {workflow.parameters.report_window_hours ? <span className="rounded-full bg-white px-2 py-1">窗口={workflow.parameters.report_window_hours}小时</span> : null}
-                  </div>
-                </div>
-              )}
+              </div>
 
               <div className="mt-auto grid grid-cols-2 gap-1.5">
-                <button type="button" onClick={() => setEditingWorkflowId(editingWorkflowId === workflow.id ? null : workflow.id)} className="phantom-btn phantom-btn--sm phantom-btn--muted">
-                  {editingWorkflowId === workflow.id ? '取消编辑' : '编辑定义'}
+                <button type="button" onClick={() => setEditingWorkflowId(workflow.id)} className="phantom-btn phantom-btn--sm phantom-btn--muted">
+                  编辑定义
                 </button>
                 <button type="button" onClick={() => void handleAction(workflow)} disabled={runningId === workflow.id} className="phantom-btn phantom-btn--sm phantom-btn--secondary">
                   {runningId === workflow.id ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
@@ -677,8 +626,123 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
         )}
       </section>
 
+      {editingWorkflow ? (
+        <WorkflowEditorModal
+          workflow={editingWorkflow}
+          savingId={savingId}
+          onClose={handleCloseWorkflowEditor}
+          onSave={handleSaveWorkflow}
+          onUpdateField={updateWorkflowField}
+          onUpdateParameters={updateWorkflowParameters}
+        />
+      ) : null}
+
       <SnapshotModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
     </div>
+  )
+}
+
+function WorkflowEditorModal({
+  workflow,
+  savingId,
+  onClose,
+  onSave,
+  onUpdateField,
+  onUpdateParameters,
+}: {
+  workflow: WorkflowDefinition
+  savingId: string | null
+  onClose: () => void
+  onSave: (workflow: WorkflowDefinition) => Promise<void>
+  onUpdateField: (workflowId: string, patch: Partial<WorkflowDefinition>) => void
+  onUpdateParameters: (workflowId: string, patch: Partial<WorkflowParameters>) => void
+}) {
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md" onClick={onClose}>
+      <div
+        className="flex max-h-[90vh] w-full max-w-[920px] flex-col overflow-hidden rounded-3xl border border-white/30 bg-white shadow-2xl animate-in zoom-in-95 duration-200"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+              <Zap size={20} />
+            </div>
+            <div className="min-w-0">
+              <h3 className="truncate text-lg font-black text-slate-900">工作流定义编辑</h3>
+              <p className="truncate font-mono text-[10px] tracking-widest text-slate-400">{workflow.id}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 transition-all hover:bg-slate-100 hover:text-slate-900" aria-label="关闭工作流编辑">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          <div className="grid grid-cols-1 gap-4">
+            <input value={workflow.title} onChange={(event) => onUpdateField(workflow.id, { title: event.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 font-bold text-slate-900 outline-none focus:border-blue-400" placeholder="工作流名称" />
+            <textarea value={workflow.summary} onChange={(event) => onUpdateField(workflow.id, { summary: event.target.value })} className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-700 outline-none focus:border-blue-400" placeholder="工作流摘要" />
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <select
+                value={workflow.kind}
+                onChange={(event) =>
+                  onUpdateField(workflow.id, {
+                    kind: event.target.value as WorkflowKind,
+                    parameters: normalizeParametersForKind(event.target.value as WorkflowKind, workflow.parameters),
+                  })
+                }
+                disabled={workflow.builtin}
+                className="phantom-select w-full"
+              >
+                <option value="account_generate">账户生成</option>
+                <option value="openai_register">OpenAI 协议注册</option>
+                <option value="openai_register_browser">OpenAI 浏览器模拟注册</option>
+                <option value="data_cleanup">数据清理</option>
+                <option value="status_report">状态报告</option>
+                <option value="environment_check">环境巡检</option>
+              </select>
+              <select value={workflow.status} onChange={(event) => onUpdateField(workflow.id, { status: event.target.value as WorkflowDefinition['status'] })} className="phantom-select w-full">
+                <option value="ready">就绪</option>
+                <option value="active">活跃</option>
+                <option value="idle">空闲</option>
+              </select>
+              <input type="number" value={workflow.parameters.batch_size ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { batch_size: event.target.value ? Number(event.target.value) : undefined })} disabled={workflow.kind !== 'account_generate' && workflow.kind !== 'openai_register' && workflow.kind !== 'openai_register_browser'} placeholder="批量数量" className="phantom-input w-full" />
+            </div>
+
+            <input value={workflow.parameters.account_domain ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { account_domain: event.target.value || undefined })} disabled={workflow.kind !== 'account_generate'} placeholder="账户域名" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400 disabled:bg-slate-50 disabled:text-slate-400" />
+            {workflow.kind === 'data_cleanup' ? <input type="number" value={workflow.parameters.days_to_keep ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { days_to_keep: event.target.value ? Number(event.target.value) : undefined })} placeholder="保留天数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400" /> : null}
+            {workflow.kind === 'status_report' ? <input type="number" value={workflow.parameters.report_window_hours ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { report_window_hours: event.target.value ? Number(event.target.value) : undefined })} placeholder="统计窗口小时数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400" /> : null}
+            {workflow.kind === 'openai_register' || workflow.kind === 'openai_register_browser' ? (
+              <div className="grid grid-cols-1 gap-3">
+                <input value={workflow.parameters.proxy_url ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { proxy_url: event.target.value || undefined })} placeholder="全局代理 (如 http://127.0.0.1:10809)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                <input value={workflow.parameters.captcha_key ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { captcha_key: event.target.value || undefined })} placeholder="打码平台 API Key" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <input value={workflow.parameters.cpa_url ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { cpa_url: event.target.value || undefined })} placeholder="账号分发 URL (CPA/NewAPI)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                  <input value={workflow.parameters.cpa_key ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { cpa_key: event.target.value || undefined })} placeholder="分发密钥 (可选)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                </div>
+              </div>
+            ) : null}
+            {workflow.kind === 'environment_check' ? (
+              <div className="grid grid-cols-1 gap-3">
+                <ToggleField label="检查环境密钥是否一致" checked={workflow.parameters.require_env_secret_match ?? true} onChange={(checked) => onUpdateParameters(workflow.id, { require_env_secret_match: checked })} />
+                <ToggleField label="检查公网中枢地址" checked={workflow.parameters.require_public_hub_url ?? true} onChange={(checked) => onUpdateParameters(workflow.id, { require_public_hub_url: checked })} />
+                <ToggleField label="检查 Webhook 配置" checked={workflow.parameters.require_webhook ?? false} onChange={(checked) => onUpdateParameters(workflow.id, { require_webhook: checked })} />
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+          <button type="button" onClick={onClose} className="phantom-btn phantom-btn--secondary">取消</button>
+          <button type="button" onClick={() => void onSave(workflow)} disabled={savingId === workflow.id} className="phantom-btn phantom-btn--primary">
+            {savingId === workflow.id ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {savingId === workflow.id ? '保存中...' : '保存定义'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 

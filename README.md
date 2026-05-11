@@ -82,3 +82,7 @@ Docker 部署时，请务必挂载以下两个目录以保证数据不丢失：
 ## 质量验证
 
 本地验证命令见 `VERIFY.md`。仓库已提供 GitHub Actions 工作流，覆盖 Rust 后端测试、Web 生产构建和 Worker 类型检查。
+
+## 专题文档
+
+- `docs/OAuth认证提取与导出说明.md`：记录 OpenAI OAuth 凭证提取、入库、兜底合并和批量导出的完整链路。

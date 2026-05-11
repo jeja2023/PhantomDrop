@@ -1,5 +1,6 @@
 import { X, Download, Fullscreen, Image as ImageIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { createPortal } from 'react-dom'
 
 interface SnapshotModalProps {
   url: string | null
@@ -13,13 +14,13 @@ interface SnapshotModalProps {
 export default function SnapshotModal({ url, onClose }: SnapshotModalProps) {
   if (!url) return null
 
-  return (
+  return createPortal(
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[2000] flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm"
         onClick={onClose}
       >
         <motion.div
@@ -87,6 +88,7 @@ export default function SnapshotModal({ url, onClose }: SnapshotModalProps) {
           </div>
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }

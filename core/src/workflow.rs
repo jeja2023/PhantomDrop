@@ -947,6 +947,34 @@ impl WorkflowEngine {
                         )
                         .await
                     {
+                        let id_token_opt = result.id_token.as_deref();
+                        let auth_info = id_token_opt
+                            .map(|idt| crate::openai::oauth::extract_auth_info_from_jwt(idt));
+                        let chatgpt_account_id = auth_info
+                            .as_ref()
+                            .and_then(|info| info.chatgpt_account_id.as_deref());
+                        let chatgpt_user_id = auth_info
+                            .as_ref()
+                            .and_then(|info| info.chatgpt_user_id.as_deref());
+                        let organization_id = auth_info
+                            .as_ref()
+                            .and_then(|info| info.organization_id.as_deref());
+                        let plan_type = auth_info
+                            .as_ref()
+                            .and_then(|info| info.plan_type.as_deref());
+                        let expires_in = crate::openai::oauth::DEFAULT_OAUTH_EXPIRES_IN;
+                        let token_version = crate::openai::oauth::DEFAULT_OAUTH_TOKEN_VERSION;
+                        let oauth_credentials = build_oauth_credentials(
+                            &result.email,
+                            &result,
+                            chatgpt_account_id,
+                            chatgpt_user_id,
+                            organization_id,
+                            plan_type,
+                            expires_in,
+                            token_version,
+                        );
+
                         let _ = dl
                             .update_account_tokens(
                                 &account_id,
@@ -955,6 +983,14 @@ impl WorkflowEngine {
                                 result.session_token.as_deref(),
                                 Some(&result.device_id),
                                 result.workspace_id.as_deref(),
+                                Some(oauth_credentials.id_token.as_str()),
+                                Some(oauth_credentials.chatgpt_account_id.as_str()),
+                                Some(oauth_credentials.chatgpt_user_id.as_str()),
+                                Some(oauth_credentials.organization_id.as_str()),
+                                Some(oauth_credentials.plan_type.as_str()),
+                                Some(oauth_credentials.expires_in),
+                                Some(oauth_credentials.token_version),
+                                oauth_credentials.json.as_deref(),
                             )
                             .await;
 
@@ -1197,6 +1233,34 @@ impl WorkflowEngine {
                         )
                         .await
                     {
+                        let id_token_opt = result.id_token.as_deref();
+                        let auth_info = id_token_opt
+                            .map(|idt| crate::openai::oauth::extract_auth_info_from_jwt(idt));
+                        let chatgpt_account_id = auth_info
+                            .as_ref()
+                            .and_then(|info| info.chatgpt_account_id.as_deref());
+                        let chatgpt_user_id = auth_info
+                            .as_ref()
+                            .and_then(|info| info.chatgpt_user_id.as_deref());
+                        let organization_id = auth_info
+                            .as_ref()
+                            .and_then(|info| info.organization_id.as_deref());
+                        let plan_type = auth_info
+                            .as_ref()
+                            .and_then(|info| info.plan_type.as_deref());
+                        let expires_in = crate::openai::oauth::DEFAULT_OAUTH_EXPIRES_IN;
+                        let token_version = crate::openai::oauth::DEFAULT_OAUTH_TOKEN_VERSION;
+                        let oauth_credentials = build_oauth_credentials(
+                            &result.email,
+                            &result,
+                            chatgpt_account_id,
+                            chatgpt_user_id,
+                            organization_id,
+                            plan_type,
+                            expires_in,
+                            token_version,
+                        );
+
                         let _ = dl
                             .update_account_tokens(
                                 &account_id,
@@ -1205,6 +1269,14 @@ impl WorkflowEngine {
                                 result.session_token.as_deref(),
                                 Some(&result.device_id),
                                 result.workspace_id.as_deref(),
+                                Some(oauth_credentials.id_token.as_str()),
+                                Some(oauth_credentials.chatgpt_account_id.as_str()),
+                                Some(oauth_credentials.chatgpt_user_id.as_str()),
+                                Some(oauth_credentials.organization_id.as_str()),
+                                Some(oauth_credentials.plan_type.as_str()),
+                                Some(oauth_credentials.expires_in),
+                                Some(oauth_credentials.token_version),
+                                oauth_credentials.json.as_deref(),
                             )
                             .await;
                         Self::log_step(
@@ -1301,6 +1373,32 @@ impl WorkflowEngine {
             }),
         });
     }
+}
+
+fn build_oauth_credentials(
+    email: &str,
+    result: &crate::openai::register::RegisterResult,
+    chatgpt_account_id: Option<&str>,
+    chatgpt_user_id: Option<&str>,
+    organization_id: Option<&str>,
+    plan_type: Option<&str>,
+    expires_in: i64,
+    token_version: i64,
+) -> crate::openai::oauth::BuiltOAuthCredentials {
+    crate::openai::oauth::build_oauth_credentials(crate::openai::oauth::OAuthCredentialInput {
+        email,
+        access_token: result.access_token.as_deref(),
+        refresh_token: result.refresh_token.as_deref(),
+        id_token: result.id_token.as_deref(),
+        workspace_id: result.workspace_id.as_deref(),
+        chatgpt_account_id,
+        chatgpt_user_id,
+        organization_id,
+        plan_type,
+        expires_in: Some(expires_in),
+        token_version: Some(token_version),
+        stored_credentials: None,
+    })
 }
 
 fn redact_log_message(message: &str) -> String {

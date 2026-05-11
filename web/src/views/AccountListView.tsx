@@ -1,4 +1,5 @@
 import { useCallback, useEffect, type FC, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -268,6 +269,28 @@ const AccountListView: FC = () => {
     }
   };
 
+  const handleBatchExportOauthJson = async () => {
+    if (selectedIds.length === 0) return;
+
+    setLoading(true);
+    try {
+      const res = await postJson<any, IdsBody>('/api/accounts/batch/export?format=oauth', { ids: selectedIds });
+      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `oauth_accounts_export_${Date.now()}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      emitLog(`已成功导出 ${res.accounts?.length || 0} 条 OAuth 格式账号为 JSON`, 'success');
+    } catch (error) {
+      console.error('Failed to export OAuth JSON:', error);
+      emitLog(`OAuth JSON 导出失败: ${getErrorMessage(error)}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const allOnPageSelected = accounts.length > 0 && accounts.every((account) => selectedIds.includes(account.id));
 
@@ -328,14 +351,24 @@ const AccountListView: FC = () => {
             CSV
           </button>
           {selectedIds.length > 0 && (
-            <button
-              onClick={() => void handleBatchExportJson()}
-              className="phantom-btn phantom-btn--primary phantom-btn--sm"
-              title="导出选中账号 JSON"
-            >
-              <Database size={12} />
-              JSON ({selectedIds.length})
-            </button>
+            <>
+              <button
+                onClick={() => void handleBatchExportJson()}
+                className="phantom-btn phantom-btn--secondary phantom-btn--sm"
+                title="导出选中账号为标准 JSON"
+              >
+                <Database size={12} />
+                标准 JSON ({selectedIds.length})
+              </button>
+              <button
+                onClick={() => void handleBatchExportOauthJson()}
+                className="phantom-btn phantom-btn--primary phantom-btn--sm"
+                title="导出选中账号为 OpenAI 官方 (OAuth) 格式"
+              >
+                <ShieldCheck size={12} />
+                OAuth JSON ({selectedIds.length})
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -575,9 +608,9 @@ const AccountListView: FC = () => {
         </div>
       </div>
 
-      {selectedAccount && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md">
-          <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-300 overflow-hidden">
+      {selectedAccount && createPortal(
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md">
+          <div className="bg-white rounded-3xl w-full max-w-[980px] max-h-[90vh] flex flex-col shadow-2xl animate-in zoom-in-95 duration-300 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
@@ -597,11 +630,20 @@ const AccountListView: FC = () => {
               <SecretField label="Access Token (API)" value={selectedAccount.access_token} onCopy={copyToClipboard} />
               <SecretField label="Session Token (Web)" value={selectedAccount.session_token} onCopy={copyToClipboard} />
               <SecretField label="Refresh Token" value={selectedAccount.refresh_token} onCopy={copyToClipboard} />
+              <SecretField label="ID Token (OAuth)" value={selectedAccount.id_token} onCopy={copyToClipboard} />
 
               <div className="grid grid-cols-2 gap-4">
                 <InfoBox label="Device ID" value={selectedAccount.device_id || 'N/A'} />
                 <InfoBox label="Workspace ID" value={selectedAccount.workspace_id || 'N/A'} />
+                <InfoBox label="ChatGPT Account ID" value={selectedAccount.chatgpt_account_id || 'N/A'} />
+                <InfoBox label="ChatGPT User ID" value={selectedAccount.chatgpt_user_id || 'N/A'} />
+                <InfoBox label="Organization ID" value={selectedAccount.organization_id || 'N/A'} />
+                <InfoBox label="Plan Type" value={selectedAccount.plan_type || 'N/A'} />
+                <InfoBox label="Expires In" value={selectedAccount.expires_in ? `${selectedAccount.expires_in}s` : 'N/A'} />
+                <InfoBox label="Token Version" value={selectedAccount.token_version ? String(selectedAccount.token_version) : 'N/A'} />
               </div>
+
+              <SecretField label="OAuth Credentials JSON" value={selectedAccount.oauth_credentials_json} onCopy={copyToClipboard} />
 
               {selectedAccount.proxy_url && (
                 <div className="p-4 rounded-2xl bg-indigo-50/20 border border-indigo-100/50">
@@ -617,9 +659,11 @@ const AccountListView: FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
+      {createPortal(
       <AnimatePresence>
         {showToast && (
           <motion.div
@@ -627,7 +671,7 @@ const AccountListView: FC = () => {
             animate={{ opacity: 1, y: '-50%', x: '-50%', scale: 1 }}
             exit={{ opacity: 0, y: -10, x: '-50%', scale: 0.9, transition: { duration: 0.15 } }}
             style={{ left: '50%', top: '50%' }}
-            className="fixed z-[1001] px-5 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-700/50 backdrop-blur-md"
+            className="fixed z-[10010] px-5 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-700/50 backdrop-blur-md"
           >
             <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
               <CheckCircle2 size={12} className="text-white" />
@@ -635,7 +679,9 @@ const AccountListView: FC = () => {
             <span className="text-xs font-black tracking-tight whitespace-nowrap">{toastMsg}</span>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body,
+      )}
     </div>
   );
 };
