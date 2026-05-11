@@ -25,6 +25,8 @@ services:
       - ./.automation:/app/.automation
     ports:
       - "9010:9010"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     logging:
       driver: "json-file"
       options:
