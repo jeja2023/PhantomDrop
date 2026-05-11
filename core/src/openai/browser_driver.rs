@@ -2,7 +2,7 @@ use crate::db::DataLake;
 use crate::openai::register::{RegisterContext, build_client};
 use crate::openai::sentinel;
 use anyhow::Result;
-use chrono;
+use chrono::{self, Datelike};
 use headless_chrome::{Browser, LaunchOptions};
 use std::sync::Arc;
 use std::time::Duration;
@@ -700,9 +700,9 @@ impl BrowserDriver {
             }
         }
 
-        // 6. 个人资料填写 (姓名和生日)
+        // 6. 个人资料填写（必须先填姓名，再填年龄/生日）
         if let Some(cb) = callback {
-            cb("info", "👤 正在同步个人资料 (姓名/生日)...");
+            cb("info", "👤 正在同步个人资料 (先姓名，后年龄/生日)...");
         }
 
         // 提前生成随机值，避免 ThreadRng 在 await 期间被持有
@@ -767,27 +767,124 @@ impl BrowserDriver {
         // 进入资料填写页，开始录像/快照
         take_shot("个人资料页入口", &tab);
 
-        if let Ok(name_input) =
-            tab.find_element("input[name='name'], input[name='full_name'], input#name")
-        {
-            name_input.click().ok();
-            tab.type_str(&full_name).ok();
-            take_shot("姓名填写后", &tab);
-        }
+        let full_name_json = serde_json::to_string(&full_name).unwrap_or_else(|_| "\"\"".into());
+        let age_value = age.to_string();
+        let age_json = serde_json::to_string(&age_value).unwrap_or_else(|_| "\"18\"".into());
+        let birth_year = chrono::Utc::now().year() - age;
+        let birthday_value = format!("{}-01-01", birth_year);
+        let birthday_json =
+            serde_json::to_string(&birthday_value).unwrap_or_else(|_| "\"1990-01-01\"".into());
 
-        if let Ok(age_input) =
-            tab.find_element("input[name='age'], input[type='number'], input#age")
-        {
-            age_input.click().ok();
-            tab.type_str(&age.to_string()).ok();
-            take_shot("年龄填写后", &tab);
-        } else if let Ok(birthday_input) = tab.find_element("input[name='birthday']") {
-            // 兜底逻辑：如果还是旧版的生日输入框
-            let bday = format!("{}-01-01", 2024 - age);
-            birthday_input.click().ok();
-            tab.type_str(&bday).ok();
-            take_shot("生日填写后", &tab);
+        let profile_fill_result = tab
+            .evaluate(
+                &format!(
+                    r#"
+                    (function() {{
+                        const fullName = {full_name_json};
+                        const ageValue = {age_json};
+                        const birthdayValue = {birthday_json};
+                        const visible = (el) => {{
+                            if (!el) return false;
+                            const rect = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                        }};
+                        const labelText = (el) => {{
+                            const id = el.id;
+                            const labels = [];
+                            if (id) {{
+                                labels.push(...Array.from(document.querySelectorAll(`label[for="${{CSS.escape(id)}}"]`)));
+                            }}
+                            const parentLabel = el.closest('label');
+                            if (parentLabel) labels.push(parentLabel);
+                            const ariaLabelledBy = el.getAttribute('aria-labelledby');
+                            if (ariaLabelledBy) {{
+                                labels.push(...ariaLabelledBy.split(/\s+/).map((item) => document.getElementById(item)).filter(Boolean));
+                            }}
+                            return labels.map((item) => item.innerText || item.textContent || '').join(' ').toLowerCase();
+                        }};
+                        const fieldText = (el) => [
+                            el.name,
+                            el.id,
+                            el.getAttribute('autocomplete'),
+                            el.getAttribute('aria-label'),
+                            el.getAttribute('placeholder'),
+                            labelText(el)
+                        ].filter(Boolean).join(' ').toLowerCase();
+                        const inputs = Array.from(document.querySelectorAll('input')).filter(visible);
+                        const setValue = (el, value) => {{
+                            el.scrollIntoView({{ block: 'center', inline: 'center' }});
+                            el.focus();
+                            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+                            if (setter) {{
+                                setter.call(el, '');
+                            }} else {{
+                                el.value = '';
+                            }}
+                            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            if (setter) {{
+                                setter.call(el, value);
+                            }} else {{
+                                el.value = value;
+                            }}
+                            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            el.blur();
+                        }};
+
+                        const nameInput = inputs.find((el) => {{
+                            const text = fieldText(el);
+                            return text.includes('full name') || text.includes('fullname') || text.includes('full_name') ||
+                                text.includes('name') || text.includes('姓名');
+                        }});
+                        if (!nameInput) return {{ ok: false, reason: 'name_not_found' }};
+                        setValue(nameInput, fullName);
+
+                        const remaining = inputs.filter((el) => el !== nameInput);
+                        let ageInput = remaining.find((el) => {{
+                            const text = fieldText(el);
+                            return text.includes('age') || text.includes('年龄') || el.type === 'number';
+                        }});
+                        if (ageInput) {{
+                            setValue(ageInput, ageValue);
+                            return {{ ok: true, mode: 'age' }};
+                        }}
+
+                        const birthdayInput = remaining.find((el) => {{
+                            const text = fieldText(el);
+                            return text.includes('birthday') || text.includes('birth') || text.includes('date of birth') ||
+                                text.includes('生日') || text.includes('出生') || el.type === 'date';
+                        }});
+                        if (birthdayInput) {{
+                            setValue(birthdayInput, birthdayValue);
+                            return {{ ok: true, mode: 'birthday' }};
+                        }}
+
+                        return {{ ok: false, reason: 'age_or_birthday_not_found' }};
+                    }})()
+                    "#
+                ),
+                true,
+            )
+            .map_err(|error| format!("个人资料填写脚本执行失败: {error}"))?;
+
+        let profile_fill_value = profile_fill_result.value.unwrap_or_default();
+        let profile_fill_ok = profile_fill_value
+            .get("ok")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if !profile_fill_ok {
+            take_shot("资料填写失败", &tab);
+            return Err(format!("个人资料填写失败: {}", profile_fill_value));
         }
+        if let Some(cb) = callback {
+            let mode = profile_fill_value
+                .get("mode")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            cb("success", &format!("个人资料已按顺序填写完成 ({mode})"));
+        }
+        take_shot("资料填写后", &tab);
 
         take_shot("提交资料前", &tab);
 
