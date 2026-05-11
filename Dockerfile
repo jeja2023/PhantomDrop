@@ -18,13 +18,20 @@ FROM rust:1.88-bookworm AS core-builder
 WORKDIR /build/core
 # 安装构建 boring-sys 所需的系统依赖 (cmake, golang)
 RUN apt-get update && apt-get install -y --no-install-recommends cmake golang clang libclang-dev && rm -rf /var/lib/apt/lists/*
-# 缓存依赖层 (可选优化，此处先简单处理)
+# 缓存依赖层：先只拷贝 Cargo.toml 和 Cargo.lock 构建依赖
 COPY core/Cargo.toml core/Cargo.lock ./
+# 创建一个空的 main.rs 来欺骗 cargo 编译所有的依赖包
+RUN mkdir src && echo "fn main() {}" > src/main.rs \
+    && cargo build --release \
+    && rm -rf src
+
+# 拷贝真实的业务代码和资源
 COPY core/src ./src
 COPY core/console ./console
 COPY core/migrations ./migrations
 
-RUN cargo build --release
+# 更新 main.rs 的时间戳，强制 Cargo 重新编译我们的业务代码，而不是使用上面的空缓存
+RUN touch src/main.rs && cargo build --release
 
 # ==========================================
 # Phase 3: Final Runtime Image

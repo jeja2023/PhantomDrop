@@ -520,7 +520,7 @@ impl BrowserDriver {
             tokio::time::sleep(Duration::from_secs(3)).await;
 
             // 检查浏览器是否已经跳转到了资料页（由于某些环境可能跳过验证）
-            let on_profile_page = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
+            let on_profile_page = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input[name='fullName'], input#name, input#fullName, input#full_name\") !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
 
@@ -620,7 +620,7 @@ impl BrowserDriver {
             tokio::time::sleep(Duration::from_secs(5)).await;
         } else {
             // 如果既没有 OTP 也没有 Link 且没在资料页，则可能是失败了
-            let on_profile_page_final = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input#name\") !== null", false)
+            let on_profile_page_final = tab.evaluate("document.querySelector(\"input[name='name'], input[name='full_name'], input[name='fullName'], input#name, input#fullName, input#full_name\") !== null", false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
 
@@ -634,7 +634,7 @@ impl BrowserDriver {
                 cb("info", "🔐 邮箱验证完成，正在等待跳转下一个页面...");
             }
 
-            let profile_selectors = "input[name='name'], input[name='full_name'], input#name";
+            let profile_selectors = "input[name='name'], input[name='full_name'], input[name='fullName'], input#name, input#fullName, input#full_name";
             let mut detected_type = 0; // 1 = password field, 2 = profile field
 
             for _ in 0..45 {
@@ -756,7 +756,7 @@ impl BrowserDriver {
 
         // 严格等待姓名输入框出现，若超时则认为注册失败 (账号可能被拦截或环境检测通过但未跳转)
         tab.wait_for_element_with_custom_timeout(
-            "input[name='name'], input[name='full_name'], input#name",
+            "input[name='name'], input[name='full_name'], input[name='fullName'], input#name, input#fullName, input#full_name",
             Duration::from_secs(60),
         )
         .map_err(|_| {
@@ -780,87 +780,99 @@ impl BrowserDriver {
                 &format!(
                     r#"
                     (function() {{
-                        const fullName = {full_name_json};
-                        const ageValue = {age_json};
-                        const birthdayValue = {birthday_json};
-                        const visible = (el) => {{
-                            if (!el) return false;
-                            const rect = el.getBoundingClientRect();
-                            const style = window.getComputedStyle(el);
-                            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-                        }};
-                        const labelText = (el) => {{
-                            const id = el.id;
-                            const labels = [];
-                            if (id) {{
-                                labels.push(...Array.from(document.querySelectorAll(`label[for="${{CSS.escape(id)}}"]`)));
-                            }}
-                            const parentLabel = el.closest('label');
-                            if (parentLabel) labels.push(parentLabel);
-                            const ariaLabelledBy = el.getAttribute('aria-labelledby');
-                            if (ariaLabelledBy) {{
-                                labels.push(...ariaLabelledBy.split(/\s+/).map((item) => document.getElementById(item)).filter(Boolean));
-                            }}
-                            return labels.map((item) => item.innerText || item.textContent || '').join(' ').toLowerCase();
-                        }};
-                        const fieldText = (el) => [
-                            el.name,
-                            el.id,
-                            el.getAttribute('autocomplete'),
-                            el.getAttribute('aria-label'),
-                            el.getAttribute('placeholder'),
-                            labelText(el)
-                        ].filter(Boolean).join(' ').toLowerCase();
-                        const inputs = Array.from(document.querySelectorAll('input')).filter(visible);
-                        const setValue = (el, value) => {{
-                            el.scrollIntoView({{ block: 'center', inline: 'center' }});
-                            el.focus();
-                            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-                            if (setter) {{
-                                setter.call(el, '');
-                            }} else {{
-                                el.value = '';
-                            }}
-                            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                            if (setter) {{
-                                setter.call(el, value);
-                            }} else {{
-                                el.value = value;
-                            }}
-                            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                            el.blur();
-                        }};
+                        try {{
+                            const fullName = {full_name_json};
+                            const ageValue = {age_json};
+                            const birthdayValue = {birthday_json};
+                            const visible = (el) => {{
+                                if (!el) return false;
+                                const rect = el.getBoundingClientRect();
+                                const style = window.getComputedStyle(el);
+                                if (!style) return false;
+                                return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                            }};
+                            const labelText = (el) => {{
+                                const id = el.id;
+                                const labels = [];
+                                if (id) {{
+                                    try {{
+                                        labels.push(...Array.from(document.querySelectorAll(`label[for="${{id.replace(/"/g, '\\"')}}"]`)));
+                                    }} catch (e) {{}}
+                                }}
+                                const parentLabel = el.closest('label');
+                                if (parentLabel) labels.push(parentLabel);
+                                const ariaLabelledBy = el.getAttribute('aria-labelledby');
+                                if (ariaLabelledBy) {{
+                                    labels.push(...ariaLabelledBy.split(/\s+/).map((item) => document.getElementById(item)).filter(Boolean));
+                                }}
+                                return labels.map((item) => item.innerText || item.textContent || '').join(' ').toLowerCase();
+                            }};
+                            const fieldText = (el) => [
+                                el.name,
+                                el.id,
+                                el.getAttribute('autocomplete'),
+                                el.getAttribute('aria-label'),
+                                el.getAttribute('placeholder'),
+                                labelText(el)
+                            ].filter(Boolean).join(' ').toLowerCase();
+                            const inputs = Array.from(document.querySelectorAll('input')).filter(visible);
+                            const setValue = (el, value) => {{
+                                try {{
+                                    el.scrollIntoView({{ block: 'center', inline: 'center' }});
+                                    el.focus();
+                                    const proto = Object.getPrototypeOf(el);
+                                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set ||
+                                                   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set ||
+                                                   Object.getOwnPropertyDescriptor(Element.prototype, 'value')?.set;
+                                    if (setter) {{
+                                        setter.call(el, '');
+                                        setter.call(el, value);
+                                    }} else {{
+                                        el.value = '';
+                                        el.value = value;
+                                    }}
+                                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                    el.blur();
+                                }} catch (e) {{
+                                    el.value = value;
+                                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                }}
+                            }};
 
-                        const nameInput = inputs.find((el) => {{
-                            const text = fieldText(el);
-                            return text.includes('full name') || text.includes('fullname') || text.includes('full_name') ||
-                                text.includes('name') || text.includes('姓名');
-                        }});
-                        if (!nameInput) return {{ ok: false, reason: 'name_not_found' }};
-                        setValue(nameInput, fullName);
+                            const nameInput = inputs.find((el) => {{
+                                const text = fieldText(el);
+                                return text.includes('full name') || text.includes('fullname') || text.includes('full_name') ||
+                                    text.includes('name') || text.includes('姓名');
+                            }});
+                            if (!nameInput) return {{ ok: false, reason: 'name_not_found' }};
+                            setValue(nameInput, fullName);
 
-                        const remaining = inputs.filter((el) => el !== nameInput);
-                        let ageInput = remaining.find((el) => {{
-                            const text = fieldText(el);
-                            return text.includes('age') || text.includes('年龄') || el.type === 'number';
-                        }});
-                        if (ageInput) {{
-                            setValue(ageInput, ageValue);
-                            return {{ ok: true, mode: 'age' }};
+                            const remaining = inputs.filter((el) => el !== nameInput);
+                            let ageInput = remaining.find((el) => {{
+                                const text = fieldText(el);
+                                return text.includes('age') || text.includes('年龄') || el.type === 'number';
+                            }});
+                            if (ageInput) {{
+                                setValue(ageInput, ageValue);
+                                return {{ ok: true, mode: 'age' }};
+                            }}
+
+                            const birthdayInput = remaining.find((el) => {{
+                                const text = fieldText(el);
+                                return text.includes('birthday') || text.includes('birth') || text.includes('date of birth') ||
+                                    text.includes('生日') || text.includes('出生') || el.type === 'date';
+                            }});
+                            if (birthdayInput) {{
+                                setValue(birthdayInput, birthdayValue);
+                                return {{ ok: true, mode: 'birthday' }};
+                            }}
+
+                            return {{ ok: false, reason: 'age_or_birthday_not_found' }};
+                        }} catch (e) {{
+                            return {{ ok: false, reason: 'exception', error: e.toString(), stack: e.stack }};
                         }}
-
-                        const birthdayInput = remaining.find((el) => {{
-                            const text = fieldText(el);
-                            return text.includes('birthday') || text.includes('birth') || text.includes('date of birth') ||
-                                text.includes('生日') || text.includes('出生') || el.type === 'date';
-                        }});
-                        if (birthdayInput) {{
-                            setValue(birthdayInput, birthdayValue);
-                            return {{ ok: true, mode: 'birthday' }};
-                        }}
-
-                        return {{ ok: false, reason: 'age_or_birthday_not_found' }};
                     }})()
                     "#
                 ),
@@ -889,11 +901,12 @@ impl BrowserDriver {
         take_shot("提交资料前", &tab);
 
         let _ = tab.evaluate(r#"(function(){ 
-            const keywords = ['Finish creating account', 'Continue', '继续', '确认', 'Next', '下一步'];
-            const btn = Array.from(document.querySelectorAll('button')).find(el => 
-                keywords.some(k => el.innerText.includes(k))
-            );
-            if(btn) { btn.click(); }
+            const keywords = ['finish creating account', 'continue', '继续', '确认', 'next', '下一步'];
+            const btn = Array.from(document.querySelectorAll('button, [role="button"]')).find(el => {
+                const text = (el.innerText || el.textContent || '').toLowerCase();
+                return keywords.some(k => text.includes(k));
+            });
+            if(btn) { try { btn.click(); } catch(e) {} }
         })()"#, false);
 
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -902,10 +915,11 @@ impl BrowserDriver {
         // 6.5 处理可能的后续确认弹窗或引导页 (关键：确保进入最终的聊天界面)
         tokio::time::sleep(Duration::from_secs(2)).await;
         let _ = tab.evaluate(r#"(function(){ 
-            const keywords = ['Finish creating account', 'Continue', '继续', '确认', 'Agree', '同意', 'Next', '下一步', 'Done', '完成', 'Okay', 'Finish', 'Skip', '跳过'];
+            const keywords = ['finish creating account', 'continue', '继续', '确认', 'agree', '同意', 'next', '下一步', 'done', '完成', 'okay', 'finish', 'skip', '跳过'];
             const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
             for (const btn of buttons) {
-                if (keywords.some(k => btn.innerText.includes(k))) {
+                const text = (btn.innerText || btn.textContent || '').toLowerCase();
+                if (keywords.some(k => text.includes(k))) {
                     try { btn.click(); } catch(e) {}
                 }
             }
@@ -935,7 +949,7 @@ impl BrowserDriver {
             }
 
             // 再次尝试点击可能的引导按钮
-            let _ = tab.evaluate("Array.from(document.querySelectorAll('button')).forEach(b => { if(['Next', 'Done', '继续', '完成', 'Okay', 'Skip', '跳过'].some(k => b.innerText.includes(k))) b.click(); })", false);
+            let _ = tab.evaluate("Array.from(document.querySelectorAll('button, [role=\"button\"]')).forEach(b => { const text = (b.innerText || b.textContent || '').toLowerCase(); if(['next', 'done', '继续', '完成', 'okay', 'skip', '跳过'].some(k => text.includes(k))) { try { b.click(); } catch(e) {} } })", false);
             if i % 4 == 3 {
                 take_shot(&format!("dashboard_waiting_step_{}", i), &tab);
             }
