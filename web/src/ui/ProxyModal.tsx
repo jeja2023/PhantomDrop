@@ -309,7 +309,7 @@ export default function ProxyModal({ isOpen, onClose, value, onChange }: ProxyMo
                 </button>
               </div>
               <code className="text-xs font-mono text-slate-600 break-all select-all block">
-                {previewUrl || '等待配置...'}
+                {previewUrl ? previewUrl.replace(/([^:/]+:\/\/)([^:/]+):([^@/]+)@/, '$1***:***@') : '等待配置...'}
               </code>
 
               {/* 测试结果反馈 */}

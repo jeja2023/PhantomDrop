@@ -19,6 +19,7 @@ mod routes;
 mod stream;
 mod tunnel;
 mod uploader;
+mod utils;
 mod workflow;
 
 use crate::cloudflare_automation::CloudflareAutomationManager;

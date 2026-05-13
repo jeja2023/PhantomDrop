@@ -57,7 +57,7 @@ pub async fn execute_registration(
             "info",
             &format!(
                 "初始化 HTTP 客户端 (代理: {})",
-                context.proxy_url.as_deref().unwrap_or("直连")
+                context.proxy_url.as_ref().map(|u| crate::utils::mask_url(u)).unwrap_or_else(|| "直连".to_string())
             ),
         );
     }

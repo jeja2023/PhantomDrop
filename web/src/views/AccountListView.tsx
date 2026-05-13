@@ -269,6 +269,20 @@ const AccountListView: FC = () => {
     }
   };
 
+  const maskProxyUrl = (url: string | null | undefined): string => {
+    if (!url) return '';
+    try {
+      const parsed = new URL(url.includes('://') ? url : `http://${url}`);
+      if (parsed.username || parsed.password) {
+        return `${parsed.protocol}//***:***@${parsed.host}${parsed.port ? `:${parsed.port}` : ''}${parsed.pathname}${parsed.search}${parsed.hash}`;
+      }
+      return url;
+    } catch {
+      // 降级正则处理
+      return url.replace(/([^:/]+:\/\/)([^:/]+):([^@/]+)@/, '$1***:***@');
+    }
+  };
+
 interface OAuthExportResponse {
   exported_at: string;
   proxies: string[];
@@ -667,7 +681,7 @@ interface OAuthExportResponse {
               {selectedAccount.proxy_url && (
                 <div className="p-4 rounded-2xl bg-indigo-50/20 border border-indigo-100/50">
                   <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1">注册代理</p>
-                  <code className="text-[11px] font-mono text-indigo-600 break-all">{selectedAccount.proxy_url}</code>
+                  <code className="text-[11px] font-mono text-indigo-600 break-all">{maskProxyUrl(selectedAccount.proxy_url)}</code>
                 </div>
               )}
             </div>

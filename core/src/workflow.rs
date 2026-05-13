@@ -1382,7 +1382,7 @@ impl WorkflowEngine {
         msg: &str,
     ) {
         context.step_index += 1;
-        let msg = redact_log_message(msg);
+        let msg = crate::utils::redact_log_message(msg);
         let _ = dl
             .add_workflow_step(&context.run_id, context.step_index, level, &msg)
             .await;
@@ -1437,29 +1437,6 @@ fn build_oauth_credentials(
     })
 }
 
-fn redact_log_message(message: &str) -> String {
-    let mut output = message.to_string();
-    let patterns = [
-        (
-            r"(?i)(password|密码|密令)\s*[:：]\s*[^\s,，|]+",
-            "$1: ******",
-        ),
-        (
-            r"(?i)(access_token|refresh_token|session_token|id_token|api[_-]?key|secret|token)\s*[:：=]\s*[^\s,，|]+",
-            "$1: ******",
-        ),
-        (r"eyJ[A-Za-z0-9_\-\.]{20,}", "eyJ***"),
-        (r"sess_[A-Za-z0-9_\-]{8,}", "sess_***"),
-    ];
-
-    for (pattern, replacement) in patterns {
-        if let Ok(regex) = regex::Regex::new(pattern) {
-            output = regex.replace_all(&output, replacement).to_string();
-        }
-    }
-
-    output
-}
 
 #[cfg(test)]
 mod tests {

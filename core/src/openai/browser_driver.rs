@@ -115,7 +115,7 @@ impl BrowserDriver {
                         "info",
                         &format!(
                             "🔧 优化代理配置: {} -> {}",
-                            self.context.proxy_url.as_ref().unwrap(),
+                            crate::utils::mask_url(self.context.proxy_url.as_ref().unwrap()),
                             s
                         ),
                     );
