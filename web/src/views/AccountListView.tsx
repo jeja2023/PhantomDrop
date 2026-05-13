@@ -269,12 +269,18 @@ const AccountListView: FC = () => {
     }
   };
 
+interface OAuthExportResponse {
+  exported_at: string;
+  proxies: any[];
+  accounts: any[];
+}
+
   const handleBatchExportOauthJson = async () => {
     if (selectedIds.length === 0) return;
 
     setLoading(true);
     try {
-      const res = await postJson<any, IdsBody>('/api/accounts/batch/export?format=oauth', { ids: selectedIds });
+      const res = await postJson<OAuthExportResponse, IdsBody>('/api/accounts/batch/export?format=oauth', { ids: selectedIds });
       const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');

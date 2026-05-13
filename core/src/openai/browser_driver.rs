@@ -111,7 +111,14 @@ impl BrowserDriver {
         if let Some(ref s) = sanitized_proxy {
             if let Some(cb) = callback {
                 if s != self.context.proxy_url.as_ref().unwrap() {
-                    cb("info", &format!("🔧 优化代理配置: {} -> {}", self.context.proxy_url.as_ref().unwrap(), s));
+                    cb(
+                        "info",
+                        &format!(
+                            "🔧 优化代理配置: {} -> {}",
+                            self.context.proxy_url.as_ref().unwrap(),
+                            s
+                        ),
+                    );
                 }
             }
             launch_args.push(format!("--proxy-server={}", s));
@@ -933,10 +940,13 @@ impl BrowserDriver {
             .get("ok")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-            
+
         if !profile_fill_ok {
             take_shot("资料填写失败", &tab);
-            return Err(format!("个人资料填写失败: {} (原始返回: {})", parsed_value, profile_fill_value));
+            return Err(format!(
+                "个人资料填写失败: {} (原始返回: {})",
+                parsed_value, profile_fill_value
+            ));
         }
         if let Some(cb) = callback {
             let mode = profile_fill_value

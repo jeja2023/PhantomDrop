@@ -14,7 +14,7 @@ interface ProxyModalProps {
 /**
  * 解析代理服务器 URL 字符串
  */
-export function parseProxyUrl(urlStr: string) {
+function parseProxyUrl(urlStr: string) {
   let protocol = 'http'
   let username = ''
   let password = ''
@@ -37,7 +37,7 @@ export function parseProxyUrl(urlStr: string) {
     password = decodeURIComponent(url.password) || ''
     host = url.hostname || ''
     port = url.port || ''
-  } catch (e) {
+  } catch {
     // 降级正则解析
     let rest = working
     const protoMatch = rest.match(/^([^:]+):\/\//)
@@ -72,7 +72,7 @@ export function parseProxyUrl(urlStr: string) {
 /**
  * 格式化代理服务器 URL 字符串
  */
-export function formatProxyUrl(
+function formatProxyUrl(
   protocol: string,
   host: string,
   port: string,
