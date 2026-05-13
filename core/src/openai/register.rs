@@ -46,6 +46,7 @@ pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> 
 }
 
 /// 执行完整的注册流程（Phase A + Phase B）
+#[allow(unreachable_code, unused_variables)]
 pub async fn execute_registration(
     dl: &Arc<DataLake>,
     context: &RegisterContext,
@@ -553,6 +554,14 @@ pub async fn execute_registration(
     // 这里模拟真实的 Auth0 登录提交，获取授权码
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     let auth_code = format!("code_{}", uuid::Uuid::new_v4().simple());
+    if let Some(ref cb) = context.step_callback {
+        cb(
+            "error",
+            "协议注册流程未捕获真实 OAuth callback code，已停止生成模拟 token。",
+        );
+    }
+
+    return Err("协议注册流程未捕获真实 OAuth callback code，不能生成有效 access_token / refresh_token / id_token；请使用浏览器注册登录后的 OAuth 提取流程。".to_string());
 
     // 第 13 步: 最终的 Token Exchange (使用授权码换取 JWT)
     if let Some(ref cb) = context.step_callback {

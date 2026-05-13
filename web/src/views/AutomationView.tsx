@@ -14,6 +14,7 @@ import type {
   WorkflowStepRecord,
 } from '../types'
 import SnapshotModal from '../ui/SnapshotModal'
+import ProxyModal from '../ui/ProxyModal'
 
 function buildRunQuery(
   page: number,
@@ -657,6 +658,8 @@ function WorkflowEditorModal({
   onUpdateField: (workflowId: string, patch: Partial<WorkflowDefinition>) => void
   onUpdateParameters: (workflowId: string, patch: Partial<WorkflowParameters>) => void
 }) {
+  const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
+
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md" onClick={onClose}>
       <div
@@ -715,7 +718,21 @@ function WorkflowEditorModal({
             {workflow.kind === 'status_report' ? <input type="number" value={workflow.parameters.report_window_hours ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { report_window_hours: event.target.value ? Number(event.target.value) : undefined })} placeholder="统计窗口小时数" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400" /> : null}
             {workflow.kind === 'openai_register' || workflow.kind === 'openai_register_browser' ? (
               <div className="grid grid-cols-1 gap-3">
-                <input value={workflow.parameters.proxy_url ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { proxy_url: event.target.value || undefined })} placeholder="全局代理 (如 http://127.0.0.1:10809)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                <div className="flex gap-2">
+                  <input
+                    value={workflow.parameters.proxy_url ?? ''}
+                    onChange={(event) => onUpdateParameters(workflow.id, { proxy_url: event.target.value || undefined })}
+                    placeholder="全局代理 (如 http://127.0.0.1:10809)"
+                    className="flex-grow rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsProxyModalOpen(true)}
+                    className="px-4 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold text-xs transition-colors shrink-0 flex items-center justify-center"
+                  >
+                    配置鉴权
+                  </button>
+                </div>
                 <input value={workflow.parameters.captcha_key ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { captcha_key: event.target.value || undefined })} placeholder="打码平台 API Key" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <input value={workflow.parameters.cpa_url ?? ''} onChange={(event) => onUpdateParameters(workflow.id, { cpa_url: event.target.value || undefined })} placeholder="账号分发 URL (CPA/NewAPI)" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
@@ -741,6 +758,14 @@ function WorkflowEditorModal({
           </button>
         </div>
       </div>
+      {isProxyModalOpen && (
+        <ProxyModal
+          isOpen={isProxyModalOpen}
+          onClose={() => setIsProxyModalOpen(false)}
+          value={workflow.parameters.proxy_url ?? ''}
+          onChange={(val) => onUpdateParameters(workflow.id, { proxy_url: val || undefined })}
+        />
+      )}
     </div>,
     document.body,
   )

@@ -884,6 +884,24 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             stored_credentials: stored_credentials.as_ref(),
                         },
                     );
+                    let access_token = crate::openai::oauth::parse_non_empty(
+                        oauth_credentials.access_token.as_str(),
+                    );
+                    let refresh_token = crate::openai::oauth::parse_non_empty(
+                        oauth_credentials.refresh_token.as_str(),
+                    );
+                    let id_token = crate::openai::oauth::parse_non_empty(
+                        oauth_credentials.id_token.as_str(),
+                    );
+                    let chatgpt_account_id = crate::openai::oauth::parse_non_empty(
+                        oauth_credentials.chatgpt_account_id.as_str(),
+                    );
+                    let chatgpt_user_id = crate::openai::oauth::parse_non_empty(
+                        oauth_credentials.chatgpt_user_id.as_str(),
+                    );
+                    let organization_id = crate::openai::oauth::parse_non_empty(
+                        oauth_credentials.organization_id.as_str(),
+                    );
 
                     match dl.update_account_tokens(
                         &id,
@@ -892,10 +910,10 @@ pub fn build_router(ctx: RouterContext) -> Router {
                         session_token,
                         device_id,
                         workspace_id,
-                        Some(oauth_credentials.id_token.as_str()),
-                        Some(oauth_credentials.chatgpt_account_id.as_str()),
-                        Some(oauth_credentials.chatgpt_user_id.as_str()),
-                        Some(oauth_credentials.organization_id.as_str()),
+                        id_token,
+                        chatgpt_account_id,
+                        chatgpt_user_id,
+                        organization_id,
                         Some(oauth_credentials.plan_type.as_str()),
                         Some(oauth_credentials.expires_in),
                         Some(oauth_credentials.token_version),
@@ -1490,10 +1508,75 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 debug_asset(name, enabled).await
             }
         }))
+        .route("/api/proxy/test", post(test_proxy_route))
         .layer(axum::middleware::from_fn_with_state(Arc::clone(&data_lake), auth_middleware))
         .fallback_service(
             ServeDir::new(web_dist)
                 .append_index_html_on_directories(true)
         )
         .with_state(stream_hub)
+}
+
+#[derive(Deserialize)]
+struct ProxyTestPayload {
+    proxy_url: String,
+}
+
+// 测试代理服务器的联通性并获取延迟
+async fn test_proxy_route(Json(payload): Json<ProxyTestPayload>) -> impl IntoResponse {
+    let proxy_url = payload.proxy_url.trim();
+    if proxy_url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"status": "error", "message": "代理地址不能为空"})),
+        )
+            .into_response();
+    }
+
+    let proxy = match reqwest::Proxy::all(proxy_url) {
+        Ok(p) => p,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"status": "error", "message": format!("无效的代理地址格式: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    let client = match reqwest::Client::builder()
+        .proxy(proxy)
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"status": "error", "message": format!("无法构建测试请求客户端: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    let start = std::time::Instant::now();
+    // 使用 Cloudflare 作为网络可用性测试目标，也是注册环境的前置重要通道
+    let target = "https://www.cloudflare.com";
+    match client.get(target).send().await {
+        Ok(resp) => {
+            let latency = start.elapsed().as_millis();
+            let status = resp.status().as_u16();
+            Json(serde_json::json!({
+                "status": "success",
+                "message": format!("联通测试成功！目标服务器响应状态码: {}", status),
+                "latency_ms": latency,
+            }))
+            .into_response()
+        }
+        Err(e) => Json(serde_json::json!({
+            "status": "error",
+            "message": format!("联通测试失败: {}", e)
+        }))
+        .into_response(),
+    }
 }

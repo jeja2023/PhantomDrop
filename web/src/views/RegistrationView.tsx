@@ -9,6 +9,7 @@ import type {
   WorkflowStepRecord,
 } from '../types'
 import SnapshotModal from '../ui/SnapshotModal'
+import ProxyModal from '../ui/ProxyModal'
 
 type RegistrationPlatform = 'openai' | 'custom'
 type WorkflowSavePayload = {
@@ -35,6 +36,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
 
   // OpenAI 专属配置状态 (模拟)
   const [openaiProxy, setOpenaiProxy] = useState('')
+  const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
   const [concurrency, setConcurrency] = useState(1)
   const [batchSize, setBatchSize] = useState(1)
   const [accountType, setAccountType] = useState('free')
@@ -253,6 +255,13 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between px-1">
                   <label className="text-[11px] font-bold text-slate-700">代理服务器 (Proxy URL)</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsProxyModalOpen(true)}
+                    className="text-[11px] font-bold text-blue-600 hover:text-blue-700 transition-colors"
+                  >
+                    配置鉴权
+                  </button>
                 </div>
                 <div className="relative group/input">
                   <input
@@ -524,6 +533,12 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
       </div>
       
       <SnapshotModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
+      <ProxyModal
+        isOpen={isProxyModalOpen}
+        onClose={() => setIsProxyModalOpen(false)}
+        value={openaiProxy}
+        onChange={setOpenaiProxy}
+      />
     </div>
   )
 }

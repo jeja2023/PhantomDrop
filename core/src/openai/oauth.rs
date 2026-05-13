@@ -300,6 +300,7 @@ pub struct OAuthCredentialInput<'a> {
     pub access_token: Option<&'a str>,
     pub refresh_token: Option<&'a str>,
     pub id_token: Option<&'a str>,
+    #[allow(dead_code)]
     pub workspace_id: Option<&'a str>,
     pub chatgpt_account_id: Option<&'a str>,
     pub chatgpt_user_id: Option<&'a str>,
@@ -312,6 +313,8 @@ pub struct OAuthCredentialInput<'a> {
 
 pub struct BuiltOAuthCredentials {
     pub json: Option<String>,
+    pub access_token: String,
+    pub refresh_token: String,
     pub id_token: String,
     pub chatgpt_account_id: String,
     pub chatgpt_user_id: String,
@@ -351,54 +354,26 @@ fn stored_i64(stored: Option<&serde_json::Value>, key: &str) -> Option<i64> {
     })
 }
 
-fn stable_oauth_id(prefix: &str, seed: &str) -> String {
-    let hash = simple_sha256(seed.as_bytes());
-    let hex: String = hash
-        .iter()
-        .take(10)
-        .map(|byte| format!("{:02x}", byte))
-        .collect();
-    format!("{}-{}", prefix, hex)
+fn looks_like_jwt(token: &str) -> bool {
+    token.split('.').count() == 3 && parse_jwt_payload(token).is_some()
 }
 
-fn generate_stable_mock_id_token(email: &str, seed: &str) -> String {
-    let chatgpt_account_id = stable_oauth_id("acct", seed);
-    let chatgpt_user_id = stable_oauth_id("user", seed);
-    let organization_id = stable_oauth_id("org", seed);
-    let issued_at = DEFAULT_OAUTH_TOKEN_VERSION / 1000;
-    let payload = serde_json::json!({
-        "iss": "https://auth.openai.com",
-        "sub": chatgpt_user_id,
-        "aud": [crate::openai::constants::OPENAI_CLIENT_ID],
-        "exp": issued_at + DEFAULT_OAUTH_EXPIRES_IN,
-        "iat": issued_at,
-        "email": email,
-        "email_verified": true,
-        "https://api.openai.com/auth": {
-            "chatgpt_account_id": chatgpt_account_id,
-            "chatgpt_user_id": chatgpt_user_id,
-            "chatgpt_plan_type": "free",
-            "organizations": [
-                {
-                    "id": organization_id,
-                    "is_default": true,
-                    "role": "owner",
-                    "title": "Personal"
-                }
-            ],
-            "user_id": chatgpt_user_id
-        }
-    });
+fn is_generated_token(token: &str) -> bool {
+    token.contains(".fallback_signature")
+        || token.contains(".mock_signature")
+        || token.contains("compat_signature_for_cpa_parsing_only")
+}
 
-    let payload_str = serde_json::to_string(&payload).unwrap();
-    use base64::Engine;
-    let payload_b64 =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_str.as_bytes());
+fn valid_access_token(value: Option<String>) -> Option<String> {
+    value.filter(|token| looks_like_jwt(token) && !is_generated_token(token))
+}
 
-    format!(
-        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{}.fallback_signature",
-        payload_b64
-    )
+fn valid_refresh_token(value: Option<String>) -> Option<String> {
+    value.filter(|token| token.starts_with("rt_"))
+}
+
+fn valid_id_token(value: Option<String>) -> Option<String> {
+    value.filter(|token| looks_like_jwt(token) && !is_generated_token(token))
 }
 
 pub fn build_oauth_credentials_value(input: OAuthCredentialInput<'_>) -> serde_json::Value {
@@ -407,45 +382,73 @@ pub fn build_oauth_credentials_value(input: OAuthCredentialInput<'_>) -> serde_j
         .map(ToOwned::to_owned)
         .or_else(|| stored_string(stored, "email"))
         .unwrap_or_default();
-    let access_token = non_empty(input.access_token)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "access_token"))
+    let access_token = valid_access_token(non_empty(input.access_token).map(ToOwned::to_owned))
+        .or_else(|| valid_access_token(stored_string(stored, "access_token")))
         .unwrap_or_default();
-    let refresh_token = non_empty(input.refresh_token)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "refresh_token"))
+    let refresh_token = valid_refresh_token(non_empty(input.refresh_token).map(ToOwned::to_owned))
+        .or_else(|| valid_refresh_token(stored_string(stored, "refresh_token")))
         .unwrap_or_default();
-    let seed = if access_token.is_empty() {
-        email.as_str()
+    let id_token = valid_id_token(non_empty(input.id_token).map(ToOwned::to_owned))
+        .or_else(|| valid_id_token(stored_string(stored, "id_token")))
+        .unwrap_or_default();
+    let parsed_auth = if !id_token.is_empty() {
+        extract_auth_info_from_jwt(&id_token)
     } else {
-        access_token.as_str()
+        extract_auth_info_from_jwt(&access_token)
     };
-    let id_token = non_empty(input.id_token)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "id_token"))
-        .unwrap_or_else(|| generate_stable_mock_id_token(&email, seed));
-    let parsed_auth = extract_auth_info_from_jwt(&id_token);
+    let has_real_oauth_token = !access_token.is_empty() || !id_token.is_empty();
 
-    let chatgpt_account_id = non_empty(input.chatgpt_account_id)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "chatgpt_account_id"))
-        .or(parsed_auth.chatgpt_account_id)
-        .or_else(|| non_empty(input.workspace_id).map(ToOwned::to_owned))
-        .unwrap_or_else(|| stable_oauth_id("acct", seed));
-    let chatgpt_user_id = non_empty(input.chatgpt_user_id)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "chatgpt_user_id"))
-        .or(parsed_auth.chatgpt_user_id)
-        .unwrap_or_else(|| stable_oauth_id("user", seed));
-    let organization_id = non_empty(input.organization_id)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "organization_id"))
-        .or(parsed_auth.organization_id)
-        .unwrap_or_else(|| stable_oauth_id("org", seed));
-    let plan_type = non_empty(input.plan_type)
-        .map(ToOwned::to_owned)
-        .or_else(|| stored_string(stored, "plan_type"))
-        .or(parsed_auth.plan_type)
+    let chatgpt_account_id = parsed_auth
+        .chatgpt_account_id
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| non_empty(input.chatgpt_account_id).map(ToOwned::to_owned))
+                .flatten()
+        })
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| stored_string(stored, "chatgpt_account_id"))
+                .flatten()
+        })
+        .unwrap_or_default();
+    let chatgpt_user_id = parsed_auth
+        .chatgpt_user_id
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| non_empty(input.chatgpt_user_id).map(ToOwned::to_owned))
+                .flatten()
+        })
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| stored_string(stored, "chatgpt_user_id"))
+                .flatten()
+        })
+        .unwrap_or_default();
+    let organization_id = parsed_auth
+        .organization_id
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| non_empty(input.organization_id).map(ToOwned::to_owned))
+                .flatten()
+        })
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| stored_string(stored, "organization_id"))
+                .flatten()
+        })
+        .unwrap_or_default();
+    let plan_type = parsed_auth
+        .plan_type
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| non_empty(input.plan_type).map(ToOwned::to_owned))
+                .flatten()
+        })
+        .or_else(|| {
+            has_real_oauth_token
+                .then(|| stored_string(stored, "plan_type"))
+                .flatten()
+        })
         .unwrap_or_else(|| "free".to_string());
     let expires_in = input
         .expires_in
@@ -488,13 +491,22 @@ fn credential_i64(credentials: &serde_json::Value, key: &str) -> i64 {
 
 pub fn build_oauth_credentials(input: OAuthCredentialInput<'_>) -> BuiltOAuthCredentials {
     let value = build_oauth_credentials_value(input);
-    let json = value
-        .get("access_token")
-        .and_then(|value| value.as_str())
-        .filter(|value| !value.trim().is_empty())
-        .map(|_| value.to_string());
+    let json = {
+        let has_complete_token_set =
+            ["access_token", "refresh_token", "id_token"]
+                .iter()
+                .all(|key| {
+                    value
+                        .get(key)
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|value| !value.trim().is_empty())
+                });
+        has_complete_token_set.then(|| value.to_string())
+    };
 
     BuiltOAuthCredentials {
+        access_token: credential_string(&value, "access_token"),
+        refresh_token: credential_string(&value, "refresh_token"),
         id_token: credential_string(&value, "id_token"),
         chatgpt_account_id: credential_string(&value, "chatgpt_account_id"),
         chatgpt_user_id: credential_string(&value, "chatgpt_user_id"),
@@ -685,10 +697,10 @@ mod tests {
     }
 
     #[test]
-    fn oauth_credentials_fill_missing_fields_stably() {
+    fn oauth_credentials_do_not_fabricate_missing_tokens() {
         let first = build_oauth_credentials(OAuthCredentialInput {
             email: "bob@example.com",
-            access_token: Some("access-token-1"),
+            access_token: None,
             refresh_token: None,
             id_token: None,
             workspace_id: None,
@@ -702,7 +714,7 @@ mod tests {
         });
         let second = build_oauth_credentials(OAuthCredentialInput {
             email: "bob@example.com",
-            access_token: Some("access-token-1"),
+            access_token: None,
             refresh_token: None,
             id_token: None,
             workspace_id: None,
@@ -719,19 +731,19 @@ mod tests {
         assert_eq!(first.chatgpt_account_id, second.chatgpt_account_id);
         assert_eq!(first.chatgpt_user_id, second.chatgpt_user_id);
         assert_eq!(first.organization_id, second.organization_id);
+        assert_eq!(first.id_token, "");
+        assert_eq!(first.chatgpt_account_id, "");
+        assert_eq!(first.chatgpt_user_id, "");
+        assert_eq!(first.organization_id, "");
         assert_eq!(first.plan_type, "free");
         assert_eq!(first.expires_in, DEFAULT_OAUTH_EXPIRES_IN);
         assert_eq!(first.token_version, DEFAULT_OAUTH_TOKEN_VERSION);
-        assert!(
-            first
-                .json
-                .as_deref()
-                .is_some_and(|v| v.contains("access-token-1"))
-        );
+        assert!(first.json.is_none());
     }
 
     #[test]
     fn oauth_credentials_merge_stored_values_without_losing_new_tokens() {
+        let id_token = generate_realistic_test_id_token("carol@example.com");
         let stored = serde_json::json!({
             "chatgpt_account_id": "acct-existing",
             "chatgpt_user_id": "user-existing",
@@ -742,9 +754,11 @@ mod tests {
         });
         let built = build_oauth_credentials(OAuthCredentialInput {
             email: "carol@example.com",
-            access_token: Some("new-access"),
-            refresh_token: Some("new-refresh"),
-            id_token: None,
+            access_token: Some(
+                "eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOlsiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MSJdfQ.signature",
+            ),
+            refresh_token: Some("rt_new-refresh"),
+            id_token: Some(&id_token),
             workspace_id: None,
             chatgpt_account_id: None,
             chatgpt_user_id: None,
@@ -755,17 +769,51 @@ mod tests {
             stored_credentials: Some(&stored),
         });
 
-        assert_eq!(built.chatgpt_account_id, "acct-existing");
-        assert_eq!(built.chatgpt_user_id, "user-existing");
-        assert_eq!(built.organization_id, "org-existing");
-        assert_eq!(built.plan_type, "plus");
+        assert_eq!(built.chatgpt_account_id, "acct-test");
+        assert_eq!(built.chatgpt_user_id, "user-test");
+        assert_eq!(built.organization_id, "org-test");
+        assert_eq!(built.plan_type, "free");
         assert_eq!(built.expires_in, 123);
         assert_eq!(built.token_version, 456);
         assert!(
             built
                 .json
                 .as_deref()
-                .is_some_and(|v| v.contains("new-access"))
+                .is_some_and(|v| v.contains("rt_new-refresh"))
         );
+    }
+
+    fn generate_realistic_test_id_token(email: &str) -> String {
+        let payload = serde_json::json!({
+            "iss": "https://auth.openai.com",
+            "sub": "auth0|test",
+            "aud": [crate::openai::constants::OPENAI_CLIENT_ID],
+            "exp": chrono::Utc::now().timestamp() + 86400,
+            "iat": chrono::Utc::now().timestamp(),
+            "email": email,
+            "email_verified": true,
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": "acct-test",
+                "chatgpt_user_id": "user-test",
+                "chatgpt_plan_type": "free",
+                "organizations": [
+                    {
+                        "id": "org-test",
+                        "is_default": true,
+                        "role": "owner",
+                        "title": "Personal"
+                    }
+                ],
+                "user_id": "user-test"
+            }
+        });
+
+        use base64::Engine;
+        let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_string(&payload).unwrap().as_bytes());
+        format!(
+            "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{}.signature",
+            payload_b64
+        )
     }
 }
