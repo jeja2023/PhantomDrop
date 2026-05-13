@@ -271,8 +271,21 @@ const AccountListView: FC = () => {
 
 interface OAuthExportResponse {
   exported_at: string;
-  proxies: any[];
-  accounts: any[];
+  proxies: string[];
+  accounts: Array<{
+    name: string;
+    platform: string;
+    type: string;
+    credentials: Record<string, unknown>;
+    extra: {
+      email: string;
+      privacy_mode: string;
+    };
+    concurrency: number;
+    priority: number;
+    rate_multiplier: number;
+    auto_pause_on_expired: boolean;
+  }>;
 }
 
   const handleBatchExportOauthJson = async () => {
