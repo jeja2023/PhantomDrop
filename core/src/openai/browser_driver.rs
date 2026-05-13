@@ -6,6 +6,7 @@ use chrono::{self, Datelike};
 use headless_chrome::{Browser, LaunchOptions};
 use std::sync::Arc;
 use std::time::Duration;
+use url::Url;
 
 /**
  * PhantomBrowser 驱动程序
@@ -99,8 +100,21 @@ impl BrowserDriver {
             "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36".to_string(),
         ];
 
-        if let Some(ref proxy) = self.context.proxy_url {
-            launch_args.push(format!("--proxy-server={}", proxy));
+        // 1. 启动浏览器 (极致伪装以绕过检测)
+        let (sanitized_proxy, proxy_auth) = if let Some(ref proxy) = self.context.proxy_url {
+            let (s, a) = Self::format_proxy_for_chrome(proxy);
+            (Some(s), a)
+        } else {
+            (None, None)
+        };
+
+        if let Some(ref s) = sanitized_proxy {
+            if let Some(cb) = callback {
+                if s != self.context.proxy_url.as_ref().unwrap() {
+                    cb("info", &format!("🔧 优化代理配置: {} -> {}", self.context.proxy_url.as_ref().unwrap(), s));
+                }
+            }
+            launch_args.push(format!("--proxy-server={}", s));
         }
 
         let options = LaunchOptions::default_builder()
@@ -121,6 +135,34 @@ impl BrowserDriver {
         let tab = browser
             .new_tab()
             .map_err(|e| format!("打开标签页失败: {}", e))?;
+
+        // 1.5 处理代理认证 (如果存在)
+        if let Some((user, pass)) = proxy_auth {
+            if let Some(cb) = callback {
+                cb("info", "🔐 检测到代理认证信息，正在配置自动化认证拦截器...");
+            }
+
+            let tab_for_auth = tab.clone();
+            tab.add_event_listener(Arc::new(move |event: &headless_chrome::protocol::cdp::types::Event| {
+                if let headless_chrome::protocol::cdp::types::Event::FetchAuthRequired(auth_event) = event {
+                    let _ = tab_for_auth.call_method(headless_chrome::protocol::cdp::Fetch::ContinueWithAuth {
+                        request_id: auth_event.params.request_id.clone(),
+                        auth_challenge_response: headless_chrome::protocol::cdp::Fetch::AuthChallengeResponse {
+                            response: headless_chrome::protocol::cdp::Fetch::AuthChallengeResponseResponse::ProvideCredentials,
+                            username: Some(user.clone()),
+                            password: Some(pass.clone()),
+                        },
+                    });
+                }
+            }))
+            .map_err(|e| format!("添加认证监听器失败: {}", e))?;
+
+            tab.call_method(headless_chrome::protocol::cdp::Fetch::Enable {
+                patterns: None,
+                handle_auth_requests: Some(true),
+            })
+            .map_err(|e| format!("启用 Fetch 域失败: {}", e))?;
+        }
 
         // 注入增强型指纹伪装脚本 (极致风控过级)
         let stealth_script = r#"
@@ -1224,6 +1266,41 @@ impl BrowserDriver {
             }
         } else {
             Err("Callback missing".to_string())
+        }
+    }
+
+    /// 格式化代理地址以兼容 Chromium 的 --proxy-server 参数
+    /// Chromium 不支持在命令行中包含用户名和密码，且对 SOCKS 协议前缀有特定要求
+    fn format_proxy_for_chrome(proxy_url: &str) -> (String, Option<(String, String)>) {
+        if let Ok(url) = Url::parse(proxy_url) {
+            let scheme = match url.scheme() {
+                "socks5h" => "socks5",
+                "socks4a" => "socks4",
+                s => s,
+            };
+
+            let host = url.host_str().unwrap_or("");
+            let port = url.port().map(|p| format!(":{}", p)).unwrap_or_default();
+
+            // 构造不含认证信息的标准代理字符串
+            let sanitized = if !host.is_empty() {
+                format!("{}://{}{}", scheme, host, port)
+            } else {
+                proxy_url.to_string()
+            };
+
+            let auth = if !url.username().is_empty() || url.password().is_some() {
+                Some((
+                    url.username().to_string(),
+                    url.password().unwrap_or("").to_string(),
+                ))
+            } else {
+                None
+            };
+
+            (sanitized, auth)
+        } else {
+            (proxy_url.to_string(), None)
         }
     }
 }
