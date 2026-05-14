@@ -332,11 +332,12 @@ async fn auth_middleware(
         }
 
         let authenticated = match provided_secret {
-            Some(secret) => secret == expected_secret,
+            Some(ref secret) => secret == &expected_secret,
             None => false,
         };
 
         if !authenticated {
+            println!("AUTH FAILED: User provided '{:?}', but expected '{}'", provided_secret, expected_secret);
             return Ok(auth_error_response(
                 StatusCode::UNAUTHORIZED,
                 "未授权，请输入正确的接口密钥",
@@ -362,7 +363,7 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
     SettingsPayload {
         webhook_url: map.get("webhook_url").cloned().filter(|v| !v.is_empty()),
         update_rate: map.get("update_rate").and_then(|v| v.parse::<u64>().ok()),
-        auth_secret: mask_credential(map.get("auth_secret").cloned().filter(|v| !v.is_empty())),
+        auth_secret: map.get("auth_secret").cloned().filter(|v| !v.is_empty()),
         decode_depth: map.get("decode_depth").cloned().filter(|v| !v.is_empty()),
         public_hub_url: map.get("public_hub_url").cloned().filter(|v| !v.is_empty()),
         account_domain: map.get("account_domain").cloned().filter(|v| !v.is_empty()),
@@ -382,11 +383,9 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
             .get("cloudflare_zone_domain")
             .cloned()
             .filter(|v| !v.is_empty()),
-        cloudflare_api_token: mask_credential(
-            map.get("cloudflare_api_token")
+        cloudflare_api_token: map.get("cloudflare_api_token")
                 .cloned()
                 .filter(|v| !v.is_empty()),
-        ),
         cloudflare_zone_id: map
             .get("cloudflare_zone_id")
             .cloned()
@@ -396,10 +395,10 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
             .cloned()
             .filter(|v| !v.is_empty()),
         cpa_url: map.get("cpa_url").cloned().filter(|v| !v.is_empty()),
-        cpa_key: mask_credential(map.get("cpa_key").cloned().filter(|v| !v.is_empty())),
+        cpa_key: map.get("cpa_key").cloned().filter(|v| !v.is_empty()),
         sub2api_url: map.get("sub2api_url").cloned().filter(|v| !v.is_empty()),
-        sub2api_key: mask_credential(map.get("sub2api_key").cloned().filter(|v| !v.is_empty())),
-        cpa_auth_json: mask_credential(map.get("cpa_auth_json").cloned().filter(|v| !v.is_empty())),
+        sub2api_key: map.get("sub2api_key").cloned().filter(|v| !v.is_empty()),
+        cpa_auth_json: map.get("cpa_auth_json").cloned().filter(|v| !v.is_empty()),
     }
 }
 
@@ -1352,6 +1351,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             let _ = dl.upsert_setting("cloudflare_account_id", trimmed).await;
                         }
                     }
+
 
                     if let Some(cpa_url) = payload.cpa_url.as_deref() {
                         let trimmed = cpa_url.trim();

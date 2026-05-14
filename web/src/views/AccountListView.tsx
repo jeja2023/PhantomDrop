@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { deleteJson, fetchJson, postJson } from '../lib/api';
+import { maskProxyUrl } from '../lib/utils';
 import type { DashboardStats, GeneratedAccountRecord, LogLevel } from '../types';
 
 interface AccountPageResponse {
@@ -57,6 +58,7 @@ const AccountListView: FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [checkingIds, setCheckingIds] = useState<string[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<GeneratedAccountRecord | null>(null);
+  const [showProxyInDetails, setShowProxyInDetails] = useState(false);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
@@ -269,19 +271,6 @@ const AccountListView: FC = () => {
     }
   };
 
-  const maskProxyUrl = (url: string | null | undefined): string => {
-    if (!url) return '';
-    try {
-      const parsed = new URL(url.includes('://') ? url : `http://${url}`);
-      if (parsed.username || parsed.password) {
-        return `${parsed.protocol}//***:***@${parsed.host}${parsed.port ? `:${parsed.port}` : ''}${parsed.pathname}${parsed.search}${parsed.hash}`;
-      }
-      return url;
-    } catch {
-      // 降级正则处理
-      return url.replace(/([^:/]+:\/\/)([^:/]+):([^@/]+)@/, '$1***:***@');
-    }
-  };
 
 interface OAuthExportResponse {
   exported_at: string;
@@ -680,8 +669,18 @@ interface OAuthExportResponse {
 
               {selectedAccount.proxy_url && (
                 <div className="p-4 rounded-2xl bg-indigo-50/20 border border-indigo-100/50">
-                  <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-1">注册代理</p>
-                  <code className="text-[11px] font-mono text-indigo-600 break-all">{maskProxyUrl(selectedAccount.proxy_url)}</code>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">注册代理</p>
+                    <button 
+                      onClick={() => setShowProxyInDetails(!showProxyInDetails)}
+                      className="text-[9px] font-bold text-indigo-400 hover:text-indigo-600 transition-colors"
+                    >
+                      {showProxyInDetails ? '隐藏原始地址' : '显示原始地址'}
+                    </button>
+                  </div>
+                  <code className="text-[11px] font-mono text-indigo-600 break-all">
+                    {showProxyInDetails ? selectedAccount.proxy_url : maskProxyUrl(selectedAccount.proxy_url)}
+                  </code>
                 </div>
               )}
             </div>

@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { Activity, Globe, Mail, Settings, Shield, Terminal as TerminalIcon, Users, Zap } from 'lucide-react'
+import { Activity, Globe, LogOut, Mail, Settings, Shield, Terminal as TerminalIcon, Users, Zap } from 'lucide-react'
 import type { AppTab } from '../types'
 
 interface SidebarProps {
@@ -8,6 +8,12 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+  const handleLogout = () => {
+    localStorage.removeItem('phantom_auth_token')
+    document.cookie = 'phantom_auth_token=; path=/; max-age=0; SameSite=Lax'
+    window.location.reload()
+  }
+
   return (
     <nav className="w-16 shrink-0 md:w-64 bg-white border-r border-[#f1f5f9] flex flex-col p-4 z-20 h-screen transition-all select-none shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
       <div className="flex items-center gap-3 mb-10 px-2 mt-4">
@@ -32,6 +38,14 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
 
       <div className="mt-auto pt-4 border-t border-slate-200 space-y-4">
         <SidebarItem icon={<Settings size={22} />} label="全局设置" active={activeTab === 'config'} onClick={() => onTabChange('config')} />
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-3 py-3 rounded-2xl transition-all group text-red-500 hover:bg-red-50 hover:text-red-600"
+          title="退出登录"
+        >
+          <span className="text-red-400 group-hover:text-red-500"><LogOut size={22} /></span>
+          <span className="hidden md:block text-xs font-black tracking-tight whitespace-nowrap">退出登录</span>
+        </button>
         <div className="px-3 py-1 flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/30" />
           <span className="text-[9px] text-slate-600 font-mono hidden md:block font-bold tracking-tight">节点状态：在线</span>

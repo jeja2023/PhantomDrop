@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, Globe, Lock, User, Check, Eye, EyeOff, Loader2, Wifi, AlertCircle } from 'lucide-react'
+import { maskProxyUrl } from '../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import { postJson } from '../lib/api'
@@ -309,7 +310,7 @@ export default function ProxyModal({ isOpen, onClose, value, onChange }: ProxyMo
                 </button>
               </div>
               <code className="text-xs font-mono text-slate-600 break-all select-all block">
-                {previewUrl ? previewUrl.replace(/([^:/]+:\/\/)([^:/]+):([^@/]+)@/, '$1***:***@') : '等待配置...'}
+                {previewUrl ? maskProxyUrl(previewUrl) : '等待配置...'}
               </code>
 
               {/* 测试结果反馈 */}

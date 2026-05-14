@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy, Square, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
+import { redactMessage } from '../lib/utils'
 import PageHeader from '../ui/PageHeader'
 import type {
   GeneratedAccountRecord,
@@ -338,7 +339,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2.5 text-[12px] leading-relaxed text-slate-600">
-                <div className="line-clamp-2">{workflow.summary}</div>
+                <div className="line-clamp-2">{redactMessage(workflow.summary)}</div>
                 <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono text-slate-500">
                   <span className="rounded-full bg-white px-2 py-1">类型={translateWorkflowKind(workflow.kind)}</span>
                   {workflow.parameters.batch_size ? <span className="rounded-full bg-white px-2 py-1">批量={workflow.parameters.batch_size}</span> : null}
@@ -659,6 +660,7 @@ function WorkflowEditorModal({
   onUpdateParameters: (workflowId: string, patch: Partial<WorkflowParameters>) => void
 }) {
   const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
+  const [showProxyRaw, setShowProxyRaw] = useState(false)
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-md" onClick={onClose}>
@@ -720,8 +722,11 @@ function WorkflowEditorModal({
               <div className="grid grid-cols-1 gap-3">
                 <div className="flex gap-2">
                   <input
+                    type={showProxyRaw ? "text" : "password"}
                     value={workflow.parameters.proxy_url ?? ''}
                     onChange={(event) => onUpdateParameters(workflow.id, { proxy_url: event.target.value || undefined })}
+                    onFocus={() => setShowProxyRaw(true)}
+                    onBlur={() => setShowProxyRaw(false)}
                     placeholder="全局代理 (如 http://127.0.0.1:10809)"
                     className="flex-grow rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 font-mono"
                   />

@@ -1,4 +1,5 @@
 import { Terminal as TerminalIcon } from 'lucide-react'
+import { redactMessage } from '../lib/utils'
 import type { AppLog, LogSource } from '../types'
 
 interface TerminalProps {
@@ -43,7 +44,7 @@ export default function Terminal({ logs, activeFilter = 'all' }: TerminalProps) 
                           : 'text-blue-600'
                   }`}
                 >
-                  {log.content}
+                  {redactMessage(log.content)}
                 </span>
               </div>
             </div>

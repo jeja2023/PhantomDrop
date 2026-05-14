@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Shield, CheckCircle2, Loader2, Send, Terminal, Globe, Square } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { fetchJson, postJson, buildApiUrl } from '../lib/api'
+import { maskProxyUrl } from '../lib/utils'
 import type {
   WorkflowDefinition,
   WorkflowRunPageResponse,
@@ -43,6 +44,7 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
   const [fullName, setFullName] = useState('')
   const [age, setAge] = useState<number | ''>('')
   const [headless, setHeadless] = useState(true) // 默认开启无头模式
+  const [showProxyRaw, setShowProxyRaw] = useState(false)
 
   const loadWorkflows = useCallback(async (platform: RegistrationPlatform) => {
     try {
@@ -265,16 +267,25 @@ export default function RegistrationView({ refreshIntervalMs }: { refreshInterva
                 </div>
                 <div className="relative group/input">
                   <input
-                    type="text"
+                    type={showProxyRaw ? "text" : "password"}
                     placeholder="http://user:pass@host:port"
                     value={openaiProxy}
                     onChange={(e) => setOpenaiProxy(e.target.value)}
+                    onFocus={() => setShowProxyRaw(true)}
+                    onBlur={() => setShowProxyRaw(false)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono outline-none focus:border-blue-500 focus:bg-white transition-all shadow-inner"
                   />
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-focus-within/input:opacity-100 transition-opacity">
                     <Globe size={14} className="text-blue-500/50" />
                   </div>
                 </div>
+                {!showProxyRaw && openaiProxy && openaiProxy.includes('@') && (
+                  <div className="mt-1 px-1">
+                    <p className="text-[9px] font-mono text-slate-400 truncate">
+                      当前已隐藏凭据：{maskProxyUrl(openaiProxy)}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* 资料姓名和年龄由后台自动随机生成 */}
