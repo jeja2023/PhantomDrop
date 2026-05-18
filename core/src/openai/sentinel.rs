@@ -1,7 +1,12 @@
 /**
  * Sentinel 防护模块 / PoW (Proof of Work) 解算器
  * 负责与 OpenAI Sentinel 服务器握手，获取必要的 sentinel_token
- * 并完成基于 SHA3 的计算量证明
+ * 并完成基于 SHA-256 的计算量证明
+ *
+ * 已知限制：
+ * 1. 请求 payload 中的 `p` 参数为占位符，真实场景需从浏览器环境动态生成 Fernet 加密数据
+ * 2. 当前 PoW 使用 SHA-256 算法，若 OpenAI 切换为 SHA-3 (Keccak) 则需引入 sha3 crate
+ * 3. 在浏览器驱动模式下，Sentinel 交互由浏览器原生完成，此模块主要服务于协议注册路径
  */
 use crate::openai::constants;
 

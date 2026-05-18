@@ -4,7 +4,6 @@ import {
   Mail,
   Search,
   Download,
-  CheckCircle2,
   Loader2,
   ExternalLink,
   X,
@@ -17,6 +16,8 @@ import {
 } from 'lucide-react'
 import { deleteJson, fetchJson, postJson } from '../lib/api'
 import PageHeader from '../ui/PageHeader'
+import { useClipboard } from '../ui/useClipboard'
+import { useToast } from '../ui/Toast'
 import type {
   EmailDetailApi,
   EmailItem,
@@ -62,8 +63,9 @@ function htmlToReadableText(html: string): string {
 }
 
 export default function EmailListView({ emails, externalQuery = '' }: { emails: EmailItem[]; externalQuery?: string }) {
+  const showToast = useToast()
+  const copy = useClipboard()
   const [isExporting, setIsExporting] = useState(false)
-  const [showToast, setShowToast] = useState(false)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<EmailItem[]>([])
@@ -296,8 +298,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
       link.click()
       document.body.removeChild(link)
 
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '导出成功', desc: '邮件解析结果已导出为 CSV 文件。' })
     } finally {
       setIsExporting(false)
     }
@@ -305,7 +306,7 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
 
   const copyField = async (label: string, value: string | null | undefined) => {
     if (!value) return
-    await navigator.clipboard.writeText(value)
+    await copy(value, { title: `${label} 已复制` })
     setCopiedField(label)
     setTimeout(() => setCopiedField((current) => (current === label ? null : current)), 1200)
   }
@@ -313,16 +314,6 @@ export default function EmailListView({ emails, externalQuery = '' }: { emails: 
   return (
     <>
       <div className="page-shell page-shell--full relative animate-in fade-in duration-700">
-        <div className={`fixed right-10 top-20 z-[100] transform transition-all duration-500 ${showToast ? 'translate-y-0 opacity-100' : '-translate-y-12 pointer-events-none opacity-0'}`}>
-          <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-white px-6 py-3 shadow-2xl shadow-blue-500/10">
-            <CheckCircle2 className="text-emerald-500" size={20} />
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-slate-800">导出成功</span>
-              <span className="text-[10px] font-mono text-slate-500">邮件解析结果已导出为 CSV 文件。</span>
-            </div>
-          </div>
-        </div>
-
         <PageHeader
           title=""
           kicker=""

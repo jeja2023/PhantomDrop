@@ -45,8 +45,8 @@ pub fn build_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> 
     Ok(super::impersonator::ImpersonateProvider::create_chrome_client(proxy_url))
 }
 
-/// 执行完整的注册流程（Phase A + Phase B）
-#[allow(unreachable_code, unused_variables)]
+/// 执行协议层注册流程（Phase A: 注册激活）
+/// 注意：协议模式下无法完成 Phase B (OAuth Token 捕获)，Token 需通过浏览器驱动补全
 pub async fn execute_registration(
     dl: &Arc<DataLake>,
     context: &RegisterContext,
@@ -158,7 +158,7 @@ pub async fn execute_registration(
 
     // 步骤 3: 发起授权请求，获取登录页面 (此处为协议预热，获取必须的 Cookie)
     if let Some(ref cb) = context.step_callback {
-        cb("info", "[Step 3] 初始化 Auth0 会话并预存安全 Cookie...");
+        cb("info", "[Step 3] 初始化 OAuth 会话并预存安全 Cookie...");
     }
     let authorize_url = format!(
         "{}?client_id={}&scope={}&response_type=code&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
@@ -194,8 +194,8 @@ pub async fn execute_registration(
     let signup_response = client
         .post(constants::AUTH_SIGNUP_URL)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("origin", "https://auth0.openai.com")
-        .header("referer", format!("https://auth0.openai.com/u/signup?state={}", &state))
+        .header("origin", "https://auth.openai.com")
+        .header("referer", format!("https://auth.openai.com/u/signup?state={}", &state))
         .header("sec-ch-ua-mobile", "?0")
         .header("sec-fetch-dest", "document")
         .header("sec-fetch-mode", "navigate")
@@ -226,11 +226,11 @@ pub async fn execute_registration(
     let password_response = client
         .post(constants::AUTH_PASSWORD_URL)
         .header("content-type", "application/x-www-form-urlencoded")
-        .header("origin", "https://auth0.openai.com")
+        .header("origin", "https://auth.openai.com")
         .header(
             "referer",
             format!(
-                "https://auth0.openai.com/u/signup/password?state={}",
+                "https://auth.openai.com/u/signup/password?state={}",
                 &state
             ),
         )
@@ -517,135 +517,30 @@ pub async fn execute_registration(
         }
     }
 
-    // === Phase B: 全协议登录捕获 Access Token ===
+    // === Phase B: Token 捕获 ===
+    // 协议模式下无法完成 OAuth 授权重定向的 JavaScript 交互，
+    // 因此返回仅包含注册信息的结果（不含 Token），
+    // Token 提取需依赖浏览器驱动模式 (browser_driver.rs) 完成。
     if let Some(ref cb) = context.step_callback {
         cb(
-            "info",
-            "[Phase B] Step 11: 初始化登录会话并发起 OAuth 授权流...",
+            "warn",
+            "[Phase B] 协议模式无法捕获 OAuth callback code，Token 需通过浏览器驱动补全",
         );
-    }
-
-    // 第 11 步：发起 OAuth 登录
-    let login_state = oauth::generate_state();
-    let login_pkce = oauth::generate_pkce();
-
-    let login_authorize_url = format!(
-        "{}?client_id={}&scope={}&response_type=code&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256&prompt=login&screen_hint=login",
-        constants::AUTH_AUTHORIZE_URL,
-        constants::OPENAI_CLIENT_ID,
-        urlencoding_simple(constants::OPENAI_SCOPE),
-        urlencoding_simple(constants::REDIRECT_URI),
-        &login_state,
-        &login_pkce.code_challenge,
-    );
-
-    let _login_init_res = client
-        .get(&login_authorize_url)
-        .header("referer", "https://chatgpt.com/")
-        .send()
-        .await
-        .map_err(|e| format!("登录 OAuth 初始化失败: {}", e))?;
-
-    // 第 12 步：提交登录凭证
-    if let Some(ref cb) = context.step_callback {
-        cb("info", "[Step 12] 提交账户密令至 Auth0 验证网关...");
-    }
-
-    // 这里模拟真实的 Auth0 登录提交，获取授权码
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let auth_code = format!("code_{}", uuid::Uuid::new_v4().simple());
-    if let Some(ref cb) = context.step_callback {
         cb(
-            "error",
-            "协议注册流程未捕获真实 OAuth callback code，已停止生成模拟 token。",
+            "success",
+            "Phase A 注册流程完成，账号已创建并激活",
         );
-    }
-
-    return Err("协议注册流程未捕获真实 OAuth callback code，不能生成有效 access_token / refresh_token / id_token；请使用浏览器注册登录后的 OAuth 提取流程。".to_string());
-
-    // 第 13 步: 最终的 Token Exchange (使用授权码换取 JWT)
-    if let Some(ref cb) = context.step_callback {
-        cb(
-            "info",
-            "[Step 13] 正在通过 OAuth Code 交换最终访问令牌 (Access Token)...",
-        );
-    }
-
-    let token_payload = [
-        ("grant_type", "authorization_code"),
-        ("client_id", constants::OPENAI_CLIENT_ID),
-        ("code", &auth_code),
-        ("code_verifier", &login_pkce.code_verifier),
-        ("redirect_uri", constants::REDIRECT_URI),
-    ];
-
-    let token_exchange_res = client
-        .post(constants::AUTH_TOKEN_URL)
-        .form(&token_payload)
-        .send()
-        .await;
-
-    // 模拟或真实获取 Token 以及相关的 ID Token
-    let (final_access, final_refresh, final_id_token) = match token_exchange_res {
-        Ok(res) if res.status().is_success() => {
-            if let Ok(data) = res.json::<serde_json::Value>().await {
-                let access_token = data
-                    .get("access_token")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| {
-                        format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple())
-                    });
-                let refresh_token = data
-                    .get("refresh_token")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .or_else(|| Some(format!("ref_{}", uuid::Uuid::new_v4().simple())));
-                let id_token = data
-                    .get("id_token")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| super::oauth::generate_mock_id_token(&context.email));
-                (access_token, refresh_token, Some(id_token))
-            } else {
-                (
-                    format!("eyJhbGciOiJSUzI1NiI.real_{}", uuid::Uuid::new_v4().simple()),
-                    Some(format!("ref_{}", uuid::Uuid::new_v4().simple())),
-                    Some(super::oauth::generate_mock_id_token(&context.email)),
-                )
-            }
-        }
-        _ => {
-            if let Some(ref cb) = context.step_callback {
-                cb(
-                    "warn",
-                    "Token 交换未获得完全响应，启用生产级 Session 仿真兜底...",
-                );
-            }
-            (
-                format!(
-                    "eyJhbGciOiJSUzI1NiI.simulated_{}",
-                    uuid::Uuid::new_v4().simple()
-                ),
-                None,
-                Some(super::oauth::generate_mock_id_token(&context.email)),
-            )
-        }
-    };
-
-    if let Some(ref cb) = context.step_callback {
-        cb("success", "全链路账号生产完毕，产物已封存至 DataLake！");
     }
 
     Ok(RegisterResult {
         email: context.email.clone(),
         password: context.password.clone(),
-        access_token: Some(final_access),
-        refresh_token: final_refresh,
-        session_token: Some(format!("sess_{}", uuid::Uuid::new_v4().simple())),
-        id_token: final_id_token,
+        access_token: None,
+        refresh_token: None,
+        session_token: None,
+        id_token: None,
         device_id: device_id.clone(),
-        workspace_id: Some("ws-default-org".to_string()),
+        workspace_id: None,
     })
 }
 

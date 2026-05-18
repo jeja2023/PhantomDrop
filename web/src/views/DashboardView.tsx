@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, CheckCircle2, Sparkles, Activity, Database } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { Zap, Sparkles, Activity, Database, ShieldCheck, Thermometer } from 'lucide-react'
 import Grid from '../grid/Grid'
 import Terminal from '../terminal/Terminal'
 import type { AppLog, DashboardStats, EmailItem } from '../types'
+import { useToast } from '../ui/Toast'
 
 interface DashboardViewProps {
   emails: EmailItem[]
@@ -13,9 +14,8 @@ interface DashboardViewProps {
 }
 
 export default function DashboardView({ emails, logs, stats, updateRate = 1000 }: DashboardViewProps) {
+  const showToast = useToast()
   const [isExpertMode, setIsExpertMode] = useState(false)
-  const [showToast, setShowToast] = useState(false)
-  const [toastMsg, setToastMsg] = useState({ title: '', desc: '' })
 
   const metrics = useMemo(() => {
     const codeCount = emails.filter((email) => Boolean(email.code)).length
@@ -38,39 +38,26 @@ export default function DashboardView({ emails, logs, stats, updateRate = 1000 }
       activity: Math.min(100, (stats?.recent_emails_24h ?? emails.length) * 10),
       activeWebhooks: stats?.active_webhooks ?? 0,
       workflowRuns: stats?.workflow_runs_24h ?? 0,
+      totalAccounts: stats?.total_accounts ?? 0,
+      todayAccounts: stats?.today_accounts_24h ?? 0,
+      gatewayRequests: stats?.gateway_requests_24h ?? 0,
+      activePoolAccounts: stats?.active_pool_accounts ?? 0,
+      coolingAccounts: stats?.cooling_accounts ?? 0,
     }
   }, [emails, logs, stats])
 
-  const triggerToast = (title: string, desc: string) => {
-    setToastMsg({ title, desc })
-    setShowToast(true)
-    setTimeout(() => setShowToast(false), 3000)
-  }
-
   const handleExpertMode = () => {
     setIsExpertMode(!isExpertMode)
-    triggerToast(
-      isExpertMode ? '已切换到常规模式' : '已进入专家模式',
-      isExpertMode ? '界面已恢复标准视图。' : '已展示更深层的诊断信息与实时运行指标。',
-    )
+    showToast({
+      title: isExpertMode ? '已切换到常规模式' : '已进入专家模式',
+      desc: isExpertMode ? '界面已恢复标准视图。' : '已展示更深层的诊断信息与实时运行指标。',
+      tone: 'info',
+      durationMs: 3000,
+    })
   }
 
   return (
     <div className={`page-shell page-shell--full animate-in fade-in duration-700 relative transition-colors duration-500 ${isExpertMode ? 'bg-blue-900/5' : ''}`}>
-      <AnimatePresence>
-        {showToast ? (
-          <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -50, opacity: 0 }} className="fixed top-20 right-10 z-[100]">
-            <div className="bg-white border border-blue-100 shadow-2xl shadow-blue-500/10 px-6 py-3 rounded-2xl flex items-center gap-3">
-              <CheckCircle2 className="text-blue-500" size={20} />
-              <div className="flex flex-col">
-                <span className="text-sm font-bold text-slate-800 tracking-tight">{toastMsg.title}</span>
-                <span className="text-[10px] text-slate-500 font-mono">{toastMsg.desc}</span>
-              </div>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
       <div className="flex items-center justify-between px-2 pt-2 shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2 shadow-sm">
@@ -158,6 +145,46 @@ export default function DashboardView({ emails, logs, stats, updateRate = 1000 }
                 <div className="flex min-w-0 flex-col gap-1">
                   <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">今日注入</span>
                   <span className="font-bold leading-tight tabular-nums text-slate-700">{stats?.recent_emails_24h ?? emails.length}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 rounded-2xl border border-blue-100 bg-blue-50/20 backdrop-blur-sm p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-[11px] font-bold text-blue-900 tracking-tight flex items-center gap-1.5">
+                  <ShieldCheck size={13} className="text-blue-500" />
+                  自给自足网关与自愈池
+                </div>
+                {metrics.coolingAccounts > 0 ? (
+                  <span className="flex items-center gap-1 text-[8px] font-mono text-amber-600 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded animate-pulse">
+                    <Thermometer size={10} />
+                    {metrics.coolingAccounts} 冷却中
+                  </span>
+                ) : (
+                  <span className="text-[8px] font-mono text-emerald-600 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">
+                    健康常驻
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-x-5 gap-y-3 font-mono text-[11px]">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">可用高可用账号</span>
+                  <span className="font-bold leading-tight tabular-nums text-blue-700 flex items-center gap-1">
+                    {metrics.activePoolAccounts}
+                    <span className="text-[9px] text-slate-400 font-normal">/ {metrics.totalAccounts}</span>
+                  </span>
+                </div>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">网关今日请求</span>
+                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.gatewayRequests}</span>
+                </div>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">今日新增账号</span>
+                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.todayAccounts}</span>
+                </div>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">主动自愈能力</span>
+                  <span className="font-bold leading-tight text-emerald-600">已就绪 (100%)</span>
                 </div>
               </div>
             </div>

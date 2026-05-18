@@ -72,6 +72,12 @@ struct WorkflowRunQuery {
     workflow_exact: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct UpdatePoolPayload {
+    ids: Vec<String>,
+    pool_tag: String,
+}
+
 async fn console_index() -> Html<&'static str> {
     Html(include_str!("../console/index.html"))
 }
@@ -284,7 +290,7 @@ async fn auth_middleware(
 ) -> Result<axum::response::Response, StatusCode> {
     let path = req.uri().path();
 
-    if path == "/health" || path == "/ingest" {
+    if path == "/health" || path == "/ingest" || path == "/v1/chat/completions" {
         return Ok(next.run(req).await);
     }
 
@@ -422,6 +428,15 @@ pub fn build_router(ctx: RouterContext) -> Router {
     let web_dist = ctx.web_dist;
 
     Router::new()
+        .route("/v1/chat/completions", post({
+            let dl = Arc::clone(&data_lake);
+            move |Query(params): Query<HashMap<String, String>>, req: axum::extract::Request| {
+                let dl = dl.clone();
+                async move {
+                    crate::openai::gateway::chat_completions_gateway(dl, params, req).await
+                }
+            }
+        }))
         .route("/console", get(console_index))
         .route("/console/", get(console_index))
         .route("/console/style.css", get(console_style))
@@ -1011,6 +1026,26 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 }
             }
         }))
+        .route("/api/accounts/batch/update-pool", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<UpdatePoolPayload>| {
+                let dl = dl.clone();
+                async move {
+                    let ids = payload.ids;
+                    let pool_tag = payload.pool_tag.trim().to_string();
+                    let mut success_count = 0;
+                    for id in ids {
+                        if let Ok(_) = dl.update_account_pool_tag(&id, &pool_tag).await {
+                            success_count += 1;
+                        }
+                    }
+                    Json(serde_json::json!({
+                        "status": "success",
+                        "message": format!("成功更新 {} 条账号的分池标签为: {}", success_count, pool_tag)
+                    }))
+                }
+            }
+        }))
         .route("/api/accounts/cleanup-failures", post({
             let dl = Arc::clone(&data_lake);
             move || {
@@ -1170,11 +1205,33 @@ pub fn build_router(ctx: RouterContext) -> Router {
                         }
                     }
 
-                    if params.get("format").map(|s| s.as_str()) == Some("oauth") {
-                        let oauth_json = crate::exporter::AccountExporter::export_to_oauth_json(&results);
-                        Json(oauth_json).into_response()
-                    } else {
-                        Json(results).into_response()
+                    let format_param = params.get("format").map(|s| s.as_str());
+                    match format_param {
+                        Some("oauth") => {
+                            let oauth_json = crate::exporter::AccountExporter::export_to_oauth_json(&results);
+                            Json(oauth_json).into_response()
+                        }
+                        Some("sub2api") => {
+                            let transformed: Vec<serde_json::Value> = results.iter()
+                                .map(|acc| crate::exporter::AccountExporter::transform(acc, crate::exporter::ExportFormat::Sub2api))
+                                .collect();
+                            Json(transformed).into_response()
+                        }
+                        Some("cpa") => {
+                            let transformed: Vec<serde_json::Value> = results.iter()
+                                .map(|acc| crate::exporter::AccountExporter::transform(acc, crate::exporter::ExportFormat::Cpa))
+                                .collect();
+                            Json(transformed).into_response()
+                        }
+                        Some("kiro_go") => {
+                            let transformed: Vec<serde_json::Value> = results.iter()
+                                .map(|acc| crate::exporter::AccountExporter::transform(acc, crate::exporter::ExportFormat::KiroGo))
+                                .collect();
+                            Json(transformed).into_response()
+                        }
+                        _ => {
+                            Json(results).into_response()
+                        }
                     }
                 }
             }

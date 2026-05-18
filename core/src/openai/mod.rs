@@ -12,3 +12,5 @@ pub mod register;
 pub mod sentinel;
 pub mod sms;
 pub mod uploader;
+pub mod gateway;
+pub mod proxy_checker;

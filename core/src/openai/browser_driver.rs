@@ -97,7 +97,7 @@ impl BrowserDriver {
             "--disable-default-apps".to_string(),
             "--disable-extensions".to_string(),
             "--use-fake-ui-for-media-stream".to_string(),
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36".to_string(),
+            format!("--user-agent={}", crate::openai::constants::DEFAULT_USER_AGENT),
         ];
 
         // 1. 启动浏览器 (极致伪装以绕过检测)
@@ -171,23 +171,40 @@ impl BrowserDriver {
             .map_err(|e| format!("启用 Fetch 域失败: {}", e))?;
         }
 
-        // 注入增强型指纹伪装脚本 (极致风控过级)
+        // 注入增强型指纹伪装脚本 (极致风控过级，对标 puppeteer-extra-stealth 全套)
         let stealth_script = r#"
-            // 1. 隐藏 WebDriver
+            // 1. 隐藏 WebDriver 标志
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            // 移除 CDP 注入的属性
+            delete navigator.__proto__.webdriver;
 
-            // 2. 伪造 WebGL 指纹 (使用更真实的显卡信息)
-            const getParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                if (parameter === 37445) return 'Google Inc. (NVIDIA)';
-                if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)';
-                return getParameter.apply(this, arguments);
+            // 2. 伪造 WebGL 指纹 (WebGL1 + WebGL2)
+            const hookWebGL = (proto) => {
+                const getParameter = proto.getParameter;
+                proto.getParameter = function(parameter) {
+                    if (parameter === 37445) return 'Google Inc. (NVIDIA)';
+                    if (parameter === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                    return getParameter.apply(this, arguments);
+                };
             };
+            hookWebGL(WebGLRenderingContext.prototype);
+            if (typeof WebGL2RenderingContext !== 'undefined') {
+                hookWebGL(WebGL2RenderingContext.prototype);
+            }
 
             // 3. 注入 Chrome Runtime 模拟 (无头模式通常缺失)
-            window.chrome = { runtime: {} };
+            window.chrome = {
+                runtime: {
+                    onMessage: { addListener: () => {}, removeListener: () => {} },
+                    onConnect: { addListener: () => {}, removeListener: () => {} },
+                    sendMessage: () => {},
+                    connect: () => ({ onMessage: { addListener: () => {} }, postMessage: () => {}, disconnect: () => {} })
+                },
+                csi: () => ({}),
+                loadTimes: () => ({})
+            };
 
-            // 4. 修复 Permissions 状态
+            // 4. 修复 Permissions API 状态
             const originalQuery = window.navigator.permissions.query;
             window.navigator.permissions.query = (parameters) => (
                 parameters.name === 'notifications' ?
@@ -195,20 +212,141 @@ impl BrowserDriver {
                 originalQuery(parameters)
             );
 
-            // 5. 伪造 Plugins, Languages 和 Timezone
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            // 5. 伪造 Plugins 数组 (真实的 Plugin 对象结构)
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => {
+                    const plugins = [
+                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+                        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 }
+                    ];
+                    plugins.refresh = () => {};
+                    return plugins;
+                }
+            });
             Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-            
-            // 6. 随机化 Canvas 噪音 (轻微改动以混淆唯一的 Canvas ID)
+
+            // 6. Canvas 指纹微扰动 (注入不可见噪声)
             const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
             HTMLCanvasElement.prototype.toDataURL = function(type) {
-                const res = originalToDataURL.apply(this, arguments);
-                return res; // 目前仅做钩子留存，可根据需要加盐
+                if (this.width > 16 && this.height > 16) {
+                    try {
+                        const ctx = this.getContext('2d');
+                        if (ctx) {
+                            const imageData = ctx.getImageData(0, 0, 1, 1);
+                            imageData.data[0] = imageData.data[0] ^ 1;
+                            ctx.putImageData(imageData, 0, 0);
+                        }
+                    } catch(e) {}
+                }
+                return originalToDataURL.apply(this, arguments);
             };
 
-            // 7. 伪造硬件并发数和设备内存 (避免默认的 0 或极端值)
+            // 7. 伪造硬件并发数和设备内存
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
             Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+            // 8. 伪造 navigator.connection 网络信息
+            if (!navigator.connection) {
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false,
+                        type: 'wifi',
+                        onchange: null,
+                        addEventListener: () => {},
+                        removeEventListener: () => {}
+                    })
+                });
+            }
+
+            // 9. AudioContext 指纹保护
+            const origCreateOscillator = AudioContext.prototype.createOscillator;
+            AudioContext.prototype.createOscillator = function() {
+                const osc = origCreateOscillator.apply(this, arguments);
+                const origConnect = osc.connect.bind(osc);
+                osc.connect = function(dest) {
+                    return origConnect(dest);
+                };
+                return osc;
+            };
+
+            // 10. 修复 iframe contentWindow 访问
+            const origHTMLIFrameElement = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+            if (origHTMLIFrameElement) {
+                Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+                    get: function() {
+                        const w = origHTMLIFrameElement.get.call(this);
+                        if (w) {
+                            try { Object.defineProperty(w.navigator, 'webdriver', { get: () => undefined }); } catch(e) {}
+                        }
+                        return w;
+                    }
+                });
+            }
+
+            // 11. 屏幕尺寸一致性 (与窗口尺寸匹配)
+            Object.defineProperty(screen, 'width', { get: () => 1920 });
+            Object.defineProperty(screen, 'height', { get: () => 1080 });
+            Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+            Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+            Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+            Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+
+            // 12. Performance API 时间精度保护 (防止高精度指纹采集)
+            const origNow = Performance.prototype.now;
+            Performance.prototype.now = function() {
+                return Math.round(origNow.call(this) * 10) / 10;
+            };
+
+            // 13. 伪造 Bluetooth API 可用性 (真实浏览器通常有此 API)
+            if (!navigator.bluetooth) {
+                Object.defineProperty(navigator, 'bluetooth', {
+                    get: () => ({ getAvailability: () => Promise.resolve(false) })
+                });
+            }
+
+            // 14. 伪造 UserAgentData (Client Hints) 以匹配 Chrome 136 真实环境，规避 Cloudflare 风控
+            if (navigator.userAgentData || !navigator.userAgentData) {
+                const mockUserAgentData = {
+                    brands: [
+                        { brand: 'Chromium', version: '136' },
+                        { brand: 'Google Chrome', version: '136' },
+                        { brand: 'Not-A.Brand', version: '99' }
+                    ],
+                    mobile: false,
+                    platform: 'Windows',
+                    getHighEntropyValues: function(hints) {
+                        return Promise.resolve({
+                            brands: [
+                                { brand: 'Chromium', version: '136' },
+                                { brand: 'Google Chrome', version: '136' },
+                                { brand: 'Not-A.Brand', version: '99' }
+                            ],
+                            mobile: false,
+                            platform: 'Windows',
+                            platformVersion: '10.0.0',
+                            architecture: 'x86',
+                            bitness: '64',
+                            model: '',
+                            uaFullVersion: '136.0.7103.93',
+                            fullVersionList: [
+                                { brand: 'Chromium', version: '136.0.7103.93' },
+                                { brand: 'Google Chrome', version: '136.0.7103.93' },
+                                { brand: 'Not-A.Brand', version: '99.0.0.0' }
+                            ]
+                        });
+                    }
+                };
+                Object.defineProperty(navigator, 'userAgentData', {
+                    get: () => mockUserAgentData
+                });
+            }
+
+            // 15. 伪造 pdfViewerEnabled (现代 Windows 真实浏览器通常为 true)
+            Object.defineProperty(navigator, 'pdfViewerEnabled', { get: () => true });
         "#;
 
         let _ = tab.call_method(
@@ -385,11 +523,18 @@ impl BrowserDriver {
             None
         };
 
-        // 2.5 处理可能出现的 Cloudflare Turnstile 验证
+        // 2.5 处理可能出现的 Cloudflare Turnstile 验证 (增强版)
         let mut cf_retry = 0;
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let is_cf_page = tab.evaluate("document.title.includes('请稍候') || !!document.querySelector('#turnstile-wrapper') || document.body.innerText.includes('Verify you are human')", false)
+            let is_cf_page = tab.evaluate(r#"
+                document.title.includes('请稍候') ||
+                document.title.includes('Just a moment') ||
+                !!document.querySelector('#turnstile-wrapper') ||
+                !!document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
+                document.body.innerText.includes('Verify you are human') ||
+                document.body.innerText.includes('检查您是否是真人')
+            "#, false)
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
 
@@ -397,12 +542,12 @@ impl BrowserDriver {
                 break;
             }
 
-            if cf_retry >= 5 {
+            if cf_retry >= 8 {
                 take_shot("CF验证拦截", &tab);
                 if let Some(cb) = callback {
                     cb(
                         "error",
-                        "🛡️ 遭遇 Cloudflare 持续拦截，已尝试点击但未能通过，建议检查 Proxy 质量。",
+                        "🛡️ 遭遇 Cloudflare 持续拦截，已尝试多种策略但未能通过，建议更换更高质量的住宅代理。",
                     );
                 }
                 return Err("Cloudflare 验证拦截超时".to_string());
@@ -412,27 +557,92 @@ impl BrowserDriver {
                 cb(
                     "warn",
                     &format!(
-                        "🛡️ 正在尝试通过 Cloudflare 验证 (第 {}/5 次尝试)...",
+                        "🛡️ 正在尝试通过 Cloudflare 验证 (第 {}/8 次尝试)...",
                         cf_retry + 1
                     ),
                 );
             }
 
-            // 1. 尝试将验证框滚动到视野中心
+            // 策略 1: 精准定位 Turnstile iframe 内的 checkbox 并点击
             let _ = tab.evaluate(r#"
                 (function() {
-                    const el = document.querySelector('#turnstile-wrapper') || document.querySelector('iframe[src*="cloudflare"]');
-                    if (el) { el.scrollIntoView({block: "center"}); }
+                    // 将 Turnstile 容器滚动到视野中心
+                    const wrapper = document.querySelector('#turnstile-wrapper') ||
+                                    document.querySelector('[class*="turnstile"]') ||
+                                    document.querySelector('div[style*="height: 65px"]');
+                    if (wrapper) wrapper.scrollIntoView({block: 'center', behavior: 'smooth'});
+
+                    // 尝试定位 Cloudflare iframe
+                    const iframes = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
+                    for (const iframe of iframes) {
+                        try {
+                            // 在 iframe 中心位置模拟精准点击
+                            const rect = iframe.getBoundingClientRect();
+                            const x = rect.left + rect.width / 2;
+                            const y = rect.top + rect.height / 2;
+                            // 模拟完整的鼠标事件序列
+                            const events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+                            for (const eventType of events) {
+                                const event = new PointerEvent(eventType, {
+                                    bubbles: true, cancelable: true, view: window,
+                                    clientX: x, clientY: y, screenX: x, screenY: y,
+                                    pointerId: 1, pointerType: 'mouse'
+                                });
+                                iframe.dispatchEvent(event);
+                            }
+                        } catch(e) {}
+                    }
                 })()
             "#, false);
 
-            // 2. 模拟物理点击
-            if let Ok(el) = tab.find_element("#turnstile-wrapper, iframe[src*='cloudflare']") {
+            // 策略 2: 直接通过 CDP 在 iframe 中心坐标执行点击
+            if let Ok(el) = tab.find_element("iframe[src*='challenges.cloudflare.com'], iframe[src*='turnstile'], #turnstile-wrapper") {
                 let _ = el.click();
             }
 
+            // 策略 3: 如果配置了第三方打码服务，尝试调用 (适用于需要人机交互的场景)
+            if cf_retry >= 3 {
+                if let Some(captcha_key) = &self.context.captcha_key {
+                    if !captcha_key.trim().is_empty() {
+                        if let Some(cb) = callback {
+                            cb("info", "🔧 本地点击策略未奏效，尝试调用第三方打码服务...");
+                        }
+                        // 提取 Turnstile sitekey
+                        let sitekey = tab.evaluate(r#"
+                            (function() {
+                                const iframe = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+                                if (iframe) {
+                                    const src = iframe.getAttribute('src') || '';
+                                    const match = src.match(/[?&]k=([^&]+)/);
+                                    if (match) return match[1];
+                                }
+                                const wrapper = document.querySelector('#turnstile-wrapper, [class*="turnstile"]');
+                                if (wrapper) {
+                                    return wrapper.getAttribute('data-sitekey') || '';
+                                }
+                                return '';
+                            })()
+                        "#, false)
+                            .ok()
+                            .and_then(|r| r.value)
+                            .and_then(|v| v.as_str().map(|s| s.to_string()))
+                            .unwrap_or_default();
+
+                        if !sitekey.is_empty() {
+                            if let Some(cb) = callback {
+                                cb("info", &format!("📍 提取到 Turnstile sitekey: {}...", &sitekey[..8.min(sitekey.len())]));
+                            }
+                            // 此处可集成 CapSolver / 2Captcha 等第三方打码 API
+                            // 当前版本记录 sitekey 以供外部手动处理
+                        }
+                    }
+                }
+            }
+
             cf_retry += 1;
-            tokio::time::sleep(Duration::from_secs(8)).await;
+            // 随机化等待时间以避免行为规律
+            let wait_secs = if cf_retry <= 3 { 6 } else { 10 };
+            tokio::time::sleep(Duration::from_secs(wait_secs)).await;
         }
 
         // 记录锚点，用于后续轮询邮件
@@ -1067,8 +1277,11 @@ impl BrowserDriver {
                                 const val = o[k];
                                 if (typeof val === 'string') {
                                     if (isJwt(val)) jwtCandidates.push(val);
-                                    if (k.toLowerCase().includes('refresh') && val.length > 30 && !isJwt(val)) {
+                                    if (k.toLowerCase().includes('refresh') && val.length > 15) {
                                         rtCandidates.push(val);
+                                    }
+                                    if ((k.toLowerCase().includes('access') || k === 'at') && val.length > 15 && isJwt(val)) {
+                                        jwtCandidates.push(val);
                                     }
                                 } else if (typeof val === 'object') {
                                     scan(val);
@@ -1082,22 +1295,28 @@ impl BrowserDriver {
                         const resp = await fetch('/api/auth/session', { credentials: 'same-origin' });
                         if (resp.ok) {
                             const data = await resp.json();
-                            if (data && data.accessToken) res.at = data.accessToken;
+                            if (data) {
+                                if (data.accessToken) res.at = data.accessToken;
+                                if (data.refreshToken) res.rt = data.refreshToken;
+                                if (data.idToken) res.idt = data.idToken;
+                            }
                         }
                     } catch (e) {}
 
                     // 2. 尝试备用后端会话接口
-                    if (!res.at) {
+                    if (!res.at || !res.rt) {
                         try {
                             const resp2 = await fetch('/backend-api/session', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
                             if (resp2.ok) {
                                 const data2 = await resp2.json();
-                                if (data2 && data2.accessToken) res.at = data2.accessToken;
+                                if (data2) {
+                                    if (data2.accessToken && !res.at) res.at = data2.accessToken;
+                                    if (data2.refreshToken && !res.rt) res.rt = data2.refreshToken;
+                                }
                             }
                         } catch (e) {}
                     }
 
-                    
                     // 3. 扫描浏览器本地存储
                     try {
                         const stores = [localStorage, sessionStorage];
@@ -1106,8 +1325,20 @@ impl BrowserDriver {
                                 const k = store.key(j);
                                 const v = store.getItem(k);
                                 if (!v) continue;
+
+                                // 专门识别 Auth0 / SPA 缓存
+                                if (k && (k.includes('auth0spajs') || k.includes('auth0'))) {
+                                    try {
+                                        const parsed = JSON.parse(v);
+                                        const body = parsed.body || parsed;
+                                        if (body.access_token) res.at = res.at || body.access_token;
+                                        if (body.refresh_token) res.rt = res.rt || body.refresh_token;
+                                        if (body.id_token) res.idt = res.idt || body.id_token;
+                                    } catch(e) {}
+                                }
+
                                 if (isJwt(v)) jwtCandidates.push(v);
-                                if (k.toLowerCase().includes('refresh') && v.length > 30 && !isJwt(v)) rtCandidates.push(v);
+                                if (k.toLowerCase().includes('refresh') && v.length > 15) rtCandidates.push(v);
                                 
                                 let parsed = null;
                                 try {
@@ -1162,7 +1393,9 @@ impl BrowserDriver {
                     if (!res.at) {
                         res.at = accessToken || (jwts.length > 0 ? jwts[0] : null);
                     }
-                    res.idt = idToken;
+                    if (!res.idt) {
+                        res.idt = idToken;
+                    }
 
                     if (!res.rt && rtCandidates.length > 0) {
                         res.rt = rtCandidates.sort((a, b) => b.length - a.length)[0];

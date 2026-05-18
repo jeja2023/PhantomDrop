@@ -5,7 +5,6 @@ import {
   Loader2,
   Shield,
   Activity,
-  CheckCircle2,
   Copy,
   ExternalLink,
   Radar,
@@ -13,6 +12,8 @@ import {
 } from 'lucide-react'
 import { fetchJson, postJson } from '../lib/api'
 import type { CloudflareAutomationStatus, PhantomSettingsUpdatedDetail, SettingsPayload } from '../types'
+import { useClipboard } from '../ui/useClipboard'
+import { useToast } from '../ui/Toast'
 
 type CloudflareMode = 'local_trycloudflare' | 'public_ip' | 'public_domain'
 type CpaAuthStatus = 'authenticated' | 'unauthenticated' | 'invalid'
@@ -20,9 +21,10 @@ type CpaAuthStatusResponse = { status: CpaAuthStatus; email?: string }
 type CpaExchangeResponse = { status: 'success' | 'error'; email?: string; message?: string }
 
 export default function SettingsView() {
+  const showToast = useToast()
+  const copy = useClipboard()
   const [isSaving, setIsSaving] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [showToast, setShowToast] = useState(false)
   const [webhookUrl, setWebhookUrl] = useState('')
   const [accountDomain, setAccountDomain] = useState('phantom.local')
   const [updateRate, setUpdateRate] = useState(1000)
@@ -123,8 +125,7 @@ export default function SettingsView() {
     setIsSaving(true)
     try {
       await persistSettings()
-      setShowToast(true)
-      window.setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '配置同步成功', desc: '设置已写入后端。' })
     } finally {
       setIsSaving(false)
     }
@@ -140,8 +141,7 @@ export default function SettingsView() {
       })
       const status = await fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status')
       setAutomationStatus(status)
-      setShowToast(true)
-      window.setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '配置同步成功', desc: '设置已写入后端。' })
     } finally {
       setIsSaving(false)
     }
@@ -162,7 +162,7 @@ export default function SettingsView() {
   }
 
   const handleCopy = async (value: string) => {
-    await navigator.clipboard.writeText(value)
+    await copy(value)
   }
 
   const actionBusy = isSaving || isLoading || automationStatus?.running
@@ -173,7 +173,7 @@ export default function SettingsView() {
       setCpaCodeVerifier(res.code_verifier)
       window.open(res.url, '_blank')
     } catch {
-      alert('获取 OAuth 链接失败')
+      showToast({ title: '获取 OAuth 链接失败', tone: 'error' })
     }
   }
 
@@ -191,10 +191,10 @@ export default function SettingsView() {
         setCpaCallbackUrl('')
         setCpaCodeVerifier('')
       } else {
-        alert('授权失败，请检查 URL 是否正确')
+        showToast({ title: '授权失败', desc: '请检查 URL 是否正确', tone: 'error' })
       }
     } catch {
-      alert('令牌交换请求失败')
+      showToast({ title: '令牌交换请求失败', tone: 'error' })
     } finally {
       setIsExchanging(false)
     }
@@ -202,18 +202,6 @@ export default function SettingsView() {
 
   return (
     <div className="page-shell relative min-w-0 space-y-2.5 animate-in fade-in slide-in-from-top-4 duration-500 pb-4 overflow-y-auto">
-      <div className={`fixed top-20 right-10 z-[100] transition-all duration-500 transform ${showToast ? 'translate-y-0 opacity-100' : '-translate-y-12 opacity-0 pointer-events-none'}`}>
-        <div className="rounded-2xl border border-emerald-100 bg-white px-6 py-3 shadow-2xl shadow-emerald-500/10">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="text-emerald-500" size={20} />
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-slate-800">配置同步成功</span>
-              <span className="text-[10px] text-slate-500 font-mono">设置已写入后端。</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="flex items-center justify-between gap-4 border-b border-slate-100/60 pb-2">
         <div className="flex items-baseline gap-3">
           <h1 className="text-xl font-black tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors"></h1>

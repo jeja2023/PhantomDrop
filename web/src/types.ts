@@ -173,8 +173,11 @@ export interface DashboardStats {
   active_webhooks: number
   workflow_runs_24h: number
   successful_runs_24h: number
-  total_accounts?: number
-  today_accounts_24h?: number
+  total_accounts: number
+  today_accounts_24h: number
+  gateway_requests_24h: number
+  active_pool_accounts: number
+  cooling_accounts: number
   latest_email_at: number | null
 }
 
@@ -201,6 +204,16 @@ export interface GeneratedAccountRecord {
   upload_status?: string | null
   account_type?: string | null
   proxy_url?: string | null
+  pool_tag?: string | null
+  last_used_at?: number | null
+  rate_limit_reset_at?: number | null
+  consecutive_failures?: number | null
+  request_count_24h?: number | null
+  last_failure_reason?: string | null
+  proxy_rtt?: number | null
+  proxy_ip_type?: string | null
+  proxy_status?: string | null
+  proxy_last_checked_at?: number | null
 }
 
 export interface EmailPageResponse {

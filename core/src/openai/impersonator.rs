@@ -6,7 +6,7 @@ use std::time::Duration;
 pub struct ImpersonateProvider;
 
 impl ImpersonateProvider {
-    /// 创建一个模拟 Chrome 124 最新版的客户端
+    /// 创建一个模拟 Chrome 136 最新版的客户端
     /// 通过自定义 headers 注入一致的浏览器头部信息
     pub fn create_chrome_client(proxy_url: Option<&str>) -> Client {
         let mut builder = Client::builder()
@@ -21,7 +21,7 @@ impl ImpersonateProvider {
             }
         }
 
-        // 注入标准的 Chrome 124 Client Hints 和基本头部，确保与 TLS 指纹匹配
+        // 注入标准的 Chrome 136 Client Hints 和基本头部，确保与 TLS 指纹匹配
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             "user-agent",
@@ -31,7 +31,7 @@ impl ImpersonateProvider {
         );
         headers.insert(
             "sec-ch-ua",
-            "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\""
+            crate::openai::constants::SEC_CH_UA
                 .parse()
                 .unwrap(),
         );
@@ -39,6 +39,13 @@ impl ImpersonateProvider {
         headers.insert("sec-ch-ua-platform", "\"Windows\"".parse().unwrap());
         headers.insert("upgrade-insecure-requests", "1".parse().unwrap());
         headers.insert("accept-language", "en-US,en;q=0.9".parse().unwrap());
+        // 增强：添加 sec-ch-ua-full-version-list 以匹配真实 Chrome 136 指纹
+        headers.insert(
+            "sec-ch-ua-full-version-list",
+            "\"Chromium\";v=\"136.0.7103.93\", \"Google Chrome\";v=\"136.0.7103.93\", \"Not-A.Brand\";v=\"99.0.0.0\""
+                .parse()
+                .unwrap(),
+        );
 
         builder
             .default_headers(headers)

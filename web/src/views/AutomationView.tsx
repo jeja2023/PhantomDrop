@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Zap, Play, CheckCircle2, Loader2, Save, Plus, Trash2, Download, Copy, Square, X } from 'lucide-react'
+import { Zap, Play, Loader2, Save, Plus, Trash2, Download, Copy, Square, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
 import { redactMessage } from '../lib/utils'
@@ -16,6 +16,9 @@ import type {
 } from '../types'
 import SnapshotModal from '../ui/SnapshotModal'
 import ProxyModal from '../ui/ProxyModal'
+import { RunStatusBadge, StepStatusBadge } from '../ui/StatusBadge'
+import { useClipboard } from '../ui/useClipboard'
+import { useToast } from '../ui/Toast'
 
 function buildRunQuery(
   page: number,
@@ -36,8 +39,8 @@ function buildRunQuery(
 }
 
 export default function AutomationView({ refreshIntervalMs }: { refreshIntervalMs: number }) {
-  const [showToast, setShowToast] = useState(false)
-  const [toastContent, setToastContent] = useState({ title: '', desc: '' })
+  const showToast = useToast()
+  const copy = useClipboard()
   const [isLoading, setIsLoading] = useState(true)
   const [runningId, setRunningId] = useState<string | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -128,9 +131,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
         setSelectedRunId(workflowRuns.items[0]?.id ?? null)
       } catch (error) {
         const message = error instanceof Error ? error.message : '读取工作流定义失败'
-        setToastContent({ title: '工作流读取失败', desc: message })
-        setShowToast(true)
-        setTimeout(() => setShowToast(false), 3000)
+        showToast({ title: '工作流读取失败', desc: message, tone: 'error', durationMs: 3000 })
       } finally {
         setIsLoading(false)
       }
@@ -175,14 +176,10 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
       await postJson<{ status: string; run_id: string }, { workflow_id: string }>('/api/workflows/trigger', { workflow_id: workflow.id })
       const latestRuns = await loadRuns(1, runPageSize, false, runStatusFilter, runWorkflowFilter, runWorkflowMatch)
       if (latestRuns[0]?.id) setSelectedRunId(latestRuns[0].id)
-      setToastContent({ title: '指令已下发', desc: `工作流“${workflow.title}”已进入异步执行队列。` })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 2000)
+      showToast({ title: '指令已下发', desc: `工作流“${workflow.title}”已进入异步执行队列。`, durationMs: 2000 })
     } catch (error) {
       const message = error instanceof Error ? error.message : '触发失败'
-      setToastContent({ title: '触发失败', desc: message })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '触发失败', desc: message, tone: 'error', durationMs: 3000 })
     } finally {
       setRunningId(null)
     }
@@ -210,15 +207,11 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
           parameters_json: JSON.stringify(workflow.parameters ?? {}),
         },
       )
-      setToastContent({ title: '工作流已保存', desc: `${workflow.title} 的定义已写入数据库。` })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 2000)
+      showToast({ title: '工作流已保存', desc: `${workflow.title} 的定义已写入数据库。`, durationMs: 2000 })
       setEditingWorkflowId(null)
     } catch (error) {
       const message = error instanceof Error ? error.message : '保存失败'
-      setToastContent({ title: '保存失败', desc: message })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '保存失败', desc: message, tone: 'error', durationMs: 3000 })
     } finally {
       setSavingId(null)
     }
@@ -241,24 +234,18 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
       if (editingWorkflowId === workflowId) setEditingWorkflowId(null)
     } catch (error) {
       const message = error instanceof Error ? error.message : '删除失败'
-      setToastContent({ title: '删除失败', desc: message })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '删除失败', desc: message, tone: 'error', durationMs: 3000 })
     }
   }
 
   const handleStopRun = async (runId: string) => {
     try {
       await postJson<{ status: string }, Record<string, never>>(`/api/workflow-runs/${runId}/stop`, {})
-      setToastContent({ title: '已发送终止指令', desc: '正在尝试安全停止工作流执行。' })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 2000)
+      showToast({ title: '已发送终止指令', desc: '正在尝试安全停止工作流执行。', durationMs: 2000 })
       void loadRuns(runPage, runPageSize, true)
     } catch (error) {
       const message = error instanceof Error ? error.message : '停止失败'
-      setToastContent({ title: '停止失败', desc: message })
-      setShowToast(true)
-      setTimeout(() => setShowToast(false), 3000)
+      showToast({ title: '停止失败', desc: message, tone: 'error', durationMs: 3000 })
     }
   }
 
@@ -275,7 +262,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
   const copyAccounts = async () => {
     if (accounts.length === 0) return
     const payload = accounts.map((account) => `${account.address},${account.password},${account.status}`).join('\n')
-    await navigator.clipboard.writeText(payload)
+    await copy(payload, { title: '任务产物已复制', desc: `${accounts.length} 条产物已写入剪贴板。` })
     setCopiedOutput(true)
     setTimeout(() => setCopiedOutput(false), 1500)
   }
@@ -288,16 +275,6 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
 
   return (
     <div className="page-shell min-w-0 space-y-6 animate-in fade-in slide-in-from-right-4 duration-500 pb-8">
-      <div className={`fixed right-10 top-20 z-[100] transform transition-all duration-500 ${showToast ? 'translate-y-0 opacity-100' : '-translate-y-12 pointer-events-none opacity-0'}`}>
-        <div className="flex items-center gap-3 rounded-2xl border border-emerald-100 bg-white px-6 py-3 shadow-2xl shadow-emerald-500/10">
-          <CheckCircle2 className="text-emerald-500" size={20} />
-          <div className="flex flex-col">
-            <span className="text-sm font-bold text-slate-800">{toastContent.title}</span>
-            <span className="text-[10px] text-slate-500 font-mono">{toastContent.desc}</span>
-          </div>
-        </div>
-      </div>
-
       <PageHeader
         title=""
         kicker=""
@@ -431,7 +408,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                           <Square size={12} fill="currentColor" />
                         </button>
                       )}
-                      <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${statusTone(run.status)}`}>{translateRunStatus(run.status)}</span>
+                      <RunStatusBadge status={run.status} />
                     </div>
                   </div>
                   <div className="mt-2 text-[13px] leading-relaxed text-slate-600">{run.message}</div>
@@ -526,7 +503,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
                   <div key={step.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5 group hover:bg-slate-50 transition-colors">
                     <div className="flex items-center justify-between gap-4">
                       <div className="font-mono text-[15px] font-bold text-slate-900">第 {step.step_index} 步</div>
-                      <span className={`rounded-full px-3 py-1 text-[10px] font-black tracking-widest ${stepTone(step.level)}`}>{translateStepLevel(step.level)}</span>
+                      <StepStatusBadge level={step.level} />
                     </div>
                     <div className="mt-2 text-[13px] leading-relaxed text-slate-600">
                       {renderMessage(step.message)}
@@ -840,58 +817,3 @@ function translateWorkflowKind(kind: WorkflowKind) {
   }
 }
 
-function translateRunStatus(status: WorkflowRunRecord['status']) {
-  switch (status) {
-    case 'running':
-      return '运行中'
-    case 'success':
-      return '成功'
-    case 'warn':
-      return '警告'
-    case 'cancelled':
-      return '已取消'
-  }
-}
-
-function translateStepLevel(level: WorkflowStepRecord['level']) {
-  switch (level) {
-    case 'running':
-      return '运行中'
-    case 'success':
-      return '成功'
-    case 'warn':
-      return '警告'
-    case 'info':
-      return '信息'
-    case 'cancelled':
-      return '已取消'
-  }
-}
-
-function statusTone(status: WorkflowRunRecord['status']) {
-  switch (status) {
-    case 'success':
-      return 'bg-emerald-500/10 text-emerald-600'
-    case 'warn':
-      return 'bg-amber-500/10 text-amber-600'
-    case 'running':
-      return 'bg-blue-500/10 text-blue-600'
-    case 'cancelled':
-      return 'bg-slate-500/10 text-slate-600'
-  }
-}
-
-function stepTone(level: WorkflowStepRecord['level']) {
-  switch (level) {
-    case 'success':
-      return 'bg-emerald-500/10 text-emerald-600'
-    case 'warn':
-      return 'bg-amber-500/10 text-amber-600'
-    case 'running':
-      return 'bg-blue-500/10 text-blue-600'
-    case 'info':
-      return 'bg-slate-200 text-slate-600'
-    case 'cancelled':
-      return 'bg-neutral-500/10 text-neutral-600'
-  }
-}

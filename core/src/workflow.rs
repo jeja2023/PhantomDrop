@@ -1012,35 +1012,54 @@ impl WorkflowEngine {
                             )
                             .await;
 
-                        // 执行账号分发 (如果配置了分发平台)
-                        if let (Some(cpa_url), Some(cpa_key)) =
-                            (&parameters.cpa_url, &parameters.cpa_key)
-                        {
-                            if !cpa_url.trim().is_empty() {
-                                Self::log_step(
-                                    hub,
-                                    dl,
-                                    context,
-                                    "info",
-                                    &format!(
-                                        "[{}/{}] 准备推送账号至分发平台...",
-                                        index + 1,
-                                        batch_size
-                                    ),
-                                )
-                                .await;
-                                let client = reqwest::Client::new();
-                                let payload = serde_json::json!({
-                                    "email": result.email,
-                                    "password": result.password,
-                                    "access_token": result.access_token,
-                                    "refresh_token": result.refresh_token,
-                                    "session_token": result.session_token,
-                                });
+                        // 获取 CPA 分发参数 (参数优先，全局设置/Codex 授权令牌兜底)
+                        let mut final_cpa_url = parameters.cpa_url.clone().unwrap_or_default();
+                        let mut final_cpa_key = parameters.cpa_key.clone().unwrap_or_default();
+
+                        if final_cpa_url.trim().is_empty() {
+                            if let Ok(Some(u)) = dl.get_setting("cpa_url").await {
+                                final_cpa_url = u;
+                            }
+                        }
+                        if final_cpa_key.trim().is_empty() {
+                            if let Ok(Some(k)) = dl.get_setting("cpa_key").await {
+                                final_cpa_key = k;
+                            }
+                        }
+                        if final_cpa_key.trim().is_empty() {
+                            if let Ok(Some(auth_json)) = dl.get_setting("cpa_auth_json").await {
+                                if let Ok(auth_data) = serde_json::from_str::<crate::openai::oauth::CodexAuthData>(&auth_json) {
+                                    final_cpa_key = auth_data.access_token;
+                                }
+                            }
+                        }
+
+                        if !final_cpa_url.trim().is_empty() && !final_cpa_key.trim().is_empty() {
+                            let mut cpa_url_endpoint = final_cpa_url.trim().to_string();
+                            if !cpa_url_endpoint.contains("/v0/") && !cpa_url_endpoint.contains("/api/") {
+                                cpa_url_endpoint = format!("{}/v0/management/auth-files", cpa_url_endpoint.trim_end_matches('/'));
+                            }
+
+                            Self::log_step(
+                                hub,
+                                dl,
+                                context,
+                                "info",
+                                &format!(
+                                    "[{}/{}] 准备推送账号至分发平台...",
+                                    index + 1,
+                                    batch_size
+                                ),
+                            )
+                            .await;
+
+                            let client = reqwest::Client::new();
+                            if let Ok(Some(acc)) = dl.get_generated_account(&account_id).await {
+                                let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Cpa);
                                 match crate::uploader::upload_account_multipart(
                                     &client,
-                                    cpa_url.trim(),
-                                    cpa_key.trim(),
+                                    &cpa_url_endpoint,
+                                    final_cpa_key.trim(),
                                     payload,
                                 )
                                 .await
@@ -1077,6 +1096,19 @@ impl WorkflowEngine {
                                         .await;
                                     }
                                 }
+                            } else {
+                                Self::log_step(
+                                    hub,
+                                    dl,
+                                    context,
+                                    "error",
+                                    &format!(
+                                        "[{}/{}] 账号分发失败：无法从数据库读取生成的账号详情",
+                                        index + 1,
+                                        batch_size
+                                    ),
+                                )
+                                .await;
                             }
                         }
                     }
@@ -1323,6 +1355,106 @@ impl WorkflowEngine {
                             &format!("✅ 账号及其凭证已保存至数据库: {}", email),
                         )
                         .await;
+
+                        // 获取 CPA 分发参数 (参数优先，全局设置/Codex 授权令牌兜底)
+                        let mut final_cpa_url = parameters.cpa_url.clone().unwrap_or_default();
+                        let mut final_cpa_key = parameters.cpa_key.clone().unwrap_or_default();
+
+                        if final_cpa_url.trim().is_empty() {
+                            if let Ok(Some(u)) = dl.get_setting("cpa_url").await {
+                                final_cpa_url = u;
+                            }
+                        }
+                        if final_cpa_key.trim().is_empty() {
+                            if let Ok(Some(k)) = dl.get_setting("cpa_key").await {
+                                final_cpa_key = k;
+                            }
+                        }
+                        if final_cpa_key.trim().is_empty() {
+                            if let Ok(Some(auth_json)) = dl.get_setting("cpa_auth_json").await {
+                                if let Ok(auth_data) = serde_json::from_str::<crate::openai::oauth::CodexAuthData>(&auth_json) {
+                                    final_cpa_key = auth_data.access_token;
+                                }
+                            }
+                        }
+
+                        if !final_cpa_url.trim().is_empty() && !final_cpa_key.trim().is_empty() {
+                            let mut cpa_url_endpoint = final_cpa_url.trim().to_string();
+                            if !cpa_url_endpoint.contains("/v0/") && !cpa_url_endpoint.contains("/api/") {
+                                cpa_url_endpoint = format!("{}/v0/management/auth-files", cpa_url_endpoint.trim_end_matches('/'));
+                            }
+
+                            Self::log_step(
+                                hub,
+                                dl,
+                                context,
+                                "info",
+                                &format!(
+                                    "[{}/{}] 准备推送账号至分发平台...",
+                                    index + 1,
+                                    batch_size
+                                ),
+                            )
+                            .await;
+
+                            let client = reqwest::Client::new();
+                            if let Ok(Some(acc)) = dl.get_generated_account(&account_id).await {
+                                let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Cpa);
+                                match crate::uploader::upload_account_multipart(
+                                    &client,
+                                    &cpa_url_endpoint,
+                                    final_cpa_key.trim(),
+                                    payload,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        let _ = dl
+                                            .update_account_upload_status(&account_id, "success")
+                                            .await;
+                                        Self::log_step(
+                                            hub,
+                                            dl,
+                                            context,
+                                            "success",
+                                            &format!("[{}/{}] 账号分发成功", index + 1, batch_size),
+                                        )
+                                        .await;
+                                    }
+                                    Err(e) => {
+                                        let _ = dl
+                                            .update_account_upload_status(&account_id, "failed")
+                                            .await;
+                                        Self::log_step(
+                                            hub,
+                                            dl,
+                                            context,
+                                            "error",
+                                            &format!(
+                                                "[{}/{}] 账号分发失败: {}",
+                                                index + 1,
+                                                batch_size,
+                                                e
+                                            ),
+                                        )
+                                        .await;
+                                    }
+                                }
+                            } else {
+                                Self::log_step(
+                                    hub,
+                                    dl,
+                                    context,
+                                    "error",
+                                    &format!(
+                                        "[{}/{}] 账号分发失败：无法从数据库读取生成的账号详情",
+                                        index + 1,
+                                        batch_size
+                                    ),
+                                )
+                                .await;
+                            }
+                        }
                     } else {
                         Self::log_step(
                             hub,

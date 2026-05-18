@@ -59,26 +59,8 @@ impl AppConfig {
         })
     }
 
-    pub fn cors_layer(&self) -> CorsLayer {
-        let layer = match &self.cors_origins {
-            None => CorsLayer::new().allow_origin(Any),
-            Some(origins) => {
-                if origins.is_empty() {
-                    CorsLayer::new()
-                } else {
-                    CorsLayer::new().allow_origin(origins.clone())
-                }
-            }
-        };
-
-        layer
-            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
-            .allow_headers([
-                CONTENT_TYPE,
-                HeaderName::from_static("x-hub-secret"),
-                HeaderName::from_static("authorization"),
-                HeaderName::from_static("x-auth-token"),
-            ])
+    pub fn cors_layer(&self) -> tower_http::cors::CorsLayer {
+        tower_http::cors::CorsLayer::permissive()
     }
 }
 

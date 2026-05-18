@@ -1,10 +1,7 @@
 import { useCallback, useEffect, type FC, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'framer-motion';
 import {
-  AlertCircle,
   Calendar,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CloudUpload,
@@ -22,8 +19,11 @@ import {
   X,
 } from 'lucide-react';
 import { deleteJson, fetchJson, postJson } from '../lib/api';
-import { maskProxyUrl } from '../lib/utils';
 import type { DashboardStats, GeneratedAccountRecord, LogLevel } from '../types';
+import { AccountStatusBadge } from '../ui/StatusBadge';
+import { FieldCard, SecretField } from '../ui/fields';
+import { useClipboard } from '../ui/useClipboard';
+import { useToast } from '../ui/Toast';
 
 interface AccountPageResponse {
   items: GeneratedAccountRecord[];
@@ -58,16 +58,9 @@ const AccountListView: FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [checkingIds, setCheckingIds] = useState<string[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<GeneratedAccountRecord | null>(null);
-  const [showProxyInDetails, setShowProxyInDetails] = useState(false);
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [showToast, setShowToast] = useState(false);
-  const [toastMsg, setToastMsg] = useState('');
-
-  const showToastMessage = useCallback((message: string) => {
-    setToastMsg(message);
-    setShowToast(true);
-    window.setTimeout(() => setShowToast(false), 2500);
-  }, []);
+  const showToast = useToast();
+  const copy = useClipboard();
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
@@ -97,9 +90,8 @@ const AccountListView: FC = () => {
   };
 
   const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text);
     const message = text.length > 24 ? '数据已复制到剪贴板' : `已复制 ${text}`;
-    showToastMessage(message);
+    void copy(text, { title: message, desc: text.length > 24 ? `${text.slice(0, 20)}...` : undefined });
     emitLog(`用户复制了数据: ${text.slice(0, 20)}...`);
   };
 
@@ -206,7 +198,7 @@ const AccountListView: FC = () => {
         );
 
         const message = `批量状态检查完成，共 ${res.results.length} 条`;
-        showToastMessage(message);
+        showToast(message);
         emitLog(message, 'success');
       }
     } catch (error) {
@@ -225,12 +217,44 @@ const AccountListView: FC = () => {
       const res = await postJson<MessageResponse, IdsBody>('/api/accounts/batch/upload-cpa', { ids: selectedIds });
       if (res.status === 'success') {
         const message = `CPA 上传完成: ${res.message}`;
-        showToastMessage(message);
+        showToast(message);
         emitLog(message, 'success');
       }
     } catch (error) {
       console.error('Failed to upload to CPA:', error);
       emitLog(`CPA 上传失败: ${getErrorMessage(error)}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBatchUpdatePool = async () => {
+    if (selectedIds.length === 0) return;
+
+    const newTag = window.prompt('请输入新的分组池标签（例如: vip、default、free-4o）:');
+    if (newTag === null) return; // 用户取消
+
+    const trimmed = newTag.trim();
+    if (!trimmed) {
+      alert('分池标签不能为空');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await postJson<{ status: string; message: string }, { ids: string[]; pool_tag: string }>(
+        '/api/accounts/batch/update-pool',
+        { ids: selectedIds, pool_tag: trimmed }
+      );
+      if (res.status === 'success') {
+        showToast(res.message);
+        emitLog(res.message, 'success');
+        void loadAccounts();
+        setSelectedIds([]);
+      }
+    } catch (error) {
+      console.error('Failed to batch update pool tag:', error);
+      emitLog(`批量设置分组失败: ${getErrorMessage(error)}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -313,6 +337,28 @@ interface OAuthExportResponse {
     }
   };
 
+  const handleBatchExportSub2apiJson = async () => {
+    if (selectedIds.length === 0) return;
+
+    setLoading(true);
+    try {
+      const res = await postJson<Record<string, unknown>[], IdsBody>('/api/accounts/batch/export?format=sub2api', { ids: selectedIds });
+      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `sub2api_accounts_export_${Date.now()}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      emitLog(`已成功导出 ${res.length} 条 Sub2API 格式账号为 JSON`, 'success');
+    } catch (error) {
+      console.error('Failed to export Sub2API JSON:', error);
+      emitLog(`Sub2API JSON 导出失败: ${getErrorMessage(error)}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const allOnPageSelected = accounts.length > 0 && accounts.every((account) => selectedIds.includes(account.id));
 
@@ -359,6 +405,15 @@ interface OAuthExportResponse {
                 上传 CPA ({selectedIds.length})
               </button>
               <button
+                onClick={() => void handleBatchUpdatePool()}
+                className="phantom-btn phantom-btn--secondary phantom-btn--sm hover:text-indigo-600"
+                disabled={loading}
+                title="批量设置账号分组标签"
+              >
+                <Database size={12} />
+                批量分池 ({selectedIds.length})
+              </button>
+              <button
                 onClick={() => void handleBatchDelete()}
                 className="phantom-btn phantom-btn--danger phantom-btn--sm"
                 disabled={loading}
@@ -381,6 +436,14 @@ interface OAuthExportResponse {
               >
                 <Database size={12} />
                 标准 JSON ({selectedIds.length})
+              </button>
+              <button
+                onClick={() => void handleBatchExportSub2apiJson()}
+                className="phantom-btn phantom-btn--secondary phantom-btn--sm hover:text-amber-600"
+                title="导出选中账号为 Sub2API / NewAPI 格式 JSON"
+              >
+                <Database size={12} />
+                Sub2API JSON ({selectedIds.length})
               </button>
               <button
                 onClick={() => void handleBatchExportOauthJson()}
@@ -517,7 +580,9 @@ interface OAuthExportResponse {
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] font-mono text-slate-400 leading-none">ID: {account.id.slice(0, 8)}...</span>
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                              <span className="text-[10px] font-mono text-slate-400 leading-none">ID: {account.id.slice(0, 8)}...</span>
+                            </div>
                           </div>
                           <IconButton title="复制账号" onClick={() => copyToClipboard(account.address)}>
                             <Copy size={12} />
@@ -555,12 +620,26 @@ interface OAuthExportResponse {
                         </div>
                       </td>
                       <td className="border border-slate-100 px-4 py-1.5">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest border border-slate-200">
-                          {account.account_type || 'FREE'}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest border border-slate-200">
+                            {account.account_type || 'FREE'}
+                          </span>
+                          {account.pool_tag && (
+                            <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[8px] font-black uppercase tracking-wider border border-indigo-100" title={`分组标签: ${account.pool_tag}`}>
+                              🏷️ {account.pool_tag}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="border border-slate-100 px-4 py-1.5">
-                        <StatusBadge status={account.status} />
+                        <div className="flex flex-col gap-1 items-start">
+                          <AccountStatusBadge status={account.status} />
+                          {account.rate_limit_reset_at && account.rate_limit_reset_at > Date.now() / 1000 && (
+                            <span className="bg-sky-50 text-sky-600 border border-sky-100 rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight animate-pulse" title={`API 网关冷却中，预计于 ${new Date(account.rate_limit_reset_at * 1000).toLocaleTimeString()} 解冻`}>
+                              ❄️ 冷却中
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="border border-slate-100 px-4 py-1.5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
@@ -655,34 +734,17 @@ interface OAuthExportResponse {
               <SecretField label="ID Token (OAuth)" value={selectedAccount.id_token} onCopy={copyToClipboard} />
 
               <div className="grid grid-cols-2 gap-4">
-                <InfoBox label="Device ID" value={selectedAccount.device_id || 'N/A'} />
-                <InfoBox label="Workspace ID" value={selectedAccount.workspace_id || 'N/A'} />
-                <InfoBox label="ChatGPT Account ID" value={selectedAccount.chatgpt_account_id || 'N/A'} />
-                <InfoBox label="ChatGPT User ID" value={selectedAccount.chatgpt_user_id || 'N/A'} />
-                <InfoBox label="Organization ID" value={selectedAccount.organization_id || 'N/A'} />
-                <InfoBox label="Plan Type" value={selectedAccount.plan_type || 'N/A'} />
-                <InfoBox label="Expires In" value={selectedAccount.expires_in ? `${selectedAccount.expires_in}s` : 'N/A'} />
-                <InfoBox label="Token Version" value={selectedAccount.token_version ? String(selectedAccount.token_version) : 'N/A'} />
+                <FieldCard label="Device ID" value={selectedAccount.device_id || 'N/A'} />
+                <FieldCard label="Workspace ID" value={selectedAccount.workspace_id || 'N/A'} />
+                <FieldCard label="ChatGPT Account ID" value={selectedAccount.chatgpt_account_id || 'N/A'} />
+                <FieldCard label="ChatGPT User ID" value={selectedAccount.chatgpt_user_id || 'N/A'} />
+                <FieldCard label="Organization ID" value={selectedAccount.organization_id || 'N/A'} />
+                <FieldCard label="Plan Type" value={selectedAccount.plan_type || 'N/A'} />
+                <FieldCard label="Expires In" value={selectedAccount.expires_in ? `${selectedAccount.expires_in}s` : 'N/A'} />
+                <FieldCard label="Token Version" value={selectedAccount.token_version ? String(selectedAccount.token_version) : 'N/A'} />
               </div>
 
               <SecretField label="OAuth Credentials JSON" value={selectedAccount.oauth_credentials_json} onCopy={copyToClipboard} />
-
-              {selectedAccount.proxy_url && (
-                <div className="p-4 rounded-2xl bg-indigo-50/20 border border-indigo-100/50">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">注册代理</p>
-                    <button 
-                      onClick={() => setShowProxyInDetails(!showProxyInDetails)}
-                      className="text-[9px] font-bold text-indigo-400 hover:text-indigo-600 transition-colors"
-                    >
-                      {showProxyInDetails ? '隐藏原始地址' : '显示原始地址'}
-                    </button>
-                  </div>
-                  <code className="text-[11px] font-mono text-indigo-600 break-all">
-                    {showProxyInDetails ? selectedAccount.proxy_url : maskProxyUrl(selectedAccount.proxy_url)}
-                  </code>
-                </div>
-              )}
             </div>
 
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
@@ -693,26 +755,6 @@ interface OAuthExportResponse {
           </div>
         </div>,
         document.body,
-      )}
-
-      {createPortal(
-      <AnimatePresence>
-        {showToast && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, x: '-50%', scale: 0.9 }}
-            animate={{ opacity: 1, y: '-50%', x: '-50%', scale: 1 }}
-            exit={{ opacity: 0, y: -10, x: '-50%', scale: 0.9, transition: { duration: 0.15 } }}
-            style={{ left: '50%', top: '50%' }}
-            className="fixed z-[10010] px-5 py-2.5 bg-slate-900/95 text-white rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-700/50 backdrop-blur-md"
-          >
-            <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-              <CheckCircle2 size={12} className="text-white" />
-            </div>
-            <span className="text-xs font-black tracking-tight whitespace-nowrap">{toastMsg}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>,
-      document.body,
       )}
     </div>
   );
@@ -748,44 +790,6 @@ function IconButton({
   );
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
-      <code className="text-[11px] font-mono text-slate-700 break-all">{value}</code>
-    </div>
-  );
-}
-
-function SecretField({ label, value, onCopy }: { label: string; value: string | null | undefined; onCopy: (value: string) => void }) {
-  return (
-    <div className="space-y-2 group">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</span>
-        {value && (
-          <button onClick={() => onCopy(value)} className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 transition-colors opacity-0 group-hover:opacity-100">
-            复制
-          </button>
-        )}
-      </div>
-      <div className="relative">
-        <textarea
-          readOnly
-          value={value || '暂无 Token 数据'}
-          className={`w-full min-h-[80px] rounded-2xl bg-slate-50 border border-slate-200 p-4 text-[11px] font-mono outline-none resize-none transition-all focus:border-indigo-500 focus:bg-white ${!value ? 'text-slate-400 italic' : 'text-slate-700'}`}
-        />
-        {value && (
-          <div className="absolute top-3 right-3">
-            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center opacity-40 group-hover:opacity-100 transition-opacity">
-              <Lock size={14} />
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function StatItem({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="flex flex-col group">
@@ -795,34 +799,6 @@ function StatItem({ label, value, sub }: { label: string; value: string; sub: st
         <span className="text-[9px] font-black text-slate-300 uppercase italic tracking-widest">{sub}</span>
       </div>
     </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const normalized = status.toLowerCase();
-  const isSuccess = normalized.includes('registered') || normalized === 'success' || normalized.includes('active') || normalized === 'uploaded';
-  const isError = normalized.includes('banned') || normalized.includes('expired') || normalized.includes('invalid');
-  const isNone = normalized.includes('no token');
-  const isUploaded = normalized === 'uploaded';
-
-  return (
-    <span
-      title={`账号状态: ${status}`}
-      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter border shadow-sm transition-all hover:scale-105 active:scale-95 cursor-default ${
-        isUploaded
-          ? 'bg-violet-50 text-violet-600 border-violet-100'
-          : isSuccess
-            ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
-            : isError
-              ? 'bg-rose-50 text-rose-600 border-rose-100'
-              : isNone
-                ? 'bg-slate-100 text-slate-500 border-slate-200'
-                : 'bg-amber-50 text-amber-600 border-amber-100'
-      }`}
-    >
-      {isSuccess ? <CheckCircle2 size={10} /> : <AlertCircle size={10} />}
-      {isUploaded ? '已上传 (CPA)' : status}
-    </span>
   );
 }
 

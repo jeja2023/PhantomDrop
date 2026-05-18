@@ -62,6 +62,10 @@ async fn main() {
     let database_url = std::env::var("PHANTOM_DB_URL")
         .unwrap_or_else(|_| "sqlite://phantom_core.db?mode=rwc".to_string());
     let data_lake = DataLake::new(&database_url).await;
+
+    // 启动代理质量与 RTT 心跳检测后台循环
+    crate::openai::proxy_checker::start_proxy_heartbeat_loop(Arc::clone(&data_lake));
+
     let saved_settings = data_lake.list_settings().await.unwrap_or_default();
     let project_root = detect_project_root();
 

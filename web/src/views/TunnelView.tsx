@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { fetchJson, postJson } from '../lib/api'
 import PageHeader from '../ui/PageHeader'
 import type { TunnelStatus } from '../types'
+import { useClipboard } from '../ui/useClipboard'
 
 const defaultStatus: TunnelStatus = {
   active: false,
@@ -14,6 +15,7 @@ const defaultStatus: TunnelStatus = {
 }
 
 export default function TunnelView() {
+  const copy = useClipboard()
   const [status, setStatus] = useState<TunnelStatus>(defaultStatus)
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -94,12 +96,12 @@ export default function TunnelView() {
     }
   }
 
-  const copyToClipboard = () => {
+  const copyToClipboard = async () => {
     if (!status.url) {
       return
     }
 
-    navigator.clipboard.writeText(status.url)
+    await copy(status.url, { title: '隧道地址已复制' })
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }

@@ -103,6 +103,16 @@ pub struct GeneratedAccountRecord {
     pub upload_status: Option<String>,
     pub account_type: Option<String>,
     pub proxy_url: Option<String>,
+    pub pool_tag: Option<String>,
+    pub last_used_at: Option<i64>,
+    pub rate_limit_reset_at: Option<i64>,
+    pub consecutive_failures: Option<i64>,
+    pub request_count_24h: Option<i64>,
+    pub last_failure_reason: Option<String>,
+    pub proxy_rtt: Option<i64>,
+    pub proxy_ip_type: Option<String>,
+    pub proxy_status: Option<String>,
+    pub proxy_last_checked_at: Option<i64>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow)]
@@ -117,6 +127,9 @@ pub struct DashboardStats {
     pub successful_runs_24h: i64,
     pub total_accounts: i64,
     pub today_accounts_24h: i64,
+    pub gateway_requests_24h: i64,
+    pub active_pool_accounts: i64,
+    pub cooling_accounts: i64,
     pub latest_email_at: Option<i64>,
 }
 
@@ -130,6 +143,7 @@ pub struct EmailPage {
 
 pub struct DataLake {
     pub pool: Pool<Sqlite>,
+    pub write_buffer: std::sync::Mutex<HashMap<String, (i64, i64)>>,
 }
 
 impl DataLake {
@@ -138,7 +152,9 @@ impl DataLake {
                     access_token, refresh_token, session_token, id_token,
                     device_id, workspace_id, chatgpt_account_id, chatgpt_user_id,
                     organization_id, plan_type, expires_in, token_version, oauth_credentials_json,
-                    upload_status, account_type, proxy_url";
+                    upload_status, account_type, proxy_url, pool_tag, last_used_at, rate_limit_reset_at,
+                    consecutive_failures, request_count_24h, last_failure_reason,
+                    proxy_rtt, proxy_ip_type, proxy_status, proxy_last_checked_at";
 
     /// 初始化数据湖连接并确保表结构存在
     pub async fn new(database_url: &str) -> Arc<Self> {
@@ -157,7 +173,23 @@ impl DataLake {
             .expect("数据库迁移失败");
         Self::ensure_legacy_columns(&pool).await;
 
-        Arc::new(Self { pool })
+        let data_lake = Arc::new(Self {
+            pool,
+            write_buffer: std::sync::Mutex::new(HashMap::new()),
+        });
+
+        // 启动异步缓冲批量合并刷盘后台任务，每 10 秒写入一次，极大释放 SQLite 并发锁性能
+        let dl_clone = Arc::clone(&data_lake);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                if let Err(e) = dl_clone.flush_write_buffer().await {
+                    eprintln!("🔴 [写入缓冲区] 异步合并刷盘失败: {:?}", e);
+                }
+            }
+        });
+
+        data_lake
     }
 
     async fn configure_sqlite(pool: &Pool<Sqlite>) {
@@ -212,6 +244,76 @@ impl DataLake {
         .await;
         Self::add_column_if_missing(pool, "generated_accounts", "account_type", "TEXT").await;
         Self::add_column_if_missing(pool, "generated_accounts", "proxy_url", "TEXT").await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "pool_tag",
+            "TEXT DEFAULT 'default'",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "last_used_at",
+            "INTEGER DEFAULT 0",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "rate_limit_reset_at",
+            "INTEGER DEFAULT 0",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "consecutive_failures",
+            "INTEGER DEFAULT 0",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "request_count_24h",
+            "INTEGER DEFAULT 0",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "last_failure_reason",
+            "TEXT",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "proxy_rtt",
+            "INTEGER DEFAULT 0",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "proxy_ip_type",
+            "TEXT DEFAULT 'unknown'",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "proxy_status",
+            "TEXT DEFAULT 'active'",
+        )
+        .await;
+        Self::add_column_if_missing(
+            pool,
+            "generated_accounts",
+            "proxy_last_checked_at",
+            "INTEGER DEFAULT 0",
+        )
+        .await;
     }
 
     async fn add_column_if_missing(
@@ -622,12 +724,17 @@ impl DataLake {
                 (SELECT COUNT(*) FROM workflow_runs WHERE started_at >= ? AND status = 'success') AS successful_runs_24h,
                 (SELECT COUNT(*) FROM generated_accounts) AS total_accounts,
                 (SELECT COUNT(*) FROM generated_accounts WHERE created_at >= ?) AS today_accounts_24h,
+                (SELECT COALESCE(SUM(request_count_24h), 0) FROM generated_accounts) AS gateway_requests_24h,
+                (SELECT COUNT(*) FROM generated_accounts WHERE (status LIKE '%registered%' OR lower(status) LIKE '%success%') AND access_token IS NOT NULL AND access_token != '' AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at <= ?)) AS active_pool_accounts,
+                (SELECT COUNT(*) FROM generated_accounts WHERE rate_limit_reset_at > ?) AS cooling_accounts,
                 (SELECT MAX(created_at) FROM emails) AS latest_email_at"
         )
         .bind(threshold_24h)
         .bind(threshold_24h)
         .bind(threshold_24h)
         .bind(threshold_24h)
+        .bind(now)
+        .bind(now)
         .fetch_one(&self.pool)
         .await?;
 
@@ -1028,6 +1135,48 @@ impl DataLake {
         Ok(())
     }
 
+    /// 更新账号的代理质量数据
+    pub async fn update_proxy_quality(
+        &self,
+        account_id: &str,
+        rtt: i64,
+        ip_type: &str,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE generated_accounts 
+             SET proxy_rtt = ?, proxy_ip_type = ?, proxy_status = ?, proxy_last_checked_at = ? 
+             WHERE id = ?"
+        )
+        .bind(rtt)
+        .bind(ip_type)
+        .bind(status)
+        .bind(Utc::now().timestamp())
+        .bind(account_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// 获取全部绑定了代理的且非熔断非封禁账号记录用于心跳检测
+    pub async fn list_all_accounts_with_proxies(
+        &self,
+    ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
+        let sql = format!(
+            "SELECT {}
+             FROM generated_accounts
+             WHERE proxy_url IS NOT NULL AND proxy_url != ''
+               AND lower(status) NOT LIKE '%zombie%'
+               AND lower(status) NOT LIKE '%banned%'
+               AND lower(status) NOT LIKE '%expired%'",
+            Self::GENERATED_ACCOUNT_COLUMNS
+        );
+        let records = sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(records)
+    }
+
     /// 获取某次运行生成的账号产物
     pub async fn list_generated_accounts(
         &self,
@@ -1210,6 +1359,148 @@ impl DataLake {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
+    }
+
+    /// 更新账号网关运行活动与连续失败次数记录，并在连续失败 3 次以上时执行熔断隔离断路逻辑
+    pub async fn update_account_gateway_activity(
+        &self,
+        id: &str,
+        consecutive_failures: i64,
+        last_failure_reason: Option<&str>,
+    ) -> Result<u64, sqlx::Error> {
+        let mut status_clause = "".to_string();
+        let mut new_status = None;
+        if consecutive_failures >= 3 {
+            status_clause = ", status = 'Zombie'".to_string();
+            new_status = Some("Zombie");
+        }
+
+        let sql = format!(
+            "UPDATE generated_accounts 
+             SET consecutive_failures = ?, last_failure_reason = ? {} 
+             WHERE id = ?",
+            status_clause
+        );
+
+        let result = sqlx::query(&sql)
+            .bind(consecutive_failures)
+            .bind(last_failure_reason)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        if let Some(ns) = new_status {
+            println!("🚨 [熔断器] 账号 {} 因连续遭遇 {} 次请求失败，已被自动熔断隔离并标记为 '{}'！", id, consecutive_failures, ns);
+        }
+
+        Ok(result.rows_affected())
+    }
+
+    /// 标记账号进入速率限制冷却状态
+    pub async fn mark_account_cooling_down(
+        &self,
+        id: &str,
+        cool_down_duration_secs: i64,
+    ) -> Result<u64, sqlx::Error> {
+        let reset_at = Utc::now().timestamp() + cool_down_duration_secs;
+        let result = sqlx::query(
+            "UPDATE generated_accounts 
+             SET rate_limit_reset_at = ? 
+             WHERE id = ?"
+        )
+        .bind(reset_at)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 更新账号在网关中的最后一次使用时间戳，并增加其今日/24h调用计数（写入至高性能内存缓冲区中）
+    pub async fn update_account_last_used(&self, id: &str) -> Result<u64, sqlx::Error> {
+        let now = Utc::now().timestamp();
+        {
+            let mut lock = self.write_buffer.lock().unwrap();
+            let entry = lock.entry(id.to_string()).or_insert((0, 0));
+            entry.0 = now;
+            entry.1 += 1;
+        }
+        Ok(1)
+    }
+
+    /// 将内存缓冲中的高频计数与使用时间戳批量、事务化地合并刷盘到 SQLite 数据库中
+    pub async fn flush_write_buffer(&self) -> Result<(), sqlx::Error> {
+        let buffer = {
+            let mut lock = self.write_buffer.lock().unwrap();
+            if lock.is_empty() {
+                return Ok(());
+            }
+            std::mem::take(&mut *lock)
+        };
+
+        println!("💾 [写入缓冲区] 正在将 {} 个账号的网关高频统计指标合并后刷入 SQLite 数据源...", buffer.len());
+
+        let mut tx = self.pool.begin().await?;
+        for (id, (last_used_at, count_inc)) in buffer {
+            sqlx::query(
+                "UPDATE generated_accounts 
+                 SET last_used_at = ?, request_count_24h = COALESCE(request_count_24h, 0) + ? 
+                 WHERE id = ?"
+            )
+            .bind(last_used_at)
+            .bind(count_inc)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+
+        Ok(())
+    }
+
+    /// 修改指定账号的分组标签 (pool_tag)
+    pub async fn update_account_pool_tag(&self, id: &str, pool_tag: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE generated_accounts 
+             SET pool_tag = ? 
+             WHERE id = ?"
+        )
+        .bind(pool_tag)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
+    /// 根据分组池标签拉取网关分发可用的账号列表（状态为 Registered/Success，当前未处于冷却期内，且排除了离线代理）
+    pub async fn list_active_accounts_for_routing(
+        &self,
+        pool_tag: &str,
+    ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
+        let now = Utc::now().timestamp();
+        let sql = format!(
+            "SELECT {}
+             FROM generated_accounts
+             WHERE (status LIKE '%registered%' OR lower(status) LIKE '%success%')
+               AND (pool_tag = ? OR (? = 'default' AND pool_tag IS NULL))
+               AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at <= ?)
+               AND access_token IS NOT NULL AND access_token != ''
+               AND (proxy_status IS NULL OR proxy_status != 'offline')
+             ORDER BY 
+               (CASE WHEN proxy_status = 'active' THEN 0 WHEN proxy_status IS NULL THEN 1 ELSE 2 END) ASC,
+               (CASE WHEN proxy_ip_type = 'residential' THEN 0 ELSE 1 END) ASC,
+               proxy_rtt ASC,
+               last_used_at ASC,
+               created_at DESC",
+            Self::GENERATED_ACCOUNT_COLUMNS
+        );
+
+        let records = sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+            .bind(pool_tag)
+            .bind(pool_tag)
+            .bind(now)
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(records)
     }
 
     /// 获取单个生成的账号产物
