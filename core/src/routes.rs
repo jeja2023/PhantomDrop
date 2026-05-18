@@ -343,7 +343,10 @@ async fn auth_middleware(
         };
 
         if !authenticated {
-            println!("AUTH FAILED: User provided '{:?}', but expected '{}'", provided_secret, expected_secret);
+            println!(
+                "AUTH FAILED: provided={}, expected=[已隐藏]",
+                if provided_secret.is_some() { "[已提供]" } else { "[未提供]" }
+            );
             return Ok(auth_error_response(
                 StatusCode::UNAUTHORIZED,
                 "未授权，请输入正确的接口密钥",

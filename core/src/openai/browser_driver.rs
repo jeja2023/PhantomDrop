@@ -49,10 +49,7 @@ impl BrowserDriver {
             Ok(info) => {
                 if let Some(cb) = callback {
                     let msg = format!(
-                        "环境探测成功 | IP: {} | 归属地: {} | 组织: {} | 风险评估: {}",
-                        info.ip,
-                        info.country,
-                        info.org,
+                        "环境探测成功 | 出口环境已完成质量评分 | 风险评估: {}",
                         if info.is_datacenter {
                             "⚠️ 机房/数据中心 (高风险)"
                         } else {
@@ -113,11 +110,7 @@ impl BrowserDriver {
                 if s != self.context.proxy_url.as_ref().unwrap() {
                     cb(
                         "info",
-                        &format!(
-                            "🔧 优化代理配置: {} -> {}",
-                            crate::utils::mask_url(self.context.proxy_url.as_ref().unwrap()),
-                            s
-                        ),
+                        "🔧 优化代理配置: 已应用浏览器兼容参数（详情已隐藏）",
                     );
                 }
             }

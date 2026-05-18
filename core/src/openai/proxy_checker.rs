@@ -39,8 +39,8 @@ pub fn start_proxy_heartbeat_loop(data_lake: Arc<DataLake>) {
                             let ip_type = if info.is_datacenter { "datacenter" } else { "residential" };
                             let _ = data_lake_clone.update_proxy_quality(&account_id, rtt, ip_type, "active").await;
                             println!(
-                                "✅ [代理心跳] 账号 {} 检测成功 | IP: {} | 延迟: {}ms | 类型: {}",
-                                account_id, info.ip, rtt, ip_type
+                                "✅ [代理心跳] 账号 {} 检测成功 | 出口信息已隐藏 | 延迟: {}ms | 类型: {}",
+                                account_id, rtt, ip_type
                             );
                         }
                         Ok(Err(e)) => {

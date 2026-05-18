@@ -835,13 +835,13 @@ impl WorkflowEngine {
         )
         .await;
 
-        if let Some(ref proxy) = proxy_url {
+        if proxy_url.as_ref().is_some_and(|proxy| !proxy.trim().is_empty()) {
             Self::log_step(
                 hub,
                 dl,
                 context,
                 "info",
-                &format!("代理服务器已配置: {}", proxy),
+                "代理服务器已配置（详情已隐藏）",
             )
             .await;
         }

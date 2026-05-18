@@ -232,7 +232,7 @@ pub fn routes(data_lake: Arc<DataLake>, stream_hub: Arc<StreamHub>) -> Router<Ar
                     }
 
                     let provided_secret = headers
-                        .get("X-Hub-Secret")
+                        .get("x-hub-secret")
                         .and_then(|val| val.to_str().ok())
                         .unwrap_or("")
                         .trim();

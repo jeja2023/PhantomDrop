@@ -43,6 +43,19 @@ interface HubPayload {
   }>;
 }
 
+function redactHubUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return '[invalid hub url]';
+  }
+}
+
+function responsePreview(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
 function normalizedHubUrl(env: Env): string {
   const hubUrl = env.PHANTOM_HUB_URL?.trim();
   if (!hubUrl) {
@@ -77,12 +90,13 @@ async function relayToHub(payload: HubPayload, env: Env): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   const hubUrl = normalizedHubUrl(env);
+  const secret = hubSecret(env);
 
   return fetch(`${hubUrl}/ingest`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Hub-Secret': hubSecret(env),
+      'X-Hub-Secret': secret,
     },
     body: JSON.stringify(payload),
     signal: controller.signal,
@@ -119,7 +133,7 @@ export default {
         return json({
           status: 'ok',
           worker: 'phantom-drop-edge',
-          hub_url: normalizedHubUrl(env),
+          hub_origin: redactHubUrl(normalizedHubUrl(env)),
           secret_configured: Boolean(hubSecret(env)),
         });
       } catch (error) {
@@ -144,13 +158,15 @@ export default {
         const payload = buildRelayTestPayload(body);
         const response = await relayToHub(payload, env);
         const responseText = await response.text();
+        const preview = responsePreview(responseText);
 
         return json(
           {
             status: response.ok ? 'success' : 'error',
+            stage: response.ok ? 'hub_ingest_accepted' : 'hub_ingest_rejected',
             hub_status: response.status,
-            hub_response: responseText,
-            hub_url: normalizedHubUrl(env),
+            hub_response_preview: preview,
+            hub_origin: redactHubUrl(normalizedHubUrl(env)),
             forwarded_subject: payload.meta.subject,
             forwarded_to: payload.meta.to,
           },
@@ -160,7 +176,15 @@ export default {
         return json(
           {
             status: 'error',
+            stage: 'worker_relay_exception',
             message: error instanceof Error ? error.message : String(error),
+            hub_origin: (() => {
+              try {
+                return redactHubUrl(normalizedHubUrl(env));
+              } catch {
+                return '[not configured]';
+              }
+            })(),
           },
           { status: 500 },
         );
@@ -204,7 +228,7 @@ export default {
           'Failed to relay message to PhantomDrop hub:',
           JSON.stringify({
             hub_status: response.status,
-            hub_response: responseText,
+            hub_response_preview: responsePreview(responseText),
             from: payload.meta.from,
             to: payload.meta.to,
             subject: payload.meta.subject,

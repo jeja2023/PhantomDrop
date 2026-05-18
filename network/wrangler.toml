@@ -4,4 +4,4 @@ compatibility_date = "2024-03-01"
 workers_dev = true
 
 [vars]
-PHANTOM_HUB_URL = "https://your-hub.example.com"
+PHANTOM_HUB_URL = "https://phantom.880301.xyz"

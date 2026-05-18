@@ -55,10 +55,11 @@ pub async fn execute_registration(
     if let Some(ref cb) = context.step_callback {
         cb(
             "info",
-            &format!(
-                "初始化 HTTP 客户端 (代理: {})",
-                context.proxy_url.as_ref().map(|u| crate::utils::mask_url(u)).unwrap_or_else(|| "直连".to_string())
-            ),
+            if context.proxy_url.as_ref().is_some_and(|u| !u.trim().is_empty()) {
+                "初始化 HTTP 客户端 (代理已配置，详情已隐藏)"
+            } else {
+                "初始化 HTTP 客户端 (直连)"
+            },
         );
     }
     let client = build_client(context.proxy_url.as_deref())?;
@@ -72,10 +73,7 @@ pub async fn execute_registration(
         Ok(info) => {
             if let Some(ref cb) = context.step_callback {
                 let msg = format!(
-                    "环境探测成功 | IP: {} | 归属地: {} | 组织: {} | 风险评估: {}",
-                    info.ip,
-                    info.country,
-                    info.org,
+                    "环境探测成功 | 出口环境已完成质量评分 | 风险评估: {}",
                     if info.is_datacenter {
                         "⚠️ 机房/数据中心 (高风险)"
                     } else {
