@@ -359,6 +359,7 @@ impl DataLake {
         extracted_text: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let now = Utc::now().timestamp();
+        let to_lower = to.trim().to_lowercase();
         sqlx::query(
             "INSERT INTO emails (id, created_at, from_addr, to_addr, subject, body_text, body_html, extracted_code, extracted_link, extracted_text) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -366,7 +367,7 @@ impl DataLake {
         .bind(id)
         .bind(now)
         .bind(from)
-        .bind(to)
+        .bind(&to_lower)
         .bind(subject)
         .bind(text)
         .bind(html)
@@ -1531,6 +1532,8 @@ impl DataLake {
     ) -> Result<Option<String>, sqlx::Error> {
         use sqlx::Row;
 
+        let email_lower = email.trim().to_lowercase();
+
         let row = sqlx::query(
             "SELECT extracted_code FROM emails
              WHERE to_addr = ? AND extracted_code IS NOT NULL AND extracted_code != ''
@@ -1539,7 +1542,7 @@ impl DataLake {
              ORDER BY created_at DESC
              LIMIT 1",
         )
-        .bind(email)
+        .bind(&email_lower)
         .bind(since_ts)
         .fetch_optional(&self.pool)
         .await?;
@@ -1555,6 +1558,8 @@ impl DataLake {
     ) -> Result<Option<String>, sqlx::Error> {
         use sqlx::Row;
 
+        let email_lower = email.trim().to_lowercase();
+
         let row = sqlx::query(
             "SELECT extracted_link FROM emails
              WHERE to_addr = ? AND extracted_link IS NOT NULL AND extracted_link != ''
@@ -1562,7 +1567,7 @@ impl DataLake {
              ORDER BY created_at DESC
              LIMIT 1",
         )
-        .bind(email)
+        .bind(&email_lower)
         .bind(since_ts)
         .fetch_optional(&self.pool)
         .await?;

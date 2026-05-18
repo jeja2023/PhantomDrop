@@ -185,7 +185,7 @@ impl NeuralParser {
             .to_string()
     }
 
-    /// 判断发件人是否来自 OpenAI
+    /// 判断发件人是否来自 OpenAI (支持 openai.com 与 chatgpt.com 域名)
     #[allow(dead_code)]
     pub fn is_openai_sender(from: &str) -> bool {
         let lower = from.to_lowercase();
@@ -193,6 +193,9 @@ impl NeuralParser {
             || lower.contains("@email.openai.com")
             || lower.contains("noreply@tm.openai.com")
             || lower.contains(".openai.com")
+            || lower.contains("@chatgpt.com")
+            || lower.contains("@email.chatgpt.com")
+            || lower.contains(".chatgpt.com")
     }
 
     /// OpenAI 专用 OTP 提取：仅从 OpenAI 发件的邮件中精准提取 6 位验证码
@@ -321,6 +324,13 @@ mod tests {
         assert!(NeuralParser::is_openai_sender(
             "bounces+20216706-8290-user=example.xyz@em7877.tm.openai.com"
         ));
+    }
+
+    #[test]
+    fn detects_chatgpt_sender() {
+        assert!(NeuralParser::is_openai_sender("noreply@tm.chatgpt.com"));
+        assert!(NeuralParser::is_openai_sender("noreply@email.chatgpt.com"));
+        assert!(NeuralParser::is_openai_sender("info@chatgpt.com"));
     }
 
     #[test]
