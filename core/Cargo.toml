@@ -21,3 +21,9 @@ headless_chrome = { version = "1.0", features = ["fetch"] }
 anyhow = "1.0"
 url = "2.5.8"
 base64 = "0.22.1"
+
+[profile.release]
+opt-level = "s"      # 优化代码大小，减少内存占用并缩短编译时间
+codegen-units = 1    # 减少并行编译单元，显著降低编译期间的内存消耗
+lto = "thin"         # 使用轻量级 LTO，减少链接时的内存与时间
+panic = "abort"      # panic 时直接中止，减小体积与开销

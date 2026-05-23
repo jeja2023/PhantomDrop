@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake golang cl
 COPY core/Cargo.toml core/Cargo.lock ./
 # 创建一个空的 main.rs 来欺骗 cargo 编译所有的依赖包
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
-    && cargo build --release \
+    && CARGO_BUILD_JOBS=1 cargo build --release \
     && rm -rf src
 
 # 拷贝真实的业务代码和资源
@@ -31,7 +31,7 @@ COPY core/console ./console
 COPY core/migrations ./migrations
 
 # 更新 main.rs 的时间戳，强制 Cargo 重新编译我们的业务代码，而不是使用上面的空缓存
-RUN touch src/main.rs && cargo build --release
+RUN touch src/main.rs && CARGO_BUILD_JOBS=1 cargo build --release
 
 # ==========================================
 # Phase 3: Final Runtime Image
