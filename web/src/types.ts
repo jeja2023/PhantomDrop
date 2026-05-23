@@ -1,7 +1,7 @@
 export type LogLevel = 'info' | 'warn' | 'success' | 'error'
 export type LogSource = 'system_log' | 'workflow_step' | 'ui'
 
-export type AppTab = 'dashboard' | 'emails' | 'logs' | 'tunnel' | 'auto' | 'config' | 'register' | 'accounts'
+export type AppTab = 'dashboard' | 'inbox_center' | 'automation' | 'settings'
 
 export interface AppLog {
   id: string

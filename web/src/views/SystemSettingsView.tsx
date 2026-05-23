@@ -1,17 +1,26 @@
-import { useState, useEffect, type ReactNode } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   Save,
   Globe,
   Loader2,
-  Shield,
   Activity,
   Copy,
   ExternalLink,
   Radar,
   Lock,
+  ShieldCheck,
+  Power,
+  Server,
+  ChevronDown,
 } from 'lucide-react'
+import { motion } from 'framer-motion'
 import { fetchJson, postJson } from '../lib/api'
-import type { CloudflareAutomationStatus, PhantomSettingsUpdatedDetail, SettingsPayload } from '../types'
+import type {
+  CloudflareAutomationStatus,
+  PhantomSettingsUpdatedDetail,
+  SettingsPayload,
+  TunnelStatus,
+} from '../types'
 import { useClipboard } from '../ui/useClipboard'
 import { useToast } from '../ui/Toast'
 
@@ -20,7 +29,15 @@ type CpaAuthStatus = 'authenticated' | 'unauthenticated' | 'invalid'
 type CpaAuthStatusResponse = { status: CpaAuthStatus; email?: string }
 type CpaExchangeResponse = { status: 'success' | 'error'; email?: string; message?: string }
 
-export default function SettingsView() {
+const defaultTunnelStatus: TunnelStatus = {
+  active: false,
+  url: null,
+  port: 9010,
+  subdomain: '',
+  provider: 'manual',
+}
+
+export default function SystemSettingsView() {
   const showToast = useToast()
   const copy = useClipboard()
   const [isSaving, setIsSaving] = useState(false)
@@ -51,6 +68,15 @@ export default function SettingsView() {
   const [cpaCallbackUrl, setCpaCallbackUrl] = useState('')
   const [isExchanging, setIsExchanging] = useState(false)
 
+  // 内网穿透状态
+  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus>(defaultTunnelStatus)
+  const [tunnelLoading, setTunnelLoading] = useState(false)
+  const [port, setPort] = useState(9010)
+  const [subdomain, setSubdomain] = useState('')
+  const [publicUrl, setPublicUrl] = useState('')
+  const draftDirtyRef = useRef(false)
+
+  // 初始化加载设置项与 Cloudflare 状态
   useEffect(() => {
     const loadSettings = async () => {
       try {
@@ -71,8 +97,10 @@ export default function SettingsView() {
         setCpaKey(settings.cpa_key || '')
         setSub2apiUrl(settings.sub2api_url || '')
         setSub2apiKey(settings.sub2api_key || '')
+
         const status = await fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status')
         setAutomationStatus(status)
+
         const cpaStatus = await fetchJson<CpaAuthStatusResponse>('/api/cpa/auth-status')
         setCpaAuthStatus(cpaStatus.status)
         if (cpaStatus.email) setCpaAuthEmail(cpaStatus.email)
@@ -84,8 +112,35 @@ export default function SettingsView() {
     void loadSettings()
 
     const interval = setInterval(() => {
-      void fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status').then(setAutomationStatus).catch(() => undefined)
+      void fetchJson<CloudflareAutomationStatus>('/api/cloudflare/automation/status')
+        .then(setAutomationStatus)
+        .catch(() => undefined)
     }, 2500)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  // 轮询获取穿透状态
+  useEffect(() => {
+    const fetchTunnelStatus = async () => {
+      try {
+        const data = await fetchJson<TunnelStatus>('/api/tunnel/status')
+        setTunnelStatus(data)
+        if (data.active || !draftDirtyRef.current) {
+          setPort(data.port || 9010)
+          setSubdomain(data.subdomain || '')
+          setPublicUrl(data.url || '')
+          draftDirtyRef.current = false
+        }
+      } catch (e) {
+        console.error('Failed to load tunnel status:', e)
+      }
+    }
+
+    void fetchTunnelStatus()
+    const interval = setInterval(() => {
+      void fetchTunnelStatus()
+    }, 4000)
 
     return () => clearInterval(interval)
   }, [])
@@ -165,6 +220,40 @@ export default function SettingsView() {
     await copy(value)
   }
 
+  const handleToggleTunnel = async () => {
+    setTunnelLoading(true)
+    try {
+      if (tunnelStatus.active) {
+        await postJson<{ status: string }, Record<string, never>>('/api/tunnel/stop', {})
+        showToast({ title: '穿透已注销', desc: '本地内核已断开中枢公网登记映射。' })
+      } else {
+        await postJson<{ status: string; url: string }, { port: number; subdomain?: string; public_url: string }>(
+          '/api/tunnel/start',
+          {
+            port,
+            subdomain: subdomain.trim() || undefined,
+            public_url: publicUrl.trim(),
+          },
+        )
+        showToast({ title: '穿透启动成功', desc: '公网穿透映射已成功部署就绪。' })
+      }
+      draftDirtyRef.current = false
+      // 重新拉取最新穿透状态
+      const data = await fetchJson<TunnelStatus>('/api/tunnel/status')
+      setTunnelStatus(data)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '配置穿透失败'
+      showToast({ title: '穿透操作失败', desc: msg })
+    } finally {
+      setTunnelLoading(false)
+    }
+  }
+
+  const handleCopyTunnelUrl = async () => {
+    if (!tunnelStatus.url) return
+    await copy(tunnelStatus.url, { title: '公网登记地址已复制' })
+  }
+
   const actionBusy = isSaving || isLoading || automationStatus?.running
 
   const handleCodexLogin = async () => {
@@ -204,8 +293,8 @@ export default function SettingsView() {
     <div className="page-shell relative min-w-0 space-y-2.5 animate-in fade-in slide-in-from-top-4 duration-500 pb-4 overflow-y-auto">
       <div className="flex items-center justify-between gap-4 border-b border-slate-100/60 pb-2">
         <div className="flex items-baseline gap-3">
-          <h1 className="text-xl font-black tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors"></h1>
-          <span className="text-[9px] font-black tracking-widest text-slate-400 font-mono opacity-60"></span>
+          <h1 className="text-xl font-black tracking-tight text-slate-900 group-hover:text-blue-600 transition-colors">系统设置与维护</h1>
+          <span className="text-[9px] font-black tracking-widest text-slate-400 font-mono opacity-60">SYSTEM SETTINGS</span>
         </div>
         <div className="flex items-center gap-2">
           {automationStatus?.running ? <div className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse mr-1"></div> : null}
@@ -245,9 +334,234 @@ export default function SettingsView() {
         </div>
       </div>
 
-      <div className="grid min-h-0 gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+      <div className="grid min-h-0 gap-4 xl:grid-cols-2">
+        {/* 左栏 */}
         <div className="min-w-0 space-y-4">
-          <SettingsSectionCard icon={<Globe size={14} />} title="网络连接">
+          {/* 内网穿透与公网映射 */}
+          <SettingsSectionCard icon={<Radar size={14} />} title="内网穿透与公网映射" collapsible={false}>
+            <div className="space-y-4">
+              {/* 雷达动态拓扑全景大盘 */}
+              <div
+                style={{
+                  background:
+                    'radial-gradient(circle, rgba(16, 185, 129, 0.05) 0%, rgba(0, 0, 0, 0) 80%), repeating-radial-gradient(circle, #020617, #020617 15px, #050b16 15px, #050b16 30px)',
+                }}
+                className="w-full h-[180px] rounded-2xl border border-slate-900 bg-slate-950 p-4 flex flex-col items-center justify-center relative overflow-hidden shrink-0 shadow-lg"
+              >
+                {/* 顺时针雷达 conic 扫描线 */}
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 9, ease: 'linear' }}
+                  style={{ transformOrigin: 'center' }}
+                  className="absolute top-1/2 left-1/2 w-[340px] h-[340px] -mt-[170px] -ml-[170px] rounded-full bg-[conic-gradient(from_0deg,transparent_60%,rgba(16,185,129,0.06)_92%,rgba(16,185,129,0.22)_100%)] pointer-events-none"
+                />
+
+                <div className="absolute top-3 left-4 text-[8px] font-mono text-slate-500 font-bold tracking-widest uppercase z-10 flex items-center gap-1">
+                  <span className="h-1 w-1 bg-emerald-500 rounded-full animate-pulse" />
+                  穿透链路动态拓扑 (RADAR SCAN)
+                </div>
+
+                {/* SVG 拓扑发光粒子连线 */}
+                <div className="w-full max-w-md flex justify-between items-center relative px-4 z-10">
+                  {/* 节点 1：本地幻影内核 */}
+                  <div className="flex flex-col items-center gap-1 relative">
+                    {tunnelStatus.active && (
+                      <motion.div
+                        animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0, 0.4] }}
+                        transition={{ repeat: Infinity, duration: 2.2 }}
+                        className="absolute -inset-1.5 rounded-xl bg-blue-500/20 blur-sm pointer-events-none"
+                      />
+                    )}
+                    <div
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all duration-500 relative z-10 ${
+                        tunnelStatus.active
+                          ? 'bg-blue-950 border-blue-500/80 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)]'
+                          : 'bg-slate-900 border-slate-800 text-slate-650'
+                      }`}
+                    >
+                      <Power size={14} />
+                    </div>
+                    <span className={`text-[8px] font-black uppercase mt-0.5 ${tunnelStatus.active ? 'text-blue-400' : 'text-slate-500'}`}>
+                      本地内核
+                    </span>
+                  </div>
+
+                  {/* 连线 1 */}
+                  <div className="flex-1 mx-2 relative h-0.5 bg-slate-900/80 rounded-full">
+                    <div
+                      className={`absolute inset-0 rounded-full transition-all duration-500 ${
+                        tunnelStatus.active ? 'bg-gradient-to-r from-blue-500 to-indigo-500 shadow-[0_0_4px_rgba(59,130,246,0.5)]' : 'bg-slate-800'
+                      }`}
+                    />
+                    {tunnelStatus.active && (
+                      <motion.div
+                        animate={{ left: ['0%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.8, ease: 'linear' }}
+                        className="absolute -top-0.5 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_#fff,0_0_4px_rgba(59,130,246,1)]"
+                      />
+                    )}
+                  </div>
+
+                  {/* 节点 2：中枢路由 */}
+                  <div className="flex flex-col items-center gap-1 relative">
+                    {tunnelStatus.active && (
+                      <motion.div
+                        animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0, 0.4] }}
+                        transition={{ repeat: Infinity, duration: 2.2, delay: 0.5 }}
+                        className="absolute -inset-1.5 rounded-xl bg-indigo-500/20 blur-sm pointer-events-none"
+                      />
+                    )}
+                    <div
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all duration-500 relative z-10 ${
+                        tunnelStatus.active
+                          ? 'bg-indigo-950 border-indigo-500/80 text-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.3)]'
+                          : 'bg-slate-900 border-slate-800 text-slate-650'
+                      }`}
+                    >
+                      <Server size={14} />
+                    </div>
+                    <span className={`text-[8px] font-black uppercase mt-0.5 ${tunnelStatus.active ? 'text-indigo-400' : 'text-slate-500'}`}>
+                      中枢路由
+                    </span>
+                  </div>
+
+                  {/* 连线 2 */}
+                  <div className="flex-1 mx-2 relative h-0.5 bg-slate-900/80 rounded-full">
+                    <div
+                      className={`absolute inset-0 rounded-full transition-all duration-500 ${
+                        tunnelStatus.active ? 'bg-gradient-to-r from-indigo-500 to-emerald-500 shadow-[0_0_4px_rgba(16,185,129,0.5)]' : 'bg-slate-800'
+                      }`}
+                    />
+                    {tunnelStatus.active && (
+                      <motion.div
+                        animate={{ left: ['0%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 1.8, ease: 'linear', delay: 0.9 }}
+                        className="absolute -top-0.5 h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_#fff,0_0_4px_rgba(16,185,129,1)]"
+                      />
+                    )}
+                  </div>
+
+                  {/* 节点 3：安全穿透 */}
+                  <div className="flex flex-col items-center gap-1 relative">
+                    {tunnelStatus.active && (
+                      <motion.div
+                        animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0, 0.4] }}
+                        transition={{ repeat: Infinity, duration: 2.2, delay: 1 }}
+                        className="absolute -inset-1.5 rounded-xl bg-emerald-500/20 blur-sm pointer-events-none"
+                      />
+                    )}
+                    <div
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center border transition-all duration-500 relative z-10 ${
+                        tunnelStatus.active
+                          ? 'bg-emerald-950 border-emerald-500/80 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                          : 'bg-slate-900 border-slate-800 text-slate-655'
+                      }`}
+                    >
+                      <ShieldCheck size={14} />
+                    </div>
+                    <span className={`text-[8px] font-black uppercase mt-0.5 ${tunnelStatus.active ? 'text-emerald-400' : 'text-slate-500'}`}>
+                      安全穿透
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 穿透表单配置项 */}
+              <div className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <SettingsTile
+                    title="映射端口"
+                    hint="本地映射端口"
+                    control={
+                      <input
+                        type="number"
+                        placeholder="9010"
+                        value={port || ''}
+                        disabled={tunnelStatus.active || isLoading}
+                        onChange={(e) => {
+                          const val = Number(e.target.value)
+                          setPort(Number.isFinite(val) ? val : 0)
+                          draftDirtyRef.current = true
+                        }}
+                        className="phantom-input w-full"
+                      />
+                    }
+                  />
+                  <SettingsTile
+                    title="绑定二级域名"
+                    hint="自定义子域名(选填)"
+                    control={
+                      <input
+                        type="text"
+                        placeholder="例如: phantom"
+                        value={subdomain}
+                        disabled={tunnelStatus.active || isLoading}
+                        onChange={(e) => {
+                          setSubdomain(e.target.value)
+                          draftDirtyRef.current = true
+                        }}
+                        className="phantom-input w-full"
+                      />
+                    }
+                  />
+                </div>
+
+                <SettingsTile
+                  title="公网登记地址"
+                  hint="穿透后的公网入口"
+                  control={
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="自动分配或手动填写"
+                        value={publicUrl}
+                        disabled={tunnelStatus.active || isLoading}
+                        onChange={(e) => {
+                          setPublicUrl(e.target.value)
+                          draftDirtyRef.current = true
+                        }}
+                        className="phantom-input w-full pr-10 font-mono"
+                      />
+                      {publicUrl && (
+                        <button
+                          type="button"
+                          onClick={handleCopyTunnelUrl}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-blue-500 transition-colors"
+                          title="复制公网地址"
+                        >
+                          <Copy size={12} />
+                        </button>
+                      )}
+                    </div>
+                  }
+                />
+              </div>
+
+              {/* 动作按钮 */}
+              <button
+                onClick={handleToggleTunnel}
+                disabled={tunnelLoading || isLoading}
+                className={`phantom-btn font-black w-full h-9 transition-all duration-300 rounded-xl text-[10px] active:scale-[0.98] ${
+                  tunnelStatus.active
+                    ? 'bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-600 hover:text-white hover:border-transparent shadow-sm'
+                    : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white border-transparent shadow-sm'
+                }`}
+              >
+                <span className="flex items-center justify-center gap-1">
+                  {tunnelLoading ? <Loader2 size={12} className="animate-spin" /> : <Power size={12} />}
+                  {tunnelStatus.active ? '注销内网穿透映射' : '启动内网穿透映射'}
+                </span>
+              </button>
+            </div>
+          </SettingsSectionCard>
+
+
+        </div>
+
+        {/* 右栏 */}
+        <div className="min-w-0 space-y-4">
+          {/* 网络与安全设置 */}
+          <SettingsSectionCard icon={<Globe size={14} />} title="网络与安全设置" defaultExpanded={false}>
             <SettingsRow
               title="推送地址"
               hint="边缘节点回传入口"
@@ -298,9 +612,6 @@ export default function SettingsView() {
                 </div>
               }
             />
-          </SettingsSectionCard>
-
-          <SettingsSectionCard icon={<Shield size={14} />} title="安全协议">
             <SettingsRow
               title="节点认证密钥"
               hint="边缘节点请求鉴权"
@@ -350,101 +661,8 @@ export default function SettingsView() {
             />
           </SettingsSectionCard>
 
-
-          <SettingsSectionCard icon={<Activity size={14} />} title="链路结果">
-            <div className="space-y-2">
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                <ResultCard title="当前步骤" value={automationStatus?.current_step} emptyLabel="等待中" />
-                <ResultCard title="最后一次成功" value={automationStatus?.last_success ? '已就绪' : null} emptyLabel="暂无成功记录" />
-              </div>
-
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                <ResultCard
-                  title="工作节点地址"
-                  value={automationStatus?.worker_url}
-                  emptyLabel="尚未生成"
-                  actions={
-                    automationStatus?.worker_url ? (
-                      <div className="flex gap-1.5">
-                        <button
-                          type="button"
-                          aria-label="复制工作节点地址"
-                          title="复制工作节点地址"
-                          onClick={() => void handleCopy(automationStatus.worker_url!)}
-                          className="text-slate-400 hover:text-blue-500"
-                        >
-                          <Copy size={12} />
-                        </button>
-                        <a
-                          href={automationStatus.worker_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="打开工作节点地址"
-                          title="打开工作节点地址"
-                          className="text-slate-400 hover:text-blue-500"
-                        >
-                          <ExternalLink size={12} />
-                        </a>
-                      </div>
-                    ) : null
-                  }
-                />
-                <ResultCard
-                  title="最终收件地址"
-                  value={automationStatus?.email_address}
-                  emptyLabel="尚未生成"
-                  actions={
-                    automationStatus?.email_address ? (
-                      <button
-                        type="button"
-                        aria-label="复制最终收件地址"
-                        title="复制最终收件地址"
-                        onClick={() => void handleCopy(automationStatus.email_address!)}
-                        className="text-slate-400 hover:text-blue-500"
-                      >
-                        <Copy size={12} />
-                      </button>
-                    ) : null
-                  }
-                />
-              </div>
-
-              <div className="rounded-lg border border-slate-100 bg-white p-2 text-[10px]">
-                <div className="mb-1.5 flex items-center justify-between px-1">
-                  <span className="text-[8px] font-black tracking-widest text-slate-400">链路日志</span>
-                  <button onClick={handleRetestChain} disabled={actionBusy} className="text-[9px] font-black text-blue-500 flex items-center gap-1 hover:text-blue-600">
-                    {automationStatus?.running ? <Loader2 size={10} className="animate-spin" /> : <Radar size={10} />}
-                    重测
-                  </button>
-                </div>
-                <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1 scrollbar-thin">
-                  {(automationStatus?.logs && automationStatus.logs.length > 0 ? automationStatus.logs : [{ level: 'info', message: '等待系统指令...' }]).map((entry, index) => (
-                    <div
-                      key={index}
-                      className={`rounded px-1.5 py-0.5 flex gap-1.5 items-start ${
-                        entry.level === 'success'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : entry.level === 'error'
-                            ? 'bg-rose-50 text-rose-700'
-                            : entry.level === 'warn'
-                              ? 'bg-amber-50 text-amber-700'
-                              : entry.level === 'step'
-                                ? 'bg-blue-50 text-blue-700'
-                                : 'text-slate-500'
-                      }`}
-                    >
-                      <span className="opacity-30 font-mono shrink-0">[{index + 1}]</span>
-                      <span className="truncate">{entry.message}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </SettingsSectionCard>
-        </div>
-
-        <div className="min-w-0 space-y-4">
-          <SettingsSectionCard icon={<Radar size={14} />} title="邮件转发自动化">
+          {/* 邮件转发自动化 */}
+          <SettingsSectionCard icon={<Radar size={14} />} title="邮件转发自动化" defaultExpanded={false}>
             <div className="grid gap-2 md:grid-cols-2">
               <SettingsTile
                 title="接入模式"
@@ -550,8 +768,101 @@ export default function SettingsView() {
               />
             </div>
           </SettingsSectionCard>
+
+          {/* 链路结果 */}
+          <SettingsSectionCard icon={<Activity size={14} />} title="链路结果" defaultExpanded={false}>
+            <div className="space-y-2">
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                <ResultCard title="当前步骤" value={automationStatus?.current_step} emptyLabel="等待中" />
+                <ResultCard title="最后一次成功" value={automationStatus?.last_success ? '已就绪' : null} emptyLabel="暂无成功记录" />
+              </div>
+
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                <ResultCard
+                  title="工作节点地址"
+                  value={automationStatus?.worker_url}
+                  emptyLabel="尚未生成"
+                  actions={
+                    automationStatus?.worker_url ? (
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="复制工作节点地址"
+                          title="复制工作节点地址"
+                          onClick={() => void handleCopy(automationStatus.worker_url!)}
+                          className="text-slate-400 hover:text-blue-500"
+                        >
+                          <Copy size={12} />
+                        </button>
+                        <a
+                          href={automationStatus.worker_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="打开工作节点地址"
+                          title="打开工作节点地址"
+                          className="text-slate-400 hover:text-blue-500"
+                        >
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
+                    ) : null
+                  }
+                />
+                <ResultCard
+                  title="最终收件地址"
+                  value={automationStatus?.email_address}
+                  emptyLabel="尚未生成"
+                  actions={
+                    automationStatus?.email_address ? (
+                      <button
+                        type="button"
+                        aria-label="复制最终收件地址"
+                        title="复制最终收件地址"
+                        onClick={() => void handleCopy(automationStatus.email_address!)}
+                        className="text-slate-400 hover:text-blue-500"
+                      >
+                        <Copy size={12} />
+                      </button>
+                    ) : null
+                  }
+                />
+              </div>
+
+              <div className="rounded-lg border border-slate-100 bg-white p-2 text-[10px]">
+                <div className="mb-1.5 flex items-center justify-between px-1">
+                  <span className="text-[8px] font-black tracking-widest text-slate-400">链路日志</span>
+                  <button onClick={handleRetestChain} disabled={actionBusy} className="text-[9px] font-black text-blue-500 flex items-center gap-1 hover:text-blue-600">
+                    {automationStatus?.running ? <Loader2 size={10} className="animate-spin" /> : <Radar size={10} />}
+                    重测
+                  </button>
+                </div>
+                <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1 scrollbar-thin">
+                  {(automationStatus?.logs && automationStatus.logs.length > 0 ? automationStatus.logs : [{ level: 'info', message: '等待系统指令...' }]).map((entry, index) => (
+                    <div
+                      key={index}
+                      className={`rounded px-1.5 py-0.5 flex gap-1.5 items-start ${
+                        entry.level === 'success'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : entry.level === 'error'
+                            ? 'bg-rose-50 text-rose-700'
+                            : entry.level === 'warn'
+                              ? 'bg-amber-50 text-amber-700'
+                              : entry.level === 'step'
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'text-slate-500'
+                      }`}
+                    >
+                      <span className="opacity-30 font-mono shrink-0">[{index + 1}]</span>
+                      <span className="truncate">{entry.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </SettingsSectionCard>
           
-          <SettingsSectionCard icon={<ExternalLink size={14} />} title="账号分发 (CPA)">
+          {/* CPA 账号分发 */}
+          <SettingsSectionCard icon={<ExternalLink size={14} />} title="账号分发 (CPA)" defaultExpanded={false}>
             <SettingsRow
               title="CPA 接口地址"
               hint="推送产物的 API 端点"
@@ -646,12 +957,12 @@ export default function SettingsView() {
                     value={cpaCallbackUrl}
                     onChange={(e) => setCpaCallbackUrl(e.target.value)}
                     placeholder="在此粘贴包含 code=... 的完整回调 URL"
-                    className="phantom-input flex-grow text-[10px] h-8"
+                    className="phantom-input flex-grow"
                   />
                   <button
                     onClick={handleExchangeCode}
                     disabled={isExchanging || !cpaCallbackUrl}
-                    className="phantom-btn h-8 px-4 phantom-btn--primary shadow-md shadow-blue-500/10 active:scale-95 transition-all"
+                    className="phantom-btn h-9 px-4 phantom-btn--primary shadow-md shadow-blue-500/10 active:scale-95 transition-all"
                   >
                     {isExchanging ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
                     <span className="text-[10px] font-bold ml-1">确认提交</span>
@@ -663,24 +974,50 @@ export default function SettingsView() {
               </div>
             )}
           </SettingsSectionCard>
-
         </div>
       </div>
     </div>
   )
 }
 
-function SettingsSectionCard({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+function SettingsSectionCard({ 
+  icon, 
+  title, 
+  children, 
+  defaultExpanded = true,
+  collapsible = true 
+}: { 
+  icon: ReactNode; 
+  title: string; 
+  children: ReactNode; 
+  defaultExpanded?: boolean;
+  collapsible?: boolean;
+}) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+
   return (
     <section className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="page-panel group/card overflow-hidden rounded-[12px] border border-slate-200/60 bg-white transition-all duration-300 hover:shadow-md">
-        <div className="border-b border-slate-100 bg-slate-50/40 px-3 py-1.5">
+        <div 
+          onClick={() => collapsible && setIsExpanded(!isExpanded)}
+          className={`border-b border-slate-100 bg-slate-50/40 px-3 py-1.5 flex items-center justify-between select-none transition-colors ${collapsible ? 'cursor-pointer hover:bg-slate-100/50' : ''}`}
+        >
           <div className="flex items-center gap-2">
             <div className="text-slate-400">{icon}</div>
             <div className="text-[11px] font-black tracking-tight text-slate-800">{title}</div>
           </div>
+          {collapsible && (
+            <ChevronDown
+              size={12}
+              className={`text-slate-400 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
+            />
+          )}
         </div>
-        <div className="px-3 py-1.5">{children}</div>
+        {(!collapsible || isExpanded) && (
+          <div className="px-3 py-1.5 animate-in fade-in slide-in-from-top-2 duration-200">
+            {children}
+          </div>
+        )}
       </div>
     </section>
   )

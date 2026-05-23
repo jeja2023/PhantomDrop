@@ -1,10 +1,8 @@
-import { useMemo, useState } from 'react'
-import { motion } from 'framer-motion'
-import { Zap, Sparkles, Activity, Database, ShieldCheck, Thermometer } from 'lucide-react'
+import { useMemo } from 'react'
+import { Zap, Activity, ShieldCheck } from 'lucide-react'
 import Grid from '../grid/Grid'
 import Terminal from '../terminal/Terminal'
 import type { AppLog, DashboardStats, EmailItem } from '../types'
-import { useToast } from '../ui/Toast'
 
 interface DashboardViewProps {
   emails: EmailItem[]
@@ -14,9 +12,7 @@ interface DashboardViewProps {
 }
 
 export default function DashboardView({ emails, logs, stats, updateRate = 1000 }: DashboardViewProps) {
-  const showToast = useToast()
-  const [isExpertMode, setIsExpertMode] = useState(false)
-
+  // 计算多项运行状态指标
   const metrics = useMemo(() => {
     const codeCount = emails.filter((email) => Boolean(email.code)).length
     const warnCount = logs.filter((log) => log.type === 'warn').length
@@ -46,27 +42,21 @@ export default function DashboardView({ emails, logs, stats, updateRate = 1000 }
     }
   }, [emails, logs, stats])
 
-  const handleExpertMode = () => {
-    setIsExpertMode(!isExpertMode)
-    showToast({
-      title: isExpertMode ? '已切换到常规模式' : '已进入专家模式',
-      desc: isExpertMode ? '界面已恢复标准视图。' : '已展示更深层的诊断信息与实时运行指标。',
-      tone: 'info',
-      durationMs: 3000,
-    })
-  }
-
   return (
-    <div className={`page-shell page-shell--full animate-in fade-in duration-700 relative transition-colors duration-500 ${isExpertMode ? 'bg-blue-900/5' : ''}`}>
-      <div className="flex items-center justify-between px-2 pt-2 shrink-0">
+    /* 外层 page-shell 强制拉满屏幕视口高度，自适应父容器精确分配的剩余高度 */
+    <div className="page-shell page-shell--full animate-in fade-in duration-700 relative flex flex-col h-full overflow-hidden bg-slate-50/20">
+      
+      {/* 顶部控制状态条：融合了感知状态与核心吞吐量 */}
+      <div className="flex items-center justify-between px-2 pt-2 shrink-0 mb-3">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2 shadow-sm">
+          <div className="flex items-center gap-2.5 rounded-2xl border border-solid border-emerald-100 bg-emerald-50/50 px-3.5 py-2 shadow-[0_4px_15px_rgba(16,185,129,0.06)] backdrop-blur-sm">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-80"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span className="text-[11px] font-black tracking-widest text-emerald-700 uppercase">系统感知：在线</span>
-            {isExpertMode ? <Sparkles size={14} className="text-blue-500" /> : null}
+            <span className="text-[10px] font-black tracking-widest text-emerald-700 uppercase flex items-center gap-1 leading-none">
+              中枢感知：常驻在线
+            </span>
           </div>
           
           <div className="h-8 w-px bg-slate-200"></div>
@@ -78,136 +68,117 @@ export default function DashboardView({ emails, logs, stats, updateRate = 1000 }
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[10px] font-mono text-slate-500 flex items-center gap-2">
+          <div className="px-3 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-[10px] font-mono text-slate-500 flex items-center gap-2 shadow-sm">
             <Activity size={12} className="text-blue-500" />
             更新频率：{(1000 / updateRate).toFixed(1)}Hz
           </div>
         </div>
       </div>
 
-      <div className="flex-grow flex flex-col lg:flex-row gap-4 min-h-0">
-        <div className="flex-[3] flex flex-col space-y-3 min-w-0">
+      {/* 中部并排联动主网格 */}
+      <div className="flex-grow flex flex-col lg:flex-row gap-6 min-h-0 mb-4 overflow-hidden">
+        
+        {/* 左侧：流式网格引擎（常驻高清晰度科技扫描线） */}
+        <div className="flex-[3.2] flex flex-col space-y-3 min-w-0 h-full overflow-hidden">
           <div className="flex items-center justify-between px-2 shrink-0">
             <div className="flex flex-col">
               <div className="flex items-center gap-2 text-slate-800 font-bold text-[11px] tracking-tight leading-none">
-                <Zap size={10} className="text-blue-500" />
+                <Zap size={10} className="text-blue-500 animate-pulse" />
                 流式网格引擎
-                {isExpertMode ? <span className="text-blue-500 text-[8px]">诊断覆盖层开启</span> : null}
+                <span className="text-blue-500 text-[8px] font-black uppercase ml-1 opacity-70">Diagnostic layer active</span>
               </div>
-              <div className="text-[8px] text-slate-400 font-mono tracking-[0.2em] mt-0.5 ml-4">实时分布视图</div>
+              <div className="text-[8px] text-slate-400 font-mono tracking-[0.2em] mt-0.5 ml-4">实时分布式视图</div>
             </div>
-            <div className="text-[9px] text-slate-700 font-mono bg-slate-100 px-2 py-0.5 rounded tracking-tighter">图形加速已就绪</div>
+            <div className="text-[9px] text-slate-700 font-mono bg-slate-100 px-2 py-0.5 rounded tracking-tighter border border-slate-200">图形加速已就绪</div>
           </div>
-          <div className="page-panel flex-grow overflow-hidden relative group min-h-0">
-            <div className={`absolute inset-0 scan-line pointer-events-none transition-opacity ${isExpertMode ? 'opacity-20' : 'opacity-5'}`}></div>
+          <div className="page-panel flex-grow overflow-hidden relative group min-h-0 rounded-3xl border border-slate-200 bg-white shadow-sm">
+            {/* 极客网格扫描线常驻开启为黄金可见度 12%，极富未来美感，无需点击 */}
+            <div className="absolute inset-0 scan-line pointer-events-none opacity-[0.12]"></div>
             <Grid data={emails} />
           </div>
         </div>
 
-        <div className="page-panel flex-grow lg:flex-1 p-5 flex flex-col gap-4 bg-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] min-h-[360px] overflow-y-auto relative">
+        {/* 右侧：一体化的自愈与决策大盘（拿掉了多重嵌套边框与顶部切换键，大盘极致舒展） */}
+        <div className="page-panel flex-grow lg:flex-[1.2] p-4 flex flex-col gap-4 bg-white bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] rounded-3xl border border-slate-200 shadow-sm min-h-0 overflow-hidden relative">
           <div className="flex min-h-0 flex-1 flex-col gap-4 relative z-10">
-            <div className="flex items-center justify-between shrink-0">
+            
+            {/* 顶栏 Header：极致精炼，空间完美延展 */}
+            <div className="flex items-center justify-between shrink-0 border-b border-slate-100 pb-3">
               <div className="flex flex-col">
-                <span className="text-[12px] font-black text-indigo-600 tracking-tighter leading-none">决策核心 / CORE</span>
-                <span className="text-[8px] text-slate-400 font-mono tracking-widest mt-1 uppercase">运行摘要指标</span>
+                <span className="text-[12px] font-black text-slate-800 tracking-wider leading-none">决策核心 / DECISION CORE</span>
+                <span className="text-[8px] text-slate-400 font-mono tracking-widest mt-1.5 uppercase leading-none">系统运行态诊断大盘</span>
               </div>
-              <span className="flex items-center gap-1.5 text-[9px] text-emerald-500 font-mono bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
-                <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></div>
-                {metrics.activeWebhooks} 活跃网格
+              
+              <span className="flex items-center gap-1.5 text-[8.5px] text-emerald-500 font-mono bg-emerald-50 px-2.5 py-1 rounded-xl border border-emerald-100 shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                {metrics.activeWebhooks} 监测节点在线
               </span>
             </div>
 
-            <div className="grid shrink-0 gap-2.5 pr-1">
+            {/* 4 个高阶 ProgressItem 核心参数指标：2x2对称排布，大幅节省纵向高度 */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 shrink-0 pr-1">
               <ProgressItem label="校验引擎覆盖率" percent={metrics.coverage} color="blue" />
               <ProgressItem label="神经元解析成功率" percent={metrics.successRate} color="cyan" />
               <ProgressItem label="异常信号密度" percent={metrics.alertDensity} color="indigo" />
               <ProgressItem label="实时邮件活跃度" percent={metrics.activity} color="amber" />
             </div>
 
-            <div className="shrink-0 rounded-2xl border border-slate-200 bg-white/90 backdrop-blur-sm p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[11px] font-bold text-slate-800 tracking-tight">感应层实时统计</div>
-                <Database size={12} className="text-slate-400" />
-              </div>
-              <div className="grid grid-cols-2 gap-x-5 gap-y-3 font-mono text-[11px]">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">活跃节点</span>
-                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.activeEmails}</span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">归档节点</span>
-                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.archivedEmails}</span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">24H 工作流</span>
-                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.workflowRuns}</span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">今日注入</span>
-                  <span className="font-bold leading-tight tabular-nums text-slate-700">{stats?.recent_emails_24h ?? emails.length}</span>
-                </div>
-              </div>
+            {/* 水平分界虚线：高度融入底板 */}
+            <div className="border-t border-dashed border-slate-200 my-1 relative shrink-0">
+              <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white px-3 text-[7.5px] font-mono font-bold tracking-widest text-slate-400 uppercase select-none leading-none">
+                中枢自愈感知网格 (Sentinel System Mesh)
+              </span>
             </div>
 
-            <div className="shrink-0 rounded-2xl border border-blue-100 bg-blue-50/20 backdrop-blur-sm p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[11px] font-bold text-blue-900 tracking-tight flex items-center gap-1.5">
-                  <ShieldCheck size={13} className="text-blue-500" />
-                  自给自足网关与自愈池
-                </div>
+            {/* 自愈神经 8 宫格：重构为 4x2 极紧凑矩阵，节省大量纵向空间 */}
+            <div className="shrink-0">
+              <div className="grid grid-cols-4 gap-1.5 font-mono text-[10px]">
+                <MiniGridCell label="活跃邮件" value={metrics.activeEmails} sub={`/${metrics.totalEmails}`} />
+                <MiniGridCell label="归档节点" value={metrics.archivedEmails} />
+                <MiniGridCell label="24H工作流" value={metrics.workflowRuns} />
+                <MiniGridCell label="今日数据" value={stats?.recent_emails_24h ?? emails.length} />
+                
+                <MiniGridCell 
+                  label="高可用账号" 
+                  value={metrics.activePoolAccounts} 
+                  sub={`/${metrics.totalAccounts}`}
+                  valueColor="text-indigo-600"
+                />
+                <MiniGridCell label="网关请求" value={metrics.gatewayRequests} />
+                <MiniGridCell label="新增账号" value={metrics.todayAccounts} />
+                
                 {metrics.coolingAccounts > 0 ? (
-                  <span className="flex items-center gap-1 text-[8px] font-mono text-amber-600 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded animate-pulse">
-                    <Thermometer size={10} />
-                    {metrics.coolingAccounts} 冷却中
-                  </span>
+                  <MiniGridCell 
+                    label="网络自愈" 
+                    value={`${metrics.coolingAccounts} 冷却`} 
+                    valueColor="text-amber-500 animate-pulse" 
+                  />
                 ) : (
-                  <span className="text-[8px] font-mono text-emerald-600 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">
-                    健康常驻
-                  </span>
+                  <MiniGridCell 
+                    label="网络自愈" 
+                    value="链路就绪" 
+                    valueColor="text-emerald-600" 
+                  />
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-x-5 gap-y-3 font-mono text-[11px]">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">可用高可用账号</span>
-                  <span className="font-bold leading-tight tabular-nums text-blue-700 flex items-center gap-1">
-                    {metrics.activePoolAccounts}
-                    <span className="text-[9px] text-slate-400 font-normal">/ {metrics.totalAccounts}</span>
-                  </span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">网关今日请求</span>
-                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.gatewayRequests}</span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">今日新增账号</span>
-                  <span className="font-bold leading-tight tabular-nums text-slate-700">{metrics.todayAccounts}</span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400">主动自愈能力</span>
-                  <span className="font-bold leading-tight text-emerald-600">已就绪 (100%)</span>
-                </div>
-              </div>
             </div>
-          </div>
 
-          <div className="relative z-10 mt-auto shrink-0 border-t border-slate-100 pt-3">
-            <button
-              onClick={handleExpertMode}
-              className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-3 text-[10px] font-black leading-none tracking-[0.08em] transition-all sm:tracking-[0.16em] ${
-                isExpertMode
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200'
-                  : 'bg-slate-900 text-white hover:bg-slate-800'
-              }`}
-            >
-              <Zap size={12} />
-              {isExpertMode ? '退出专家诊断模式' : '进入专家诊断模式'}
-            </button>
+            {/* 极客页脚签名常驻：状态 100% 物理连接 */}
+            <div className="mt-auto pt-3.5 border-t border-slate-100 flex items-center justify-between text-[8px] font-mono text-slate-400 tracking-tighter shrink-0 select-none leading-none">
+              <span>SYSTEM_NODE_KEY: {stats ? 'VERIFIED' : 'DEFAULT'}</span>
+              <span className="animate-pulse flex items-center gap-1 text-emerald-500 font-bold uppercase tracking-widest text-[7.5px]">
+                <ShieldCheck size={10} />
+                sentinel linkage active
+              </span>
+            </div>
+
           </div>
         </div>
       </div>
 
-      <section className="h-[220px] shrink-0 min-h-0">
-        <div className="page-panel h-full overflow-hidden">
+      {/* 底部终端显示 */}
+      <section className="h-[250px] shrink-0 min-h-0">
+        <div className="page-panel h-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <Terminal logs={logs} />
         </div>
       </section>
@@ -235,24 +206,50 @@ function ProgressItem({ label, percent, isLatency = false, color = 'blue' }: { l
         <span>{label}</span>
         <span className="font-mono">{isLatency ? `${percent}毫秒` : `${percent}%`}</span>
       </div>
-      <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-        <motion.div
-          animate={{ width: isLatency ? `${Math.min(100, percent * 2)}%` : `${percent}%` }}
-          transition={{ duration: 0.8, ease: 'easeInOut' }}
-          className={`h-full bg-gradient-to-r ${getGradient()} shadow-[0_0_10px_rgba(59,130,246,0.3)]`}
-        />
+      <div className="h-1 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200 shadow-inner">
+        <div className="h-full bg-slate-200 rounded-full overflow-hidden">
+          <div
+            style={{ width: `${percent}%` }}
+            className={`h-full bg-gradient-to-r ${getGradient()} shadow-[0_0_10px_rgba(59,130,246,0.25)] transition-all duration-500`}
+          />
+        </div>
       </div>
     </div>
   )
 }
+
 function MiniStat({ label, value, sub, color }: { label: string; value: string; sub: string; color: 'blue' | 'emerald' }) {
   return (
     <div className="flex flex-col">
-      <div className="text-[10px] font-bold text-slate-500 tracking-tight leading-none mb-1 uppercase">{label}</div>
+      <div className="text-[10px] font-bold text-slate-500 tracking-tight leading-none mb-1.5 uppercase">{label}</div>
       <div className="flex items-baseline gap-2">
         <span className="text-xl font-black tracking-tighter text-slate-900 leading-none">{value}</span>
         <span className={`text-[9px] font-bold ${color === 'blue' ? 'text-blue-500' : 'text-emerald-500'} tracking-tight`}>{sub}</span>
       </div>
+    </div>
+  )
+}
+
+function MiniGridCell({ 
+  label, 
+  value, 
+  sub = '', 
+  valueColor = 'text-slate-700' 
+}: { 
+  label: string
+  value: string | number
+  sub?: string
+  valueColor?: string
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 bg-slate-50/50 hover:bg-slate-100/70 p-1.5 rounded-xl border border-slate-100 transition-all duration-300 group/cell shadow-sm">
+      <span className="whitespace-nowrap text-[8px] uppercase leading-none text-slate-400 font-bold tracking-tight">
+        {label}
+      </span>
+      <span className={`font-black leading-none tabular-nums flex items-baseline gap-0.5 ${valueColor} text-[10px] tracking-tight`}>
+        {value}
+        {sub && <span className="text-[7.5px] text-slate-400 font-normal ml-0.5 font-mono">{sub}</span>}
+      </span>
     </div>
   )
 }

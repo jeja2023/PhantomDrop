@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { Activity, Globe, LogOut, Mail, Settings, Shield, Terminal as TerminalIcon, Users, Zap } from 'lucide-react'
+import { Activity, LogOut, Mail, Settings, Shield, Zap } from 'lucide-react'
 import type { AppTab } from '../types'
 
 interface SidebarProps {
@@ -22,22 +22,18 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         </div>
         <div className="flex flex-col hidden md:flex">
           <span className="font-extrabold text-sm tracking-tighter text-slate-900 leading-none">幻影中枢</span>
-          <span className="text-[9px] text-slate-700 font-mono tracking-widest mt-1 font-bold">核心节点 0.0.25</span>
+          <span className="text-[9px] text-slate-700 font-mono tracking-widest mt-1 font-bold">核心节点 0.0.26</span>
         </div>
       </div>
 
       <div className="space-y-4 flex-grow px-1">
-        <SidebarItem icon={<Activity size={22} />} label="实时控制中心" active={activeTab === 'dashboard'} onClick={() => onTabChange('dashboard')} />
-        <SidebarItem icon={<Mail size={22} />} label="邮件解析列表" active={activeTab === 'emails'} onClick={() => onTabChange('emails')} />
-        <SidebarItem icon={<TerminalIcon size={22} />} label="系统流监控" active={activeTab === 'logs'} onClick={() => onTabChange('logs')} />
-        <SidebarItem icon={<Globe size={22} />} label="内网穿透助手" active={activeTab === 'tunnel'} onClick={() => onTabChange('tunnel')} />
-        <SidebarItem icon={<Zap size={22} />} label="自动化工作流" active={activeTab === 'auto'} onClick={() => onTabChange('auto')} />
-        <SidebarItem icon={<Shield size={22} />} label="网站注册中心" active={activeTab === 'register'} onClick={() => onTabChange('register')} />
-        <SidebarItem icon={<Users size={22} />} label="账号管理中心" active={activeTab === 'accounts'} onClick={() => onTabChange('accounts')} />
+        <SidebarItem icon={<Activity size={22} />} label="实时控制大盘" active={activeTab === 'dashboard'} onClick={() => onTabChange('dashboard')} />
+        <SidebarItem icon={<Mail size={22} />} label="邮件与资产中心" active={activeTab === 'inbox_center'} onClick={() => onTabChange('inbox_center')} />
+        <SidebarItem icon={<Zap size={22} />} label="自动化与注册中枢" active={activeTab === 'automation'} onClick={() => onTabChange('automation')} />
       </div>
 
       <div className="mt-auto pt-4 border-t border-slate-200 space-y-4">
-        <SidebarItem icon={<Settings size={22} />} label="全局设置" active={activeTab === 'config'} onClick={() => onTabChange('config')} />
+        <SidebarItem icon={<Settings size={22} />} label="系统维护与设置" active={activeTab === 'settings'} onClick={() => onTabChange('settings')} />
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-3 py-3 rounded-2xl transition-all group text-red-500 hover:bg-red-50 hover:text-red-600"

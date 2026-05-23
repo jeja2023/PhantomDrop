@@ -14,21 +14,25 @@ export function SecretField({
   value,
   emptyLabel = '暂无 Token 数据',
   onCopy,
+  className,
+  rows,
 }: {
   label: string
   value: string | null | undefined
   emptyLabel?: string
   onCopy?: (value: string) => void
+  className?: string
+  rows?: number
 }) {
   return (
-    <div className="group space-y-2">
+    <div className={`group space-y-2 ${className || ''}`}>
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{label}</span>
         {value && onCopy ? (
           <button
             type="button"
             onClick={() => onCopy(value)}
-            className="text-[10px] font-bold text-indigo-600 opacity-0 transition-colors hover:text-indigo-700 group-hover:opacity-100"
+            className="text-[10px] font-bold text-indigo-600 opacity-0 transition-colors hover:text-indigo-700 group-hover:opacity-100 cursor-pointer"
           >
             复制
           </button>
@@ -38,6 +42,7 @@ export function SecretField({
         <textarea
           readOnly
           value={value || emptyLabel}
+          rows={rows}
           className={`w-full min-h-[80px] resize-none rounded-2xl border border-slate-200 bg-slate-50 p-4 text-[11px] font-mono outline-none transition-all focus:border-indigo-500 focus:bg-white ${
             !value ? 'text-slate-400 italic' : 'text-slate-700'
           }`}
@@ -53,3 +58,4 @@ export function SecretField({
     </div>
   )
 }
+

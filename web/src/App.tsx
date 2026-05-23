@@ -5,13 +5,9 @@ import Sidebar from './ui/Sidebar'
 import Cmd from './cmd/Cmd'
 import './App.css'
 import DashboardView from './views/DashboardView'
-import EmailListView from './views/EmailListView'
-import LogsView from './views/LogsView'
-import AutomationView from './views/AutomationView'
-import SettingsView from './views/SettingsView'
-import TunnelView from './views/TunnelView'
-import RegistrationView from './views/RegistrationView'
-import AccountListView from './views/AccountListView'
+import InboxCenterView from './views/InboxCenterView'
+import AutomationHubView from './views/AutomationHubView'
+import SystemSettingsView from './views/SystemSettingsView'
 import { createApiEventSource, fetchJson } from './lib/api'
 import type {
   AppLog,
@@ -27,9 +23,6 @@ import type {
   PhantomSettingsUpdatedDetail,
   StreamEmailPayload,
   SystemLogPayload,
-  WorkflowRunRecord,
-  WorkflowRunPageResponse,
-  WorkflowStepRecord,
 } from './types'
 
 function formatEmail(record: EmailRecordApi): EmailItem {
@@ -82,8 +75,7 @@ function App() {
   const [streamStatus, setStreamStatus] = useState<'connecting' | 'online' | 'reconnecting'>('connecting')
   const [emails, setEmails] = useState<EmailItem[]>([])
   const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunRecord[]>([])
-  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStepRecord[]>([])
+
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [authPassword, setAuthPassword] = useState('')
   
@@ -162,27 +154,9 @@ function App() {
     }
   }
 
-  const loadWorkflowRuns = async () => {
-    try {
-      const data = await fetchJson<WorkflowRunPageResponse>('/api/workflow-runs?page=1&page_size=20')
-      setWorkflowRuns(data.items)
-      const latestRunId = data.items[0]?.id
-      if (latestRunId) {
-        const steps = await fetchJson<WorkflowStepRecord[]>(`/api/workflow-runs/${latestRunId}/steps`)
-        setWorkflowSteps(steps)
-      } else {
-        setWorkflowSteps([])
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误'
-      setLogs((prev) => appendLog(prev, `读取工作流运行记录失败：${message}`, 'warn', 'ui', '界面'))
-    }
-  }
-
   useEffect(() => {
     void loadEmails()
     void loadStats()
-    void loadWorkflowRuns()
     void loadSettings()
     void loadHealth()
 
@@ -223,29 +197,13 @@ function App() {
         workflow_id: string
         workflow_title: string
         step_index: number
-        level: WorkflowStepRecord['level']
+        level: string
         msg: string
       }
-
-      setWorkflowSteps((prev) => [
-        {
-          id: `${data.run_id}-${data.step_index}`,
-          run_id: data.run_id,
-          workflow_id: data.workflow_id,
-          workflow_title: data.workflow_title,
-          step_index: data.step_index,
-          level: data.level,
-          message: data.msg,
-          created_at: Math.floor(Date.now() / 1000),
-        },
-        ...prev,
-      ].slice(0, 30))
 
       setLogs((prev) =>
         appendLog(prev, data.msg, data.level === 'warn' ? 'warn' : data.level === 'success' ? 'success' : 'info', 'workflow_step', data.workflow_title),
       )
-
-      void loadWorkflowRuns()
     })
 
     eventSource.onerror = () => {
@@ -260,7 +218,6 @@ function App() {
     const interval = setInterval(() => {
       void loadHealth()
       void loadStats()
-      void loadWorkflowRuns()
     }, updateRate)
 
     return () => clearInterval(interval)
@@ -277,7 +234,7 @@ function App() {
     const handleOpenCmd = () => setIsCmdOpen(true)
     const handleOpenEmails = (event: Event) => {
       const detail = (event as CustomEvent<PhantomOpenEmailsDetail>).detail
-      setActiveTab('emails')
+      setActiveTab('inbox_center')
       setEmailSearchQuery(detail?.query || '')
     }
     const handleOpenTab = (event: Event) => {
@@ -332,26 +289,18 @@ function App() {
     return `最近 ${emails.length} 封`
   }, [emails.length])
 
-  const isPageScrollable = activeTab === 'auto' || activeTab === 'config'
+  const isPageScrollable = activeTab !== 'dashboard'
 
   const renderView = () => {
     switch (activeTab) {
       case 'dashboard':
         return <DashboardView emails={emails} logs={logs} stats={stats} updateRate={updateRate} />
-      case 'emails':
-        return <EmailListView emails={emails} externalQuery={emailSearchQuery} />
-      case 'logs':
-        return <LogsView logs={logs} stats={stats} workflowRuns={workflowRuns} workflowSteps={workflowSteps} />
-      case 'tunnel':
-        return <TunnelView />
-      case 'auto':
-        return <AutomationView refreshIntervalMs={updateRate} />
-      case 'config':
-        return <SettingsView />
-      case 'register':
-        return <RegistrationView refreshIntervalMs={updateRate} />
-      case 'accounts':
-        return <AccountListView />
+      case 'inbox_center':
+        return <InboxCenterView defaultSearchQuery={emailSearchQuery} />
+      case 'automation':
+        return <AutomationHubView refreshIntervalMs={updateRate} />
+      case 'settings':
+        return <SystemSettingsView />
       default:
         return <DashboardView emails={emails} logs={logs} stats={stats} />
     }
@@ -403,7 +352,6 @@ function App() {
                 void loadEmails(true)
                 void loadHealth()
                 void loadStats()
-                void loadWorkflowRuns()
               }}
               type="button"
             >

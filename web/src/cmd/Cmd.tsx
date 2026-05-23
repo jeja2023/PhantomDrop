@@ -46,7 +46,7 @@ export default function Cmd({ isOpen, onClose }: CmdProps) {
       title: '打开全局设置',
       shortcut: '/env',
       subtitle: '进入设置页面修改密钥、域名和链路配置',
-      action: () => openTab('config'),
+      action: () => openTab('settings'),
     },
   ]
 
@@ -109,7 +109,7 @@ export default function Cmd({ isOpen, onClose }: CmdProps) {
       } else if (cmd.includes('/status')) {
         workflowId = await resolveWorkflowId('status_report')
       } else if (cmd.includes('/env')) {
-        openTab('config')
+        openTab('settings')
         return
       } else {
         throw new Error(`未知指令：${cmd}`)
