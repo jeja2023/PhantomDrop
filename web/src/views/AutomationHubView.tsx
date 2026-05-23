@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useState, useRef } from 'react'
 import {
   Zap,
   Play,
@@ -31,7 +31,7 @@ import type {
 } from '../types'
 import SnapshotModal from '../ui/SnapshotModal'
 import ProxyModal from '../ui/ProxyModal'
-import { RunStatusBadge, StepStatusBadge } from '../ui/StatusBadge'
+
 
 import { useToast } from '../ui/Toast'
 import ConfirmModal from '../ui/ConfirmModal'
@@ -99,6 +99,49 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   const [activeMonitorTab, setActiveMonitorTab] = useState<'steps' | 'snapshots' | 'outputs'>('steps')
 
   const stepsContainerRef = useRef<HTMLDivElement>(null)
+
+  // 解析日志文本中的快照截图标识，生成可一键弹窗放大查看的超链接
+  const renderMessageWithScreenshot = useCallback((message: string, runId: string) => {
+    const redacted = redactMessage(message)
+    const regex = /screenshot_([a-zA-Z0-9_\-\.]+)/g
+    const parts: React.ReactNode[] = []
+    let lastIndex = 0
+    let match
+
+    while ((match = regex.exec(redacted)) !== null) {
+      const matchIndex = match.index
+      const fullMatch = match[0]
+      const snapName = match[1]
+
+      if (matchIndex > lastIndex) {
+        parts.push(redacted.substring(lastIndex, matchIndex))
+      }
+
+      const fullUrl = buildApiUrl(`/api/workflow-runs/${runId}/snapshots/${snapName}`)
+      parts.push(
+        <span
+          key={matchIndex}
+          onClick={(e) => {
+            e.stopPropagation()
+            setPreviewUrl(fullUrl)
+          }}
+          className="text-emerald-400 hover:text-emerald-300 underline cursor-pointer font-black inline-flex items-center gap-0.5 mx-1"
+          title="点击放大预览快照"
+        >
+          <Globe size={11} className="inline animate-pulse" />
+          {fullMatch}
+        </span>
+      )
+
+      lastIndex = regex.lastIndex
+    }
+
+    if (lastIndex < redacted.length) {
+      parts.push(redacted.substring(lastIndex))
+    }
+
+    return parts.length > 0 ? parts : redacted
+  }, [setPreviewUrl])
 
   // 1. 加载所有工作流
   const loadWorkflows = async () => {
@@ -224,12 +267,12 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   }
 
   return (
-    <div className="page-shell relative animate-in fade-in duration-700 flex flex-col min-h-full pb-8">
+    <div className="page-shell relative animate-in fade-in duration-700 flex flex-col min-h-full pb-0.5">
       {/* 顶部航母级分类大 Tab 栏 */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 mb-5 shrink-0">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 mb-1.5 shrink-0">
         <button
           onClick={() => setActiveTab('register')}
-          className={`flex items-center gap-2.5 px-5 py-2.5 rounded-2xl text-xs font-black tracking-widest uppercase transition-all duration-300 ${
+          className={`flex items-center gap-2.5 px-5 py-2 rounded-2xl text-xs font-black tracking-widest uppercase transition-all duration-300 ${
             activeTab === 'register'
               ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 border-transparent'
               : 'bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200/50'
@@ -241,7 +284,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
 
         <button
           onClick={() => setActiveTab('workflows')}
-          className={`flex items-center gap-2.5 px-5 py-2.5 rounded-2xl text-xs font-black tracking-widest uppercase transition-all duration-300 ${
+          className={`flex items-center gap-2.5 px-5 py-2 rounded-2xl text-xs font-black tracking-widest uppercase transition-all duration-300 ${
             activeTab === 'workflows'
               ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20 border-transparent'
               : 'bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200/50'
@@ -253,7 +296,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
       </div>
 
       {/* 工作表单与配置 */}
-      <div className="mb-6 shrink-0">
+      <div className="mb-1.5 shrink-0">
         {activeTab === 'register' ? (
           <RegistrationSubPanel
             workflows={workflows}
@@ -271,7 +314,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
       </div>
 
       {/* 底部大一统：自动化运行历史与日志步骤时间轴监控沙盘 */}
-      <div className="flex-grow flex flex-col lg:flex-row gap-6 min-h-[420px] overflow-hidden bg-slate-50/20 rounded-3xl border border-slate-200/60 p-5 shadow-sm">
+      <div className="flex flex-col lg:flex-row gap-4 h-[400px] lg:h-[calc(100vh-330px)] min-h-[380px] max-h-[500px] overflow-hidden bg-slate-50/20 rounded-3xl border border-slate-200/60 p-3.5 shadow-sm">
         
         {/* 左栏（38%）：工作流最近执行历史 (Workflow Runs) */}
         <div className="flex-[1.2] flex flex-col min-w-0 overflow-hidden">
@@ -283,38 +326,57 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
             <span className="text-[8px] font-mono text-slate-400 font-bold uppercase">TOTAL: {runTotal}</span>
           </div>
 
-          <div className="flex-grow overflow-y-auto custom-scrollbar pr-1 space-y-2">
+          <div className="flex-grow overflow-y-auto custom-scrollbar pr-1 space-y-1.5">
             {runs.length > 0 ? (
               runs.map((run) => {
                 const isSelected = selectedRunId === run.id
+                
+                const statusColorMap: Record<string, string> = {
+                  running: 'bg-blue-50 text-blue-600 border-blue-150',
+                  success: 'bg-emerald-50 text-emerald-600 border-emerald-150',
+                  warn: 'bg-amber-50 text-amber-600 border-amber-150',
+                  error: 'bg-rose-50 text-rose-600 border-rose-150',
+                  cancelled: 'bg-slate-50 text-slate-500 border-slate-200',
+                }
+                const statusNameMap: Record<string, string> = {
+                  running: '运行中',
+                  success: '成功',
+                  warn: '警告',
+                  error: '错误',
+                  cancelled: '已取消',
+                }
+                const statusTone = statusColorMap[run.status] || 'bg-slate-50 text-slate-500 border-slate-200'
+                const statusName = statusNameMap[run.status] || run.status
+
                 return (
                   <div
                     key={run.id}
                     onClick={() => setSelectedRunId(run.id)}
-                    className={`cursor-pointer rounded-2xl border p-3.5 transition-all duration-300 flex flex-col gap-2 relative ${
+                    className={`cursor-pointer rounded-xl border py-2 px-2.5 transition-all duration-300 flex flex-col gap-1 relative ${
                       isSelected
                         ? 'border-blue-500 bg-blue-50/30 shadow-md shadow-blue-500/5'
-                        : 'border-slate-200 bg-white hover:border-slate-350'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
                     }`}
                   >
                     {isSelected && (
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-500 rounded-r-full" />
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 bg-blue-500 rounded-r-full" />
                     )}
 
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-[11px] font-black text-slate-800 truncate" title={run.workflow_title}>
-                          {run.workflow_title}
-                        </span>
-                        <span className="text-[8px] font-mono text-slate-450 tracking-tight mt-0.5" title={run.id}>
-                          RUN_ID: {run.id.slice(0, 16)}...
-                        </span>
-                      </div>
-                      <RunStatusBadge status={run.status} />
+                    <div className="flex items-center justify-between gap-2 shrink-0">
+                      <span className="text-[11px] font-black text-slate-800 truncate" title={run.workflow_title}>
+                        {run.workflow_title}
+                      </span>
+                      <span className={`rounded border px-1.5 py-0.5 text-[8px] font-black tracking-wider leading-none shrink-0 ${statusTone}`}>
+                        {statusName}
+                      </span>
                     </div>
 
-                    <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 font-bold border-t border-slate-100/60 pt-2 shrink-0">
-                      <span>{new Date(run.started_at * 1000).toLocaleString()}</span>
+                    <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 font-bold shrink-0 mt-0.5">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span>{new Date(run.started_at * 1000).toLocaleString()}</span>
+                        <span className="text-slate-200">|</span>
+                        <span className="truncate" title={run.id}>ID: {run.id.slice(0, 8)}...</span>
+                      </div>
                       {run.status === 'running' && (
                         <button
                           type="button"
@@ -322,9 +384,9 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
                             e.stopPropagation()
                             void handleAbort(run.id)
                           }}
-                          className="text-rose-500 hover:text-rose-700 font-black tracking-widest uppercase shrink-0 flex items-center gap-1 bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-100"
+                          className="text-rose-500 hover:text-rose-700 font-black tracking-widest uppercase shrink-0 flex items-center gap-0.5 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100 text-[8px] leading-none"
                         >
-                          <Square size={10} /> 强行终止
+                          <Square size={8} /> 中止
                         </button>
                       )}
                     </div>
@@ -403,52 +465,49 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
           {selectedRunId ? (
             <div className="flex-grow flex flex-col min-h-0 relative">
               {activeMonitorTab === 'steps' ? (
-                // 虚线步骤轨迹时间轴生命树 (Timeline Trace)
+                // 紧凑版暗色控制台终端 (Sleek Dark Terminal Console)
                 <div
                   ref={stepsContainerRef}
-                  className="flex-grow overflow-y-auto custom-scrollbar pr-1 relative pl-5 space-y-4 py-2"
+                  className="flex-grow bg-slate-950 border border-slate-800 rounded-2xl p-3.5 font-mono text-[11px] leading-relaxed shadow-inner overflow-y-auto custom-scrollbar flex flex-col gap-1 pr-1 relative"
                 >
-                  {/* 垂直连接虚线主干 */}
-                  <div className="absolute left-6 top-4 bottom-4 w-px border-l border-dashed border-slate-200 pointer-events-none" />
-
                   {isStepsLoading && steps.length === 0 ? (
-                    <div className="absolute inset-0 flex items-center justify-center p-8">
-                      <Loader2 className="animate-spin text-blue-500 mr-2" size={16} />
-                      <span className="text-[10px] font-bold text-slate-500">正在调取步骤时间树...</span>
+                    <div className="absolute inset-0 flex items-center justify-center p-8 bg-slate-950/80 backdrop-blur-[2px]">
+                      <Loader2 className="animate-spin text-blue-400 mr-2" size={16} />
+                      <span className="text-[10px] font-bold text-slate-400">正在调取步骤时间树...</span>
                     </div>
                   ) : steps.length > 0 ? (
                     steps.map((step, idx) => {
-                      const colorMap: Record<string, string> = {
-                        info: 'bg-blue-500 shadow-blue-500/30',
-                        success: 'bg-emerald-500 shadow-emerald-500/30',
-                        warn: 'bg-amber-500 shadow-amber-500/30',
-                        error: 'bg-rose-500 shadow-rose-500/30',
-                        running: 'bg-blue-500 shadow-blue-500/30',
-                        cancelled: 'bg-slate-500 shadow-slate-500/30',
+                      const levelConfig: Record<string, { label: string; textClass: string }> = {
+                        info: { label: '信息', textClass: 'text-sky-400' },
+                        success: { label: '成功', textClass: 'text-emerald-400' },
+                        warn: { label: '警告', textClass: 'text-amber-400' },
+                        error: { label: '错误', textClass: 'text-rose-400 font-bold' },
+                        running: { label: '运行', textClass: 'text-blue-400 animate-pulse' },
+                        cancelled: { label: '取消', textClass: 'text-slate-500' },
                       }
-                      const dotColor = colorMap[step.level] || 'bg-slate-500 shadow-slate-500/30'
+                      const config = levelConfig[step.level] || { label: step.level.toUpperCase(), textClass: 'text-slate-300' }
+                      const timeStr = new Date(step.created_at * 1000).toLocaleTimeString()
+                      
                       return (
-                        <div key={idx} className="relative flex items-start gap-4 animate-in fade-in duration-300">
-                          {/* 时间轴精致小节点 */}
-                          <div className={`relative z-10 w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 shadow-[0_0_8px_rgba(0,0,0,0.15)] transition-all ${dotColor} animate-pulse`} />
+                        <div key={idx} className="flex items-start gap-2 py-0.5 hover:bg-slate-900/60 px-1.5 rounded transition-colors group/row">
+                          {/* 时间戳 */}
+                          <span className="text-slate-500 select-none shrink-0 font-medium">[{timeStr}]</span>
                           
-                          <div className="flex flex-col flex-grow bg-white border border-slate-200/80 rounded-2xl p-3 shadow-sm hover:border-slate-300 transition-all">
-                            <div className="flex items-center justify-between border-b border-slate-50 pb-1.5 mb-1.5 shrink-0">
-                              <span className="text-[10px] font-mono font-bold text-slate-400">步骤 #{step.step_index}</span>
-                              <StepStatusBadge level={step.level} />
-                            </div>
-                            <p className="text-[11px] font-bold text-slate-700 leading-relaxed break-words font-sans">
-                              {redactMessage(step.message)}
-                            </p>
-                            <span className="text-[8px] font-mono text-slate-400 font-bold text-right mt-1">
-                              {new Date(step.created_at * 1000).toLocaleTimeString()}
-                            </span>
-                          </div>
+                          {/* 步骤索引 */}
+                          <span className="text-slate-450 select-none shrink-0 font-semibold">[步 #{step.step_index}]</span>
+                          
+                          {/* 日志级别 */}
+                          <span className={`shrink-0 font-black select-none ${config.textClass}`}>[{config.label}]</span>
+                          
+                          {/* 消息正文 */}
+                          <span className="text-slate-200 break-all whitespace-pre-wrap flex-grow leading-tight selection:bg-slate-800">
+                            {renderMessageWithScreenshot(step.message, selectedRunId || '')}
+                          </span>
                         </div>
                       )
                     })
                   ) : (
-                    <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-400 font-bold">
+                    <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 font-bold">
                       当前工作流实例暂无事件步骤流入
                     </div>
                   )}
@@ -641,24 +700,24 @@ function RegistrationSubPanel({
     }
   }
 
-  const focusGlowInputStyle = "w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner focus:shadow-[0_0_12px_rgba(59,130,246,0.25)]"
+  const focusGlowInputStyle = "w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner focus:shadow-[0_0_12px_rgba(59,130,246,0.25)]"
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 relative">
+    <div className="flex flex-col lg:flex-row gap-3.5 relative">
       {/* 左侧：注册模式选择与参数控制表单 (占比 65%) */}
-      <div className="flex-[1.8] glass-panel rounded-3xl p-5 border border-slate-200 bg-white shadow-sm flex flex-col gap-4">
+      <div className="flex-[1.8] glass-panel rounded-2xl p-3 border border-slate-200 bg-white shadow-sm flex flex-col gap-2">
         
         {/* 模式选择 Tab */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
-            <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">执行模式 (PLATFORM KINDS)</h3>
+        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 mb-0.5 shrink-0">
+          <div className="flex items-center gap-1.5">
+            <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+            <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">执行模式 (PLATFORM KINDS)</h3>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-slate-100 p-0.5 rounded-xl border border-slate-200/60 shadow-inner">
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60 shadow-inner">
             <button
               onClick={() => setActivePlatform('openai')}
-              className={`flex items-center gap-1 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all duration-300 ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 ${
                 activePlatform === 'openai' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -666,7 +725,7 @@ function RegistrationSubPanel({
             </button>
             <button
               onClick={() => setActivePlatform('custom')}
-              className={`flex items-center gap-1 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all duration-300 ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 ${
                 activePlatform === 'custom' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
@@ -676,8 +735,8 @@ function RegistrationSubPanel({
         </div>
 
         {/* 表单项 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">并发执行代理 URL (PROXY_NODE)</label>
             <div className="relative">
               <input
@@ -707,7 +766,7 @@ function RegistrationSubPanel({
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">并发线程数</label>
               <input
                 type="number"
@@ -718,7 +777,7 @@ function RegistrationSubPanel({
                 className={focusGlowInputStyle}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">单批次生成数</label>
               <input
                 type="number"
@@ -731,21 +790,21 @@ function RegistrationSubPanel({
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">账号等级</label>
               <select
                 value={accountType}
                 onChange={(e) => setAccountType(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 transition-all shadow-inner h-9"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 transition-all shadow-inner h-8"
               >
                 <option value="free">GPT Free 级别 (免费版)</option>
                 <option value="plus">GPT Plus 级别 (高级版)</option>
                 <option value="team">GPT Team 团队版</option>
               </select>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <label className="text-[10px] font-bold text-slate-500 uppercase">浏览器无头模式 (HEADLESS)</label>
-              <div className="flex items-center justify-between border border-slate-200 bg-slate-50 rounded-xl px-4 h-9 shadow-inner">
+              <div className="flex items-center justify-between border border-slate-200 bg-slate-50 rounded-xl px-4 h-8 shadow-inner">
                 <span className="text-[11px] font-bold text-slate-500">
                   {headless ? '后台纯净静默 (推荐)' : '弹出可视化浏览器'}
                 </span>
@@ -773,47 +832,47 @@ function RegistrationSubPanel({
       </div>
 
       {/* 右侧：翡翠绿呼吸流光启动卡片 (占比 35%) */}
-      <div className="flex-grow flex-[1] glass-panel rounded-3xl p-5 border border-emerald-100 bg-emerald-50/10 flex flex-col relative overflow-hidden group/trigger min-h-[220px]">
+      <div className="flex-grow flex-[1] glass-panel rounded-2xl p-3 border border-emerald-100 bg-emerald-50/10 flex flex-col relative overflow-hidden group/trigger min-h-[150px]">
         {/* 四角呼吸流光线，富含 WoW 级仪式感 */}
-        <div className="absolute inset-0 border border-emerald-500/20 rounded-3xl pointer-events-none group-hover/trigger:border-emerald-500/40 transition-all duration-500" />
+        <div className="absolute inset-0 border border-emerald-500/20 rounded-2xl pointer-events-none group-hover/trigger:border-emerald-500/40 transition-all duration-500" />
         <div className="absolute top-0 left-0 w-24 h-[1px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-pulse" />
         <div className="absolute bottom-0 right-0 w-24 h-[1px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-pulse" />
 
         <div className="relative z-10 flex flex-col flex-grow">
-          <div className="flex items-center gap-2 border-b border-emerald-100/50 pb-3 mb-4 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center shadow-inner">
-              <Shield size={16} />
+          <div className="flex items-center gap-1.5 border-b border-emerald-100/50 pb-1.5 mb-1.5 shrink-0">
+            <div className="w-7 h-7 rounded-md bg-emerald-500/10 text-emerald-600 flex items-center justify-center shadow-inner">
+              <Shield size={13} />
             </div>
             <div>
-              <h4 className="text-xs font-black text-emerald-800 leading-none mb-1">
+              <h4 className="text-[11px] font-black text-emerald-800 leading-none mb-0.5">
                 中枢极速执行终端
               </h4>
-              <span className="font-mono text-[8px] text-emerald-600/70 tracking-widest leading-none uppercase">
+              <span className="font-mono text-[7px] text-emerald-600/70 tracking-widest leading-none uppercase">
                 ENGINE CONTROLLER
               </span>
             </div>
           </div>
 
-          <div className="text-[11px] font-bold text-emerald-700/80 leading-relaxed space-y-2.5 mb-5 flex-grow font-sans pr-1">
-            <p className="flex items-center gap-2">
-              <CheckCircle2 size={13} className="text-emerald-500" /> 
+          <div className="text-[10px] font-bold text-emerald-700/80 leading-relaxed space-y-1 mb-2.5 flex-grow font-sans pr-1">
+            <p className="flex items-center gap-1.5">
+              <CheckCircle2 size={11} className="text-emerald-500" /> 
               已就绪工作流：<span className="font-black text-emerald-900">{currentDef?.title || '未配置'}</span>
             </p>
-            <p className="flex items-center gap-2">
-              <CheckCircle2 size={13} className="text-emerald-500" /> 
+            <p className="flex items-center gap-1.5">
+              <CheckCircle2 size={11} className="text-emerald-500" /> 
               平台执行机制：<span className="font-black text-emerald-900">{activePlatform === 'openai' ? '协议极速注册' : '模拟器可视化'}</span>
             </p>
-            <p className="flex items-center gap-2">
-              <CheckCircle2 size={13} className="text-emerald-500" /> 
-              代理节点掩码：<span className="font-mono font-black text-emerald-900 truncate max-w-[150px]">{openaiProxy ? maskProxyUrl(openaiProxy) : '直连模式'}</span>
+            <p className="flex items-center gap-1.5">
+              <CheckCircle2 size={11} className="text-emerald-500" /> 
+              代理节点掩码：<span className="font-mono font-black text-emerald-900 truncate max-w-[120px]">{openaiProxy ? maskProxyUrl(openaiProxy) : '直连模式'}</span>
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 shrink-0">
+          <div className="grid grid-cols-2 gap-2 shrink-0">
             <button
               onClick={handleSaveConfig}
               disabled={isSaving}
-              className="phantom-btn phantom-btn--secondary hover:bg-emerald-50/50 hover:text-emerald-700 border-emerald-200/50 font-black h-11 transition-all rounded-2xl text-xs"
+              className="phantom-btn phantom-btn--secondary hover:bg-emerald-50/50 hover:text-emerald-700 border-emerald-200/50 font-black h-8 transition-all rounded-xl text-[11px]"
             >
               {isSaving ? '保存中...' : '同步配置'}
             </button>
@@ -821,9 +880,9 @@ function RegistrationSubPanel({
             <button
               onClick={handleTrigger}
               disabled={Boolean(runningId)}
-              className="phantom-btn bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white border-transparent font-black shadow-lg shadow-emerald-500/25 h-11 transition-all rounded-2xl flex items-center justify-center gap-1.5 text-xs active:scale-[0.98]"
+              className="phantom-btn bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white border-transparent font-black shadow-md h-8 transition-all rounded-xl flex items-center justify-center gap-1 text-[11px] active:scale-[0.98]"
             >
-              {runningId ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {runningId ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
               触发极速注册
             </button>
           </div>
