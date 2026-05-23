@@ -1,4 +1,5 @@
 /// 对敏感 URL（如包含用户名密码的代理地址）进行脱敏处理
+#[allow(dead_code)]
 pub fn mask_url(url: &str) -> String {
     let lower = url.to_ascii_lowercase();
     if lower.contains("proxy")

@@ -90,6 +90,19 @@ pub async fn exchange_codex_code(
     callback_url: &str,
     code_verifier: &str,
 ) -> Result<CodexAuthData, String> {
+    exchange_codex_code_with_redirect(
+        callback_url,
+        code_verifier,
+        "http://localhost:1455/auth/callback"
+    ).await
+}
+
+/// 支持自定义重定向 URI 的令牌交换
+pub async fn exchange_codex_code_with_redirect(
+    callback_url: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
+) -> Result<CodexAuthData, String> {
     let url = url::Url::parse(callback_url).map_err(|e| format!("URL 解析失败: {}", e))?;
     let code = url
         .query_pairs()
@@ -102,7 +115,7 @@ pub async fn exchange_codex_code(
         ("client_id", crate::openai::constants::OPENAI_CLIENT_ID),
         ("grant_type", "authorization_code"),
         ("code", &code),
-        ("redirect_uri", "http://localhost:1455/auth/callback"),
+        ("redirect_uri", redirect_uri),
         ("code_verifier", code_verifier),
     ];
 
@@ -600,6 +613,7 @@ pub fn extract_auth_info_from_jwt(id_token: &str) -> ExtractedAuthInfo {
 }
 
 /// 仿真生成包含完整 OpenAI 格式声称（Claims）的 Mock ID Token
+#[allow(dead_code)]
 pub fn generate_mock_id_token(email: &str) -> String {
     let chatgpt_account_id = uuid::Uuid::new_v4().to_string();
     let chatgpt_user_id = format!("user-{}", uuid::Uuid::new_v4().simple());

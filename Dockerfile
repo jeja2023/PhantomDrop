@@ -1,7 +1,7 @@
 # ==========================================
 # Phase 1: Build Frontend (Web)
 # ==========================================
-FROM node:22-bookworm-slim AS web-builder
+FROM docker.1panel.live/library/node:22-bookworm-slim AS web-builder
 
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
@@ -13,7 +13,7 @@ RUN npm run build
 # ==========================================
 # Phase 2: Build Backend (Core)
 # ==========================================
-FROM rust:1.88-bookworm AS core-builder
+FROM docker.1panel.live/library/rust:1.88-bookworm AS core-builder
 
 WORKDIR /build/core
 # 安装构建 boring-sys 所需的系统依赖 (cmake, golang)
@@ -36,7 +36,7 @@ RUN touch src/main.rs && cargo build --release
 # ==========================================
 # Phase 3: Final Runtime Image
 # ==========================================
-FROM debian:bookworm-slim
+FROM docker.1panel.live/library/debian:bookworm-slim
 
 # 1. 设置非交互模式和基础依赖
 ENV DEBIAN_FRONTEND=noninteractive

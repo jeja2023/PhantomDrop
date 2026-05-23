@@ -1246,14 +1246,82 @@ impl BrowserDriver {
         }
 
         // 7. 提取 Access Token (关键步骤)
-        if let Some(cb) = callback {
-            cb("info", "🔑 正在等待会话就绪并提取 Access Token...");
-        }
-
         let mut token_extracted = None;
         let mut refresh_token_extracted = None;
         let mut id_token_extracted = None;
+
+        // 尝试通过后台静默 OAuth 流程捕获官方 API 凭证 (Access Token & Refresh Token)
+        if let Some(cb) = callback {
+            cb("info", "🔑 正在尝试触发官方 OAuth 流程以提取 Access Token & Refresh Token...");
+        }
+
+        let pkce = crate::openai::oauth::generate_pkce();
+        let state = crate::openai::oauth::generate_state();
+        let authorize_url = format!(
+            "{}?client_id={}&scope={}&response_type=code&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
+            crate::openai::constants::AUTH_AUTHORIZE_URL,
+            crate::openai::constants::OPENAI_CLIENT_ID,
+            urlencoding_simple(crate::openai::constants::OPENAI_SCOPE),
+            urlencoding_simple(crate::openai::constants::REDIRECT_URI),
+            &state,
+            &pkce.code_challenge,
+        );
+
+        let _ = tab.navigate_to(&authorize_url);
+        let mut callback_url = None;
+        // 轮询 80 次，每次 100ms，总计 8s
+        for _ in 0..80 {
+            let url = tab.get_url();
+            if url.contains("code=") && url.contains("state=") && url.contains("login-web") {
+                callback_url = Some(url);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        if let Some(url) = callback_url {
+            if let Some(cb) = callback {
+                cb("success", "✅ 已成功捕获 OAuth 回调，正在与 OpenAI 认证中心进行令牌交换...");
+            }
+            match crate::openai::oauth::exchange_codex_code_with_redirect(
+                &url,
+                &pkce.code_verifier,
+                crate::openai::constants::REDIRECT_URI
+            ).await {
+                Ok(auth_data) => {
+                    token_extracted = Some(auth_data.access_token.clone());
+                    refresh_token_extracted = Some(auth_data.refresh_token.clone());
+                    id_token_extracted = Some(auth_data.id_token.clone());
+                    if let Some(cb) = callback {
+                        cb("success", "🎉 成功捕获官方 API Access Token & Refresh Token 凭证！");
+                    }
+                }
+                Err(e) => {
+                    if let Some(cb) = callback {
+                        cb("warn", &format!("⚠️ 官方 OAuth 令牌交换失败: {}，将降级扫描普通 Web Session", e));
+                    }
+                }
+            }
+        } else {
+            if let Some(cb) = callback {
+                cb("warn", "⚠️ 未能捕获到 OAuth 回调跳转，将降级扫描普通 Web Session");
+            }
+        }
+
+        // 强行导航回 chatgpt 首页以维持 Session cookie 及正常的控制台特征
+        let _ = tab.navigate_to("https://chatgpt.com/");
+        let _ = tab.wait_until_navigated().ok();
+
+        if token_extracted.is_none() {
+            if let Some(cb) = callback {
+                cb("info", "🔑 正在等待会话就绪并提取 Web Session Access Token...");
+            }
+        }
+
         for i in 0..30 {
+            if token_extracted.is_some() {
+                break;
+            }
             tokio::time::sleep(Duration::from_secs(3)).await;
 
             let js = r#"
@@ -1539,4 +1607,20 @@ impl BrowserDriver {
             (proxy_url.to_string(), None)
         }
     }
+}
+
+fn urlencoding_simple(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(byte as char);
+            }
+            _ => {
+                result.push('%');
+                result.push_str(&format!("{:02X}", byte));
+            }
+        }
+    }
+    result
 }

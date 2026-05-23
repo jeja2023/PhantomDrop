@@ -138,7 +138,7 @@ export default function AutomationView({ refreshIntervalMs }: { refreshIntervalM
     }
 
     void loadWorkflows()
-  }, [])
+  }, [showToast])
 
   useEffect(() => {
     const interval = setInterval(() => {

@@ -358,6 +358,7 @@ async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
+#[allow(dead_code)]
 fn mask_credential(val: Option<String>) -> Option<String> {
     val.map(|s| {
         if s.trim().is_empty() {

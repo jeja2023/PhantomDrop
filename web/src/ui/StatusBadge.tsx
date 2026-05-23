@@ -52,7 +52,7 @@ export function StepStatusBadge({ level }: { level: WorkflowStepRecord['level'] 
   )
 }
 
-export function translateRunStatus(status: WorkflowRunRecord['status']) {
+function translateRunStatus(status: WorkflowRunRecord['status']) {
   const map: Record<WorkflowRunRecord['status'], string> = {
     running: '运行中',
     success: '成功',
@@ -63,7 +63,7 @@ export function translateRunStatus(status: WorkflowRunRecord['status']) {
   return map[status] ?? status
 }
 
-export function translateStepLevel(level: WorkflowStepRecord['level']) {
+function translateStepLevel(level: WorkflowStepRecord['level']) {
   const map: Record<WorkflowStepRecord['level'], string> = {
     running: '运行中',
     success: '成功',
@@ -75,7 +75,7 @@ export function translateStepLevel(level: WorkflowStepRecord['level']) {
   return map[level] ?? level
 }
 
-export function runStatusTone(status: WorkflowRunRecord['status']) {
+function runStatusTone(status: WorkflowRunRecord['status']) {
   const map: Record<WorkflowRunRecord['status'], string> = {
     running: 'bg-blue-50 text-blue-600',
     success: 'bg-emerald-50 text-emerald-600',
@@ -86,7 +86,7 @@ export function runStatusTone(status: WorkflowRunRecord['status']) {
   return map[status] ?? 'bg-slate-100 text-slate-500'
 }
 
-export function stepStatusTone(level: WorkflowStepRecord['level']) {
+function stepStatusTone(level: WorkflowStepRecord['level']) {
   const map: Record<WorkflowStepRecord['level'], string> = {
     running: 'bg-blue-50 text-blue-600',
     success: 'bg-emerald-50 text-emerald-600',

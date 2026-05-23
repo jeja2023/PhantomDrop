@@ -1,15 +1,12 @@
 use std::env;
 use std::net::SocketAddr;
 
-use axum::http::{
-    HeaderValue, Method,
-    header::{CONTENT_TYPE, HeaderName},
-};
-use tower_http::cors::{Any, CorsLayer};
+use axum::http::HeaderValue;
 
 #[derive(Clone)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
+    #[allow(dead_code)]
     pub cors_origins: Option<Vec<HeaderValue>>,
     pub debug_assets_enabled: bool,
 }

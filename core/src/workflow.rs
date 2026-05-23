@@ -1012,6 +1012,40 @@ impl WorkflowEngine {
                             )
                             .await;
 
+                        // 既然注册已完成且有了 Session Token，立刻触发一次账户状态校验与 Token 自动补全
+                        if result.session_token.is_some() {
+                            Self::log_step(
+                                hub,
+                                dl,
+                                context,
+                                "info",
+                                "🔑 检测到 Session Token，正在触发后端自动双重校验与 Access Token 换取...",
+                            )
+                            .await;
+                            match crate::openai::checker::check_account_status(Arc::clone(dl), &account_id).await {
+                                Ok(status) => {
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "success",
+                                        &format!("✅ 自动双重校验完成，当前账户状态: {}", status),
+                                    )
+                                    .await;
+                                }
+                                Err(e) => {
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "warn",
+                                        &format!("⚠️ 自动双重校验及 Token 补全失败: {}", e),
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+
                         // 获取 CPA 分发参数 (参数优先，全局设置/Codex 授权令牌兜底)
                         let mut final_cpa_url = parameters.cpa_url.clone().unwrap_or_default();
                         let mut final_cpa_key = parameters.cpa_key.clone().unwrap_or_default();
@@ -1355,6 +1389,40 @@ impl WorkflowEngine {
                             &format!("✅ 账号及其凭证已保存至数据库: {}", email),
                         )
                         .await;
+
+                        // 既然注册已完成且有了 Session Token，立刻触发一次账户状态校验与 Token 自动补全
+                        if result.session_token.is_some() {
+                            Self::log_step(
+                                hub,
+                                dl,
+                                context,
+                                "info",
+                                "🔑 检测到 Session Token，正在触发后端自动双重校验与 Access Token 换取...",
+                            )
+                            .await;
+                            match crate::openai::checker::check_account_status(Arc::clone(dl), &account_id).await {
+                                Ok(status) => {
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "success",
+                                        &format!("✅ 自动双重校验完成，当前账户状态: {}", status),
+                                    )
+                                    .await;
+                                }
+                                Err(e) => {
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "warn",
+                                        &format!("⚠️ 自动双重校验及 Token 补全失败: {}", e),
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
 
                         // 获取 CPA 分发参数 (参数优先，全局设置/Codex 授权令牌兜底)
                         let mut final_cpa_url = parameters.cpa_url.clone().unwrap_or_default();
