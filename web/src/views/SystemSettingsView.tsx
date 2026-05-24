@@ -37,6 +37,34 @@ const defaultTunnelStatus: TunnelStatus = {
   provider: 'manual',
 }
 
+/**
+ * 智能从公网 URL 中提取二级域名子串
+ */
+function extractSubdomainFromUrl(url: string): string {
+  if (!url) return ''
+  const cleanUrl = url.trim()
+  try {
+    let hostname = ''
+    if (cleanUrl.includes('://')) {
+      hostname = new URL(cleanUrl).hostname
+    } else {
+      hostname = new URL('http://' + cleanUrl).hostname
+    }
+    const parts = hostname.split('.')
+    if (parts.length >= 3) {
+      if (parts[0] !== 'www') {
+        return parts[0]
+      }
+    }
+  } catch {
+    const match = cleanUrl.match(/(?:https?:\/\/)?([^.]+)\./i)
+    if (match && match[1] !== 'www') {
+      return match[1]
+    }
+  }
+  return ''
+}
+
 export default function SystemSettingsView() {
   const showToast = useToast()
   const copy = useClipboard()
@@ -128,7 +156,8 @@ export default function SystemSettingsView() {
         setTunnelStatus(data)
         if (data.active || !draftDirtyRef.current) {
           setPort(data.port || 9010)
-          setSubdomain(data.subdomain || '')
+          const extSub = data.url ? extractSubdomainFromUrl(data.url) : ''
+          setSubdomain(data.subdomain || extSub || '')
           setPublicUrl(data.url || '')
           draftDirtyRef.current = false
         }
@@ -517,8 +546,13 @@ export default function SystemSettingsView() {
                         value={publicUrl}
                         disabled={tunnelStatus.active || isLoading}
                         onChange={(e) => {
-                          setPublicUrl(e.target.value)
+                          const val = e.target.value
+                          setPublicUrl(val)
                           draftDirtyRef.current = true
+                          const extSub = extractSubdomainFromUrl(val)
+                          if (extSub) {
+                            setSubdomain(extSub)
+                          }
                         }}
                         className="phantom-input w-full pr-10 font-mono"
                       />

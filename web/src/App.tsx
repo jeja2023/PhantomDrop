@@ -289,7 +289,7 @@ function App() {
     return `最近 ${emails.length} 封`
   }, [emails.length])
 
-  const isPageScrollable = activeTab !== 'dashboard'
+  const isPageScrollable = activeTab !== 'dashboard' && activeTab !== 'automation'
 
   const renderView = () => {
     switch (activeTab) {

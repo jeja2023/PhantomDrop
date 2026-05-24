@@ -11,14 +11,13 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Shield,
-  CheckCircle2,
   Terminal,
   Globe,
   Activity,
   FolderSync,
 } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
+import { createPortal } from 'react-dom'
 import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
 import { maskProxyUrl, redactMessage } from '../lib/utils'
 import type {
@@ -31,6 +30,8 @@ import type {
 } from '../types'
 import SnapshotModal from '../ui/SnapshotModal'
 import ProxyModal from '../ui/ProxyModal'
+import { AccountDetailModal } from './InboxCenterView'
+import { useClipboard } from '../ui/useClipboard'
 
 
 import { useToast } from '../ui/Toast'
@@ -96,28 +97,41 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   const [isStepsLoading, setIsStepsLoading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [_copiedOutput, _setCopiedOutput] = useState(false)
-  const [activeMonitorTab, setActiveMonitorTab] = useState<'steps' | 'snapshots' | 'outputs'>('steps')
-
+  const [activeMonitorTab, setActiveMonitorTab] = useState<'steps' | 'outputs'>('steps')
+  const [selectedAccount, setSelectedAccount] = useState<GeneratedAccountRecord | null>(null)
+  const [oauthFolded, setOauthFolded] = useState(true)
+  const copy = useClipboard()
+  const copyToClipboard = useCallback((text: string) => {
+    const message = text.length > 24 ? '数据已复制到剪贴板' : `已复制 ${text}`
+    void copy(text, { title: message, desc: text.length > 24 ? `${text.slice(0, 20)}...` : undefined })
+  }, [copy])
   const stepsContainerRef = useRef<HTMLDivElement>(null)
 
   // 解析日志文本中的快照截图标识，生成可一键弹窗放大查看的超链接
   const renderMessageWithScreenshot = useCallback((message: string, runId: string) => {
     const redacted = redactMessage(message)
-    const regex = /screenshot_([a-zA-Z0-9_\-\.]+)/g
+    // 联合正则表达式，支持传统的 screenshot_ 标识以及新版的 [点击预览](/debug/snap_xxx) 格式
+    const regex = /screenshot_([a-zA-Z0-9_\-\.]+)|\[点击预览\]\(\/debug\/([^)]+)\)/g
     const parts: React.ReactNode[] = []
     let lastIndex = 0
     let match
 
     while ((match = regex.exec(redacted)) !== null) {
       const matchIndex = match.index
-      const fullMatch = match[0]
-      const snapName = match[1]
+      const snapNameFromScreenshot = match[1]
+      const snapNameFromDebug = match[2]
+      
+      const snapName = snapNameFromDebug || snapNameFromScreenshot
 
       if (matchIndex > lastIndex) {
         parts.push(redacted.substring(lastIndex, matchIndex))
       }
 
-      const fullUrl = buildApiUrl(`/api/workflow-runs/${runId}/snapshots/${snapName}`)
+      // 根据不同的匹配来源构建正确的 API URL 路径
+      const fullUrl = snapNameFromDebug 
+        ? buildApiUrl(`/debug/${snapName}`)
+        : buildApiUrl(`/api/workflow-runs/${runId}/snapshots/${snapName}`)
+
       parts.push(
         <span
           key={matchIndex}
@@ -129,7 +143,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
           title="点击放大预览快照"
         >
           <Globe size={11} className="inline animate-pulse" />
-          {fullMatch}
+          点击预览
         </span>
       )
 
@@ -267,7 +281,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   }
 
   return (
-    <div className="page-shell relative animate-in fade-in duration-700 flex flex-col min-h-full pb-0.5">
+    <div className="page-shell relative animate-in fade-in duration-700 flex flex-col h-full min-h-0 overflow-hidden pb-0.5">
       {/* 顶部航母级分类大 Tab 栏 */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 mb-1.5 shrink-0">
         <button
@@ -314,7 +328,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
       </div>
 
       {/* 底部大一统：自动化运行历史与日志步骤时间轴监控沙盘 */}
-      <div className="flex flex-col lg:flex-row gap-4 h-[400px] lg:h-[calc(100vh-330px)] min-h-[380px] max-h-[500px] overflow-hidden bg-slate-50/20 rounded-3xl border border-slate-200/60 p-3.5 shadow-sm">
+      <div className="flex-grow flex-shrink flex-1 min-h-0 flex flex-col lg:flex-row gap-4 overflow-hidden bg-slate-50/20 rounded-3xl border border-slate-200/60 p-3.5 shadow-sm">
         
         {/* 左栏（38%）：工作流最近执行历史 (Workflow Runs) */}
         <div className="flex-[1.2] flex flex-col min-w-0 overflow-hidden">
@@ -439,14 +453,6 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
                 <Terminal size={11} /> 步骤轨迹
               </button>
               <button
-                onClick={() => setActiveMonitorTab('snapshots')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider transition-all duration-300 ${
-                  activeMonitorTab === 'snapshots' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Globe size={11} /> 运行快照
-              </button>
-              <button
                 onClick={() => setActiveMonitorTab('outputs')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider transition-all duration-300 ${
                   activeMonitorTab === 'outputs' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
@@ -512,43 +518,6 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
                     </div>
                   )}
                 </div>
-              ) : activeMonitorTab === 'snapshots' ? (
-                // 运行快照预览
-                <div className="flex-grow overflow-y-auto custom-scrollbar pr-1 flex flex-col gap-4">
-                  {steps.some((s) => s.message.includes('screenshot_')) ? (
-                    <div className="grid grid-cols-2 gap-3 p-1">
-                      {steps
-                        .filter((s) => s.message.includes('screenshot_'))
-                        .map((step, idx) => {
-                          const match = /screenshot_([a-zA-Z0-9_\-\.]+)/.exec(step.message)
-                          const snapName = match ? match[1] : null
-                          if (!snapName) return null
-                          const fullUrl = buildApiUrl(`/api/workflow-runs/${selectedRunId}/snapshots/${snapName}`)
-                          return (
-                            <div
-                              key={idx}
-                              onClick={() => setPreviewUrl(fullUrl)}
-                              className="group cursor-pointer rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-sm hover:shadow-md hover:border-blue-400 transition-all relative aspect-video"
-                            >
-                              <img src={fullUrl} alt={`快照 ${idx}`} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                              <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all duration-300">
-                                <span className="text-[10px] text-white font-black tracking-widest uppercase flex items-center gap-1">
-                                  <Globe size={12} /> 放大检视快照
-                                </span>
-                              </div>
-                              <div className="absolute bottom-2 left-2 bg-slate-900/70 backdrop-blur-sm rounded-lg px-2 py-0.5 text-[8px] font-mono font-bold text-slate-350 pointer-events-none">
-                                STEP #{step.step_index}
-                              </div>
-                            </div>
-                          )
-                        })}
-                    </div>
-                  ) : (
-                    <div className="flex-grow flex flex-col items-center justify-center p-8 text-center text-slate-400 font-bold border border-dashed border-slate-200 rounded-2xl">
-                      未捕获到运行视觉快照 (无头/协议模式不保存快照)
-                    </div>
-                  )}
-                </div>
               ) : (
                 // 资产产出 (Generated Accounts)
                 <div className="flex-grow overflow-y-auto custom-scrollbar pr-1 flex flex-col gap-3">
@@ -556,7 +525,8 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
                     accounts.map((acc) => (
                       <div
                         key={acc.id}
-                        className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm hover:border-indigo-300 transition-colors flex flex-col gap-2 relative"
+                        onClick={() => setSelectedAccount(acc)}
+                        className="cursor-pointer rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm hover:border-indigo-300 transition-colors flex flex-col gap-2 relative"
                       >
                         <div className="flex items-center justify-between shrink-0">
                           <span className="font-mono text-[11px] font-black text-indigo-700 select-all leading-none">{acc.address}</span>
@@ -592,6 +562,17 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
 
       {/* 快照预览 Modal */}
       {previewUrl && <SnapshotModal url={previewUrl} onClose={() => setPreviewUrl(null)} />}
+
+      {/* 账号详情 Modal */}
+      {selectedAccount && (
+        <AccountDetailModal
+          account={selectedAccount}
+          oauthFolded={oauthFolded}
+          setOauthFolded={setOauthFolded}
+          onClose={() => setSelectedAccount(null)}
+          copyToClipboard={copyToClipboard}
+        />
+      )}
     </div>
   )
 }
@@ -621,7 +602,6 @@ function RegistrationSubPanel({
   const [activePlatform, setActivePlatform] = useState<'openai' | 'custom'>('openai')
   const [runningId, setRunningId] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
-  const [showProxyRaw, setShowProxyRaw] = useState(false)
   const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
 
   // 极速注册专属配置状态
@@ -660,7 +640,7 @@ function RegistrationSubPanel({
         cleaned.proxy_url = openaiProxy.trim() || undefined
         cleaned.full_name = undefined
         cleaned.account_type = accountType
-        cleaned.headless = !!headless
+        cleaned.headless = activePlatform === 'openai' ? true : !!headless
         cleaned.age = undefined
         return cleaned
       }
@@ -703,119 +683,129 @@ function RegistrationSubPanel({
   const focusGlowInputStyle = "w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner focus:shadow-[0_0_12px_rgba(59,130,246,0.25)]"
 
   return (
-    <div className="flex flex-col lg:flex-row gap-3.5 relative">
-      {/* 左侧：注册模式选择与参数控制表单 (占比 65%) */}
-      <div className="flex-[1.8] glass-panel rounded-2xl p-3 border border-slate-200 bg-white shadow-sm flex flex-col gap-2">
-        
-        {/* 模式选择 Tab */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 mb-0.5 shrink-0">
-          <div className="flex items-center gap-1.5">
+    <div className="glass-panel rounded-3xl p-3 border border-slate-200 bg-white shadow-sm flex flex-col gap-3">
+        {/* 模式选择 Tab 与 动作控制栏 */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-2 mb-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
             <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">执行模式 (PLATFORM KINDS)</h3>
           </div>
 
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60 shadow-inner">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 极简代理配置按钮 */}
             <button
-              onClick={() => setActivePlatform('openai')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 ${
-                activePlatform === 'openai' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+              type="button"
+              onClick={() => setIsProxyModalOpen(true)}
+              className={`flex items-center gap-1.5 px-3 py-1 h-7 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer shrink-0 ${
+                openaiProxy 
+                  ? 'bg-emerald-50 text-emerald-600 border-emerald-250 hover:bg-emerald-100' 
+                  : 'bg-slate-50 text-slate-500 border-slate-250 hover:bg-slate-100 hover:text-slate-850'
               }`}
+              title={openaiProxy ? `已配置代理: ${maskProxyUrl(openaiProxy)}` : '未配置代理'}
             >
-              🚀 极速协议模式
+              <Globe size={11} className={openaiProxy ? 'text-emerald-500 animate-pulse' : 'text-slate-400'} />
+              {openaiProxy ? '代理已就绪' : '配置代理'}
             </button>
+
+            {/* 执行模式切换 */}
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60 shadow-inner shrink-0">
+              <button
+                onClick={() => setActivePlatform('openai')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                  activePlatform === 'openai' ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/20' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                🚀 极速协议模式
+              </button>
+              <button
+                onClick={() => setActivePlatform('custom')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                  activePlatform === 'custom' ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/20' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                🖥️ 模拟器可视化模式
+              </button>
+            </div>
+
+            {/* 垂直分界线 */}
+            <div className="hidden sm:block w-px h-5 bg-slate-200 mx-1 shrink-0" />
+
+            {/* 同步配置按钮 */}
             <button
-              onClick={() => setActivePlatform('custom')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 ${
-                activePlatform === 'custom' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-              }`}
+              onClick={handleSaveConfig}
+              disabled={isSaving}
+              className="px-3.5 py-1 h-7 rounded-lg border border-slate-250 hover:bg-slate-50 text-slate-655 hover:text-slate-855 transition-all font-black text-[9px] uppercase cursor-pointer shrink-0"
             >
-              🖥️ 模拟器可视化模式
+              {isSaving ? '保存中...' : '同步配置'}
+            </button>
+
+            {/* 触发极速注册按钮 */}
+            <button
+              onClick={handleTrigger}
+              disabled={Boolean(runningId)}
+              className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-black shadow-sm h-7 px-4 rounded-xl flex items-center justify-center gap-1 text-[10px] uppercase transition-all active:scale-[0.98] cursor-pointer shrink-0"
+            >
+              {runningId ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+              触发极速注册
             </button>
           </div>
         </div>
 
         {/* 表单项 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">并发执行代理 URL (PROXY_NODE)</label>
-            <div className="relative">
-              <input
-                type={showProxyRaw ? 'text' : 'password'}
-                placeholder="socks5://user:pass@host:port (选填)"
-                value={openaiProxy}
-                onChange={(e) => setOpenaiProxy(e.target.value)}
-                className={`${focusGlowInputStyle} pr-20 font-mono`}
-              />
-              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1 h-7">
-                <button
-                  type="button"
-                  onClick={() => setShowProxyRaw(!showProxyRaw)}
-                  className="px-2 rounded-lg bg-slate-200/60 text-slate-500 hover:bg-slate-200 transition-colors text-[9px] font-bold uppercase"
-                >
-                  {showProxyRaw ? '隐藏' : '明文'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsProxyModalOpen(true)}
-                  className="px-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors text-[9px] font-bold uppercase"
-                >
-                  管理
-                </button>
-              </div>
-            </div>
+            <label className="text-[10px] font-bold text-slate-500 uppercase">并发线程数</label>
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={concurrency}
+              onChange={(e) => setConcurrency(Math.max(1, Number(e.target.value)))}
+              className={focusGlowInputStyle}
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">单批次生成数</label>
+            <input
+              type="number"
+              min="1"
+              value={batchSize}
+              onChange={(e) => setBatchSize(Math.max(1, Number(e.target.value)))}
+              className={focusGlowInputStyle}
+            />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">并发线程数</label>
-              <input
-                type="number"
-                min="1"
-                max="50"
-                value={concurrency}
-                onChange={(e) => setConcurrency(Math.max(1, Number(e.target.value)))}
-                className={focusGlowInputStyle}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">单批次生成数</label>
-              <input
-                type="number"
-                min="1"
-                value={batchSize}
-                onChange={(e) => setBatchSize(Math.max(1, Number(e.target.value)))}
-                className={focusGlowInputStyle}
-              />
-            </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">账号等级</label>
+            <select
+              value={accountType}
+              onChange={(e) => setAccountType(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 transition-all shadow-inner h-8"
+            >
+              <option value="free">GPT Free 级别 (免费版)</option>
+              <option value="plus">GPT Plus 级别 (高级版)</option>
+              <option value="team">GPT Team 团队版</option>
+            </select>
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">账号等级</label>
-              <select
-                value={accountType}
-                onChange={(e) => setAccountType(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 transition-all shadow-inner h-8"
-              >
-                <option value="free">GPT Free 级别 (免费版)</option>
-                <option value="plus">GPT Plus 级别 (高级版)</option>
-                <option value="team">GPT Team 团队版</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">浏览器无头模式 (HEADLESS)</label>
-              <div className="flex items-center justify-between border border-slate-200 bg-slate-50 rounded-xl px-4 h-8 shadow-inner">
-                <span className="text-[11px] font-bold text-slate-500">
-                  {headless ? '后台纯净静默 (推荐)' : '弹出可视化浏览器'}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={headless}
-                  onChange={(e) => setHeadless(e.target.checked)}
-                  className="h-4 w-4 text-blue-600 border-slate-350 focus:ring-blue-100 rounded cursor-pointer"
-                />
-              </div>
-            </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-slate-500 uppercase">浏览器无头模式 (HEADLESS)</label>
+            <select
+              value={activePlatform === 'openai' ? 'true' : String(headless)}
+              disabled={activePlatform === 'openai'}
+              onChange={(e) => setHeadless(e.target.value === 'true')}
+              className={`w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 transition-all shadow-inner h-8 ${
+                activePlatform === 'openai' ? 'opacity-50 cursor-not-allowed bg-slate-100/50' : ''
+              }`}
+            >
+              {activePlatform === 'openai' ? (
+                <option value="true">后台纯净静默 (协议强制)</option>
+              ) : (
+                <>
+                  <option value="true">后台纯净静默 (推荐)</option>
+                  <option value="false">弹出可视化浏览器</option>
+                </>
+              )}
+            </select>
           </div>
         </div>
 
@@ -829,71 +819,166 @@ function RegistrationSubPanel({
           }}
           onClose={() => setIsProxyModalOpen(false)}
         />
-      </div>
-
-      {/* 右侧：翡翠绿呼吸流光启动卡片 (占比 35%) */}
-      <div className="flex-grow flex-[1] glass-panel rounded-2xl p-3 border border-emerald-100 bg-emerald-50/10 flex flex-col relative overflow-hidden group/trigger min-h-[150px]">
-        {/* 四角呼吸流光线，富含 WoW 级仪式感 */}
-        <div className="absolute inset-0 border border-emerald-500/20 rounded-2xl pointer-events-none group-hover/trigger:border-emerald-500/40 transition-all duration-500" />
-        <div className="absolute top-0 left-0 w-24 h-[1px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-pulse" />
-        <div className="absolute bottom-0 right-0 w-24 h-[1px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-pulse" />
-
-        <div className="relative z-10 flex flex-col flex-grow">
-          <div className="flex items-center gap-1.5 border-b border-emerald-100/50 pb-1.5 mb-1.5 shrink-0">
-            <div className="w-7 h-7 rounded-md bg-emerald-500/10 text-emerald-600 flex items-center justify-center shadow-inner">
-              <Shield size={13} />
-            </div>
-            <div>
-              <h4 className="text-[11px] font-black text-emerald-800 leading-none mb-0.5">
-                中枢极速执行终端
-              </h4>
-              <span className="font-mono text-[7px] text-emerald-600/70 tracking-widest leading-none uppercase">
-                ENGINE CONTROLLER
-              </span>
-            </div>
-          </div>
-
-          <div className="text-[10px] font-bold text-emerald-700/80 leading-relaxed space-y-1 mb-2.5 flex-grow font-sans pr-1">
-            <p className="flex items-center gap-1.5">
-              <CheckCircle2 size={11} className="text-emerald-500" /> 
-              已就绪工作流：<span className="font-black text-emerald-900">{currentDef?.title || '未配置'}</span>
-            </p>
-            <p className="flex items-center gap-1.5">
-              <CheckCircle2 size={11} className="text-emerald-500" /> 
-              平台执行机制：<span className="font-black text-emerald-900">{activePlatform === 'openai' ? '协议极速注册' : '模拟器可视化'}</span>
-            </p>
-            <p className="flex items-center gap-1.5">
-              <CheckCircle2 size={11} className="text-emerald-500" /> 
-              代理节点掩码：<span className="font-mono font-black text-emerald-900 truncate max-w-[120px]">{openaiProxy ? maskProxyUrl(openaiProxy) : '直连模式'}</span>
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 shrink-0">
-            <button
-              onClick={handleSaveConfig}
-              disabled={isSaving}
-              className="phantom-btn phantom-btn--secondary hover:bg-emerald-50/50 hover:text-emerald-700 border-emerald-200/50 font-black h-8 transition-all rounded-xl text-[11px]"
-            >
-              {isSaving ? '保存中...' : '同步配置'}
-            </button>
-
-            <button
-              onClick={handleTrigger}
-              disabled={Boolean(runningId)}
-              className="phantom-btn bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white border-transparent font-black shadow-md h-8 transition-all rounded-xl flex items-center justify-center gap-1 text-[11px] active:scale-[0.98]"
-            >
-              {runningId ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-              触发极速注册
-            </button>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
 
 // ==========================================
-// 4. 自动化工作流设计师 SubPanel 子面板
+// 4. 自动化工作流设计师参数编辑弹窗组件 (Portal Modal)
+// ==========================================
+interface WorkflowParamModalProps {
+  isOpen: boolean
+  onClose: () => void
+  workflow: WorkflowDefinition
+  onSave: (title: string, summary: string, batchSize: number, accountDomain: string) => Promise<void>
+  isSaving: boolean
+}
+
+function WorkflowParamModal({
+  isOpen,
+  onClose,
+  workflow,
+  onSave,
+  isSaving,
+}: WorkflowParamModalProps) {
+  const [draftTitle, setDraftTitle] = useState('')
+  const [draftSummary, setDraftSummary] = useState('')
+  const [draftBatchSize, setDraftBatchSize] = useState(1)
+  const [draftAccountDomain, setDraftAccountDomain] = useState('')
+
+  useEffect(() => {
+    if (isOpen && workflow) {
+      setDraftTitle(workflow.title)
+      setDraftSummary(workflow.summary)
+      setDraftBatchSize(workflow.parameters?.batch_size ?? 1)
+      setDraftAccountDomain(workflow.parameters?.account_domain ?? '')
+    }
+  }, [isOpen, workflow])
+
+  if (!isOpen) return null
+
+  const handleSaveClick = () => {
+    void onSave(draftTitle, draftSummary, draftBatchSize, draftAccountDomain)
+  }
+
+  const focusGlowInputStyle =
+    'w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all duration-300 shadow-inner'
+
+  return createPortal(
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+        onClick={onClose}
+      >
+        <motion.div
+          initial={{ scale: 0.95, opacity: 0, y: 15 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.95, opacity: 0, y: 15 }}
+          className="relative max-w-md w-full bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 头部 (Header) */}
+          <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 backdrop-blur-md">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-purple-600/10 flex items-center justify-center text-purple-600 shadow-inner">
+                <Save size={16} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-950">工作流参数编辑</h3>
+                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Param Editor</p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-all"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* 表单区域 (Form) */}
+          <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">工作流标题</label>
+              <input
+                type="text"
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                className={focusGlowInputStyle}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-500 uppercase">工作流说明摘要</label>
+              <textarea
+                value={draftSummary}
+                onChange={(e) => setDraftSummary(e.target.value)}
+                rows={2}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all duration-300 shadow-inner"
+              />
+            </div>
+
+            {/* 核心调度参数配置 */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3.5">
+              <span className="text-[9px] font-black text-purple-600 tracking-wider uppercase border-b border-slate-100 pb-1.5 block">
+                核心调度变量 (SCHEDULER VARS)
+              </span>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold">
+                  <span className="text-slate-500">单批次处理容量 (batch_size)</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={draftBatchSize}
+                    onChange={(e) => setDraftBatchSize(Math.max(1, Number(e.target.value)))}
+                    className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-right text-xs outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] font-bold">
+                  <span className="text-slate-500">自愈账号所属分组域</span>
+                  <input
+                    type="text"
+                    placeholder="openai.local"
+                    value={draftAccountDomain}
+                    onChange={(e) => setDraftAccountDomain(e.target.value)}
+                    className="w-28 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-right text-xs outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 底部按钮 (Footer) */}
+          <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all shadow-sm"
+            >
+              放弃修改
+            </button>
+            <button
+              onClick={handleSaveClick}
+              disabled={isSaving}
+              className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 text-white bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 transition-all shadow-md shadow-purple-500/10 active:scale-[0.98]"
+            >
+              {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              持久化配置
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>,
+    document.body
+  )
+}
+
+// ==========================================
+// 5. 自动化工作流设计师 SubPanel 子面板
 // ==========================================
 interface WorkflowDesignerSubPanelProps {
   workflows: WorkflowDefinition[]
@@ -907,7 +992,7 @@ function WorkflowDesignerSubPanel({
   onTriggerRun,
 }: WorkflowDesignerSubPanelProps) {
   const showToast = useToast()
-  
+
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null)
   const [confirmConfig, setConfirmConfig] = useState<{
     title: string
@@ -916,24 +1001,8 @@ function WorkflowDesignerSubPanel({
     onConfirm: () => void
   } | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
-  
-  // 局部编辑草稿状态（替代不可用的 setWorkflows 直接修改父级数据）
-  const [draftTitle, setDraftTitle] = useState('')
-  const [draftSummary, setDraftSummary] = useState('')
-  const [draftBatchSize, setDraftBatchSize] = useState(1)
-  const [draftAccountDomain, setDraftAccountDomain] = useState('')
 
   const editingWorkflow = workflows.find((w) => w.id === editingWorkflowId) ?? null
-
-  // 当切换到编辑模式时，将当前工作流的值灌入草稿
-  useEffect(() => {
-    if (editingWorkflow) {
-      setDraftTitle(editingWorkflow.title)
-      setDraftSummary(editingWorkflow.summary)
-      setDraftBatchSize(editingWorkflow.parameters?.batch_size ?? 1)
-      setDraftAccountDomain(editingWorkflow.parameters?.account_domain ?? '')
-    }
-  }, [editingWorkflowId])
 
   const kindColors: Record<string, { bg: string; border: string; text: string; badge: string }> = {
     openai_register: {
@@ -983,10 +1052,6 @@ function WorkflowDesignerSubPanel({
     environment_check: '环境校验预警',
   }
 
-  // 快捷复制
-  // 快捷复制（预留功能）
-  // const handleCopy = async (text: string) => { ... }
-
   // 新建空工作流
   const createDraftWorkflow = (): WorkflowDefinition => ({
     id: `workflow_${Date.now()}`,
@@ -1014,26 +1079,39 @@ function WorkflowDesignerSubPanel({
         parameters_json: JSON.stringify(draft.parameters || {}),
       })
       void onLoadWorkflows()
-    } catch { /* 忽略 */ }
+    } catch {
+      /* 忽略 */
+    }
     setEditingWorkflowId(draft.id)
     emitLog('开启了新工作流编辑', 'info')
   }
 
   // 保存工作流编辑
-  const handleSave = async (id: string, def: WorkflowDefinition) => {
+  const handleSave = async (
+    id: string,
+    def: WorkflowDefinition,
+    newTitle: string,
+    newSummary: string,
+    newBatchSize: number,
+    newAccountDomain: string,
+  ) => {
     setSavingId(id)
     try {
-      const mergedParams = { ...def.parameters, batch_size: draftBatchSize, account_domain: draftAccountDomain }
+      const mergedParams = {
+        ...def.parameters,
+        batch_size: newBatchSize,
+        account_domain: newAccountDomain,
+      }
       await postJson<{ status: string }, WorkflowSavePayload>('/api/workflows/save', {
         id: def.id,
         kind: def.kind,
-        title: draftTitle,
-        summary: draftSummary,
+        title: newTitle,
+        summary: newSummary,
         status: def.status,
         parameters_json: JSON.stringify(mergedParams),
       })
-      showToast({ title: '保存成功', desc: `工作流 ${draftTitle} 已写入配置库。` })
-      emitLog(`保存工作流设计: ${draftTitle}`, 'success')
+      showToast({ title: '保存成功', desc: `工作流 ${newTitle} 已写入配置库。` })
+      emitLog(`保存工作流设计: ${newTitle}`, 'success')
       setEditingWorkflowId(null)
       void onLoadWorkflows()
     } catch (error) {
@@ -1049,7 +1127,7 @@ function WorkflowDesignerSubPanel({
     setConfirmConfig({
       title: '删除工作流设计',
       message: `确定要永久删除工作流 "${title}" 吗？该操作无法恢复。`,
-      tone: 'danger',
+      tone: 'warn',
       onConfirm: async () => {
         setConfirmConfig(null)
         try {
@@ -1066,197 +1144,110 @@ function WorkflowDesignerSubPanel({
     })
   }
 
-  const focusGlowInputStyle = "w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner focus:shadow-[0_0_12px_rgba(59,130,246,0.25)]"
-
   return (
-    <div className="flex flex-col lg:flex-row gap-6 relative">
-      {/* 左侧：工作流卡片网格列表 (占比 65%) */}
-      <div className="flex-[1.8] flex flex-col min-w-0 bg-white border border-slate-200 rounded-3xl p-5 shadow-sm gap-4">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
-            <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">可用设计师模板</h3>
-          </div>
-          <button
-            onClick={handleCreate}
-            className="phantom-btn phantom-btn--primary phantom-btn--sm flex items-center gap-1.5 h-8 min-h-8 rounded-xl shadow-sm text-[10px]"
-          >
-            <Plus size={12} />
-            创建自定义工作流
-          </button>
+    <div className="w-full flex flex-col min-h-0 bg-white border border-slate-200 rounded-3xl p-3.5 shadow-sm gap-3">
+      {/* 头部标题与新建按钮 */}
+      <div className="flex items-center justify-between border-b border-slate-100 pb-2 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-pulse" />
+          <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">
+            可用设计师模板
+          </h3>
         </div>
+        <button
+          onClick={handleCreate}
+          className="phantom-btn phantom-btn--primary phantom-btn--sm flex items-center gap-1.5 h-7 min-h-7 rounded-xl shadow-sm text-[9px]"
+        >
+          <Plus size={11} />
+          创建自定义工作流
+        </button>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
-          {workflows.map((workflow) => {
-            const colors = kindColors[workflow.kind] || kindColors.account_generate
-            const isEditing = editingWorkflowId === workflow.id
-            return (
-              <motion.div
-                key={workflow.id}
-                whileHover={{ y: -3 }}
-                className={`rounded-2xl border p-4 min-h-[150px] transition-all duration-300 flex flex-col gap-3 relative overflow-hidden ${colors.bg} ${colors.border} ${
-                  isEditing ? 'ring-2 ring-purple-500 border-transparent shadow-lg' : 'shadow-sm'
-                }`}
-              >
-                <div className="flex items-center justify-between shrink-0">
-                  <span className={`px-2 py-0.5 rounded-lg border text-[8px] font-black leading-none ${colors.badge}`}>
-                    {kindLabels[workflow.kind]}
+      {/* 紧凑的多列响应式卡片网格列表 */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+        {workflows.map((workflow) => {
+          const colors = kindColors[workflow.kind] || kindColors.account_generate
+          const isEditing = editingWorkflowId === workflow.id
+          return (
+            <motion.div
+              key={workflow.id}
+              whileHover={{ y: -2 }}
+              className={`rounded-2xl border p-3 transition-all duration-300 flex flex-col gap-2 relative overflow-hidden ${
+                colors.bg
+              } ${colors.border} ${
+                isEditing ? 'ring-2 ring-purple-500 border-transparent shadow-lg' : 'shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between shrink-0">
+                <span
+                  className={`px-1.5 py-0.5 rounded-md border text-[7.5px] font-black leading-none ${colors.badge}`}
+                >
+                  {kindLabels[workflow.kind]}
+                </span>
+
+                {workflow.builtin && (
+                  <span className="text-[7px] font-mono font-bold text-slate-400 bg-slate-100 px-1 py-0.5 rounded-md tracking-wider uppercase select-none">
+                    BUILTIN_SYS
                   </span>
-                  
-                  {workflow.builtin && (
-                    <span className="text-[7.5px] font-mono font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-lg tracking-widest uppercase select-none">
-                      BUILTIN_SYS
-                    </span>
+                )}
+              </div>
+
+              <div className="flex flex-col min-w-0">
+                <h4
+                  className="text-[11px] font-black text-slate-800 tracking-tight leading-none mb-1 truncate"
+                  title={workflow.title}
+                >
+                  {workflow.title}
+                </h4>
+                <p className="text-[9px] font-medium text-slate-500 leading-normal font-sans line-clamp-1 pr-1">
+                  {workflow.summary}
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-1.5 border-t border-slate-200/40 pt-2 mt-auto shrink-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setEditingWorkflowId(workflow.id)}
+                    className="phantom-btn phantom-btn--secondary phantom-btn--sm h-6 min-h-6 px-2 text-[8px]"
+                  >
+                    编辑参数
+                  </button>
+                  {!workflow.builtin && (
+                    <button
+                      onClick={() => void handleDelete(workflow.id, workflow.title)}
+                      className="p-1 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                      title="删除该自定义工作流"
+                    >
+                      <Trash2 size={11} />
+                    </button>
                   )}
                 </div>
 
-                <div className="flex flex-col min-w-0">
-                  <h4 className="text-xs font-black text-slate-800 tracking-tight leading-none mb-1.5 truncate" title={workflow.title}>
-                    {workflow.title}
-                  </h4>
-                  <p className="text-[10px] font-bold text-slate-500 leading-relaxed font-sans line-clamp-2 pr-1">
-                    {workflow.summary}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between gap-2 border-t border-slate-200/50 pt-3 mt-auto shrink-0">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => setEditingWorkflowId(workflow.id)}
-                      disabled={isEditing}
-                      className="phantom-btn phantom-btn--secondary phantom-btn--sm h-7 min-h-7 px-2 text-[9px]"
-                    >
-                      编辑参数
-                    </button>
-                    {!workflow.builtin && (
-                      <button
-                        onClick={() => void handleDelete(workflow.id, workflow.title)}
-                        className="p-1.5 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-                        title="删除该自定义工作流"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => onTriggerRun(workflow.id)}
-                    className={`phantom-btn phantom-btn--sm h-7 min-h-7 px-3 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-black border-transparent shadow-md shadow-purple-500/10 flex items-center justify-center gap-1 text-[9px]`}
-                  >
-                    <Play size={10} />
-                    立即调度
-                  </button>
-                </div>
-              </motion.div>
-            )
-          })}
-        </div>
+                <button
+                  onClick={() => onTriggerRun(workflow.id)}
+                  className="phantom-btn phantom-btn--sm h-6 min-h-6 px-2.5 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-black border-transparent shadow shadow-purple-500/10 flex items-center justify-center gap-0.5 text-[8px]"
+                >
+                  <Play size={8} />
+                  立即调度
+                </button>
+              </div>
+            </motion.div>
+          )
+        })}
       </div>
 
-      {/* 右侧：工作流参数配置抽屉表单 (占比 35%) */}
-      <div className="flex-grow flex-[1] glass-panel rounded-3xl p-5 border border-purple-100 bg-purple-50/10 flex flex-col min-h-[220px]">
-        {editingWorkflow ? (
-          <div className="flex flex-col flex-grow relative z-10">
-            <div className="flex items-center justify-between border-b border-purple-100/50 pb-3 mb-4 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-600 flex items-center justify-center shadow-inner">
-                  <Save size={16} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-black text-purple-800 leading-none mb-1">工作流参数编辑</h4>
-                  <span className="font-mono text-[8px] text-purple-600/70 tracking-widest leading-none uppercase">PARAM EDITOR</span>
-                </div>
-              </div>
-              
-              <button
-                onClick={() => setEditingWorkflowId(null)}
-                className="p-1 rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors"
-                title="放弃编辑"
-              >
-                <X size={14} />
-              </button>
-            </div>
-
-            <div className="flex-grow overflow-y-auto pr-1 space-y-4 max-h-[280px] custom-scrollbar mb-4">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">工作流标题</label>
-                <input
-                  type="text"
-                  value={draftTitle}
-                  onChange={(e) => setDraftTitle(e.target.value)}
-                  className={focusGlowInputStyle}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">工作流说明摘要</label>
-                <textarea
-                  value={draftSummary}
-                  onChange={(e) => setDraftSummary(e.target.value)}
-                  rows={2}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner"
-                />
-              </div>
-
-              {/* 核心调度参数配置 */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3.5">
-                <span className="text-[9px] font-black text-purple-600 tracking-wider uppercase border-b border-slate-100 pb-1.5 block">
-                  核心调度变量 (SCHEDULER VARS)
-                </span>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-[11px] font-bold">
-                    <span className="text-slate-500">单批次处理容量 (batch_size)</span>
-                    <input
-                      type="number"
-                      min="1"
-                      value={draftBatchSize}
-                      onChange={(e) => setDraftBatchSize(Math.max(1, Number(e.target.value)))}
-                      className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right text-xs outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] font-bold">
-                    <span className="text-slate-500">自愈账号所属分组域</span>
-                    <input
-                      type="text"
-                      placeholder="openai.local"
-                      value={draftAccountDomain}
-                      onChange={(e) => setDraftAccountDomain(e.target.value)}
-                      className="w-28 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-right text-xs outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 shrink-0 mt-auto">
-              <button
-                onClick={() => setEditingWorkflowId(null)}
-                className="phantom-btn phantom-btn--secondary border-purple-250 h-10 min-h-10 text-xs font-black rounded-2xl"
-              >
-                放弃修改
-              </button>
-              <button
-                onClick={() => void handleSave(editingWorkflow.id, editingWorkflow)}
-                disabled={savingId === editingWorkflow.id}
-                className="phantom-btn bg-gradient-to-r from-purple-500 to-indigo-500 text-white border-transparent font-black shadow-lg shadow-purple-500/25 h-10 min-h-10 text-xs rounded-2xl flex items-center justify-center gap-1 active:scale-[0.98]"
-              >
-                {savingId === editingWorkflow.id ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                持久化配置
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center h-full relative select-none">
-            <Activity className="text-purple-400 animate-pulse mb-3" size={26} />
-            <h4 className="text-xs font-black uppercase text-purple-800 tracking-wider leading-none mb-2">未激活设计师参数</h4>
-            <p className="text-[10px] font-bold text-slate-400 max-w-[200px] leading-relaxed">
-              请点击左侧卡片的“编辑参数”按键，此处将即刻展开高阶调度变量持久化表单。
-            </p>
-          </div>
-        )}
-      </div>
+      {/* 参数配置 Portal Modal */}
+      {editingWorkflow && (
+        <WorkflowParamModal
+          isOpen={!!editingWorkflow}
+          onClose={() => setEditingWorkflowId(null)}
+          workflow={editingWorkflow}
+          onSave={(t, s, b, d) =>
+            handleSave(editingWorkflow.id, editingWorkflow, t, s, b, d)
+          }
+          isSaving={savingId === editingWorkflow.id}
+        />
+      )}
 
       {confirmConfig && (
         <ConfirmModal

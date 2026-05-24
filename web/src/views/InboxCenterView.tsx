@@ -1401,50 +1401,65 @@ function AccountListTab() {
           <table className="phantom-table">
             <thead className="sticky top-0 z-20">
               <tr>
-                <th className="w-[56px] text-center text-[10px] font-bold">
-                  <input
-                    type="checkbox"
-                    aria-label="全选当前页账号"
-                    title="全选当前页账号"
-                    checked={allOnPageSelected}
-                    onChange={toggleSelectAll}
-                  />
+                <th className="w-[56px] text-center text-[10px] font-bold group relative" onClick={(e) => e.stopPropagation()}>
+                  <span className={`text-[10px] font-mono text-slate-400 group-hover:hidden ${selectedIds.length > 0 ? 'hidden' : 'block'}`}>
+                    #
+                  </span>
+                  <div className={`group-hover:block ${selectedIds.length > 0 ? 'block' : 'hidden'}`}>
+                    <input
+                      type="checkbox"
+                      aria-label="全选当前页账号"
+                      title="全选当前页账号"
+                      checked={allOnPageSelected}
+                      onChange={toggleSelectAll}
+                    />
+                  </div>
                 </th>
                 <th className="w-[140px] text-center text-[10px] font-bold">账号状态</th>
-                <th className="w-[260px] text-left text-[10px] font-bold">注册邮箱 (Email)</th>
-                <th className="w-[110px] text-left text-[10px] font-bold">分池标签</th>
+                <th className="w-[200px] text-left text-[10px] font-bold">注册邮箱 (Email)</th>
+                <th className="w-[140px] text-left text-[10px] font-bold">注册密码 (Password)</th>
+                <th className="w-[100px] text-left text-[10px] font-bold">分池标签</th>
                 <th className="w-[180px] text-left text-[10px] font-bold">关联工作流任务</th>
-                <th className="w-[140px] text-left text-[10px] font-bold">注册时间</th>
+                <th className="w-[140px] text-left text-[10px] font-bold whitespace-nowrap">注册时间</th>
                 <th className="w-[100px] text-right text-[10px] font-bold">数据探活</th>
               </tr>
             </thead>
             <tbody>
               {accounts.length > 0 ? (
-                accounts.map((account) => {
+                accounts.map((account, idx) => {
                   const isChecked = selectedIds.includes(account.id)
                   const isChecking = checkingIds.includes(account.id)
                   return (
                     <tr
                       key={account.id}
                       onClick={() => setSelectedAccount(account)}
-                      className={`cursor-pointer transition-all duration-300 hover:bg-slate-50/80 ${
+                      className={`group cursor-pointer transition-all duration-300 hover:bg-slate-50/80 ${
                         selectedAccount?.id === account.id ? 'bg-indigo-50/30' : ''
                       }`}
                     >
-                      <td className="text-center" onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          aria-label={`选择账号 ${account.id}`}
-                          title={`选择账号 ${account.id}`}
-                          checked={isChecked}
-                          onChange={() => toggleSelect(account.id)}
-                        />
+                      <td className="text-center relative w-[56px] select-none" onClick={(e) => e.stopPropagation()}>
+                        <span className={`text-[11px] font-mono font-bold text-slate-400 group-hover:hidden ${isChecked ? 'hidden' : 'block'}`}>
+                          {(page - 1) * pageSize + idx + 1}
+                        </span>
+                        <div className={`group-hover:block ${isChecked ? 'block' : 'hidden'}`}>
+                          <input
+                            type="checkbox"
+                            aria-label={`选择账号 ${account.id}`}
+                            title={`选择账号 ${account.id}`}
+                            checked={isChecked}
+                            onChange={() => toggleSelect(account.id)}
+                            className="h-3.5 w-3.5 text-blue-600 border-slate-300 rounded cursor-pointer"
+                          />
+                        </div>
                       </td>
                       <td className="text-center">
                         <AccountStatusBadge status={account.status} />
                       </td>
                       <td className="font-mono text-[11px] font-bold text-slate-800 break-all select-all">
                         {account.address}
+                      </td>
+                      <td className="font-mono text-[11px] text-slate-500 font-bold select-all truncate max-w-[120px]" title={account.password}>
+                        {account.password || '---'}
                       </td>
                       <td>
                         <span className="px-2 py-0.5 rounded-lg border border-indigo-50 bg-indigo-50/40 text-indigo-600 text-[10px] font-black tracking-wide font-mono">
@@ -1454,7 +1469,7 @@ function AccountListTab() {
                       <td className="font-mono text-[10px] text-slate-500 font-bold truncate max-w-[180px]" title={account.run_id}>
                         {account.run_id}
                       </td>
-                      <td className="text-[10px] font-mono text-slate-400 font-bold">
+                      <td className="text-[10px] font-mono text-slate-400 font-bold whitespace-nowrap">
                         {new Date(account.created_at * 1000).toLocaleString()}
                       </td>
                       <td className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -1462,11 +1477,10 @@ function AccountListTab() {
                           <button
                             onClick={() => void handleCheckStatus(account.id)}
                             disabled={isChecking}
-                            className="phantom-btn phantom-btn--secondary phantom-btn--sm min-h-7 h-7 font-black text-[10px] px-2 shadow-sm flex items-center justify-center gap-1 shrink-0"
-                            title="对该账号发起探活"
+                            className="p-1 rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 transition-colors disabled:opacity-50 disabled:hover:bg-transparent shrink-0"
+                            title={isChecking ? "正在探活中..." : "对该账号发起探活"}
                           >
-                            <RefreshCw size={10} className={isChecking ? 'animate-spin' : ''} />
-                            {isChecking ? '探活中' : '探活'}
+                            <RefreshCw size={13} className={isChecking ? 'animate-spin' : ''} />
                           </button>
                           <button
                             onClick={() => void handleDelete(account.id)}
@@ -1584,7 +1598,7 @@ function AccountListTab() {
 }
 
 // ==========================================
-interface AccountDetailModalProps {
+export interface AccountDetailModalProps {
   account: GeneratedAccountRecord
   oauthFolded: boolean
   setOauthFolded: (folded: boolean) => void
@@ -1592,7 +1606,7 @@ interface AccountDetailModalProps {
   copyToClipboard: (text: string) => void
 }
 
-function AccountDetailModal({
+export function AccountDetailModal({
   account,
   oauthFolded,
   setOauthFolded,
@@ -1614,6 +1628,7 @@ function AccountDetailModal({
 
   const sessionKey = account.session_token || (credentials.session_key as string) || ''
   const accessToken = account.access_token || (credentials.access_token as string) || ''
+  const refreshToken = account.refresh_token || (credentials.refresh_token as string) || ''
   const apiSecret = account.password || ''
 
   // 拼接 Session 完整串
@@ -1664,7 +1679,7 @@ function AccountDetailModal({
             <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-1">
               <ShieldCheck className="text-emerald-500" size={14} />
               <span className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">
-                聚合提取三件套 (QUICK COPY PANEL)
+                聚合提取四件套 (QUICK COPY PANEL)
               </span>
             </div>
 
@@ -1705,6 +1720,24 @@ function AccountDetailModal({
                 </div>
               </div>
 
+              {/* Refresh Token */}
+              <div className="group relative rounded-xl border border-slate-150 bg-slate-50/30 p-3 hover:bg-slate-50 transition-colors">
+                <div className="text-[8px] font-bold text-slate-400 uppercase mb-1 flex items-center justify-between">
+                  <span>Refresh Token (账号刷新令牌)</span>
+                  <button
+                    onClick={() => copyToClipboard(refreshToken)}
+                    disabled={!refreshToken}
+                    className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-bold h-4"
+                    title="复制账号刷新令牌"
+                  >
+                    <Copy size={11} /> 复制
+                  </button>
+                </div>
+                <div className="font-mono text-[10px] text-slate-500 break-all pr-8 select-all truncate">
+                  {refreshToken || '--- 未生成 ---'}
+                </div>
+              </div>
+
               {/* Session 完整装配串 */}
               <div className="group relative rounded-xl border border-indigo-150 bg-indigo-50/10 p-3 hover:bg-indigo-50/30 transition-colors">
                 <div className="text-[8px] font-black text-indigo-500 uppercase mb-1 flex items-center justify-between">
@@ -1730,7 +1763,7 @@ function AccountDetailModal({
             <FieldCard label="数据库记录 ID (DB_INDEX)" value={account.id} />
             <FieldCard label="中枢分组池标签 (POOL_TAG)" value={account.pool_tag || 'default'} />
             <FieldCard label="邮箱账号 (EMAIL)" value={account.address} />
-            <FieldCard label="代理服务节点 (PROXY_NODE)" value={account.proxy_url || '无使用代理'} />
+            <FieldCard label="刷新令牌 (REFRESH_TOKEN)" value={refreshToken || '---'} />
             <FieldCard label="关联并发工作流 (RUN_ID)" value={account.run_id} />
             <FieldCard label="安全登录密匙 (AUTH_SECRET)" value={apiSecret || '---'} />
           </div>
