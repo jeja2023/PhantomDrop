@@ -961,78 +961,135 @@ function RegistrationSubPanel({
 
       {/* 条件展示表单内容 */}
       {activePlatform === 'oauth' ? (
-        <div className="flex flex-col gap-3 bg-purple-50/10 border border-purple-100/30 rounded-2xl p-3 animate-in fade-in duration-300">
-          
-          {/* 解析外部已有的 OAuth 授权链接 */}
-          <div className="border-b border-slate-200/40 pb-3.5 flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
-            <div className="flex-1 space-y-1">
-              <label className="text-[9px] font-bold text-slate-500 uppercase">
-                导入 / 解析外部第三方官方 OAuth 授权链接
-              </label>
-              <input
-                type="text"
-                placeholder="直接粘贴以 auth.openai.com 开头的官方授权注册链接 (包含 client_id & code_challenge)"
-                value={externalOauthUrl}
-                onChange={(e) => setExternalOauthUrl(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all shadow-inner h-8 font-mono"
-              />
-            </div>
-            <button
-              onClick={() => void handleParseExternalOauthUrl(externalOauthUrl)}
-              disabled={isParsingExternal || !externalOauthUrl.trim()}
-              className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1 text-[9px] uppercase transition-all shadow-md shadow-purple-500/10 cursor-pointer self-end shrink-0"
-            >
-              {isParsingExternal ? (
-                <Loader2 size={11} className="animate-spin" />
-              ) : (
-                <FolderSync size={11} />
-              )}
-              解析并重构链接
-            </button>
-          </div>
+        <div className="flex flex-col gap-4 animate-in fade-in duration-300">
+          {/* 步骤指引区 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            
+            {/* 步骤一：初始化 / 导入链接 */}
+            <div className="bg-slate-50/60 hover:bg-white border border-slate-200/80 rounded-2xl p-4 transition-all duration-300 flex flex-col gap-3 hover:shadow-md group">
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-black text-[10px] flex items-center justify-center shrink-0">
+                  1
+                </span>
+                <h4 className="text-[11px] font-black text-slate-700 tracking-wider uppercase">
+                  第一步：初始化授权链接
+                </h4>
+              </div>
+              <p className="text-[10px] font-bold text-slate-400 leading-normal">
+                请选择您的 OAuth 目标平台并生成专属链接，或直接解析已有链接。
+              </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-slate-500 uppercase">
-                OAuth 接入平台
-              </label>
-              <select
-                value={oauthPlatform}
-                onChange={(e) => {
-                  setOauthPlatform(e.target.value as 'cpa' | 'sub2api')
-                  setOauthUrl('')
-                  setOauthVerifier('')
-                }}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 transition-all h-8 cursor-pointer"
-              >
-                <option value="cpa">CPA 平台 (http://localhost:1455)</option>
-                <option value="sub2api">Sub2API 平台 (http://localhost:1456)</option>
-              </select>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 md:col-span-2">
-              <button
-                onClick={handleGenerateOauthUrl}
-                disabled={isGeneratingUrl}
-                className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1 text-[9px] uppercase transition-all shrink-0 cursor-pointer shadow-md shadow-purple-500/10"
-              >
-                {isGeneratingUrl ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
-                生成专属注册提纯链接
-              </button>
-
-              {oauthUrl && (
-                <>
-                  <button
-                    onClick={handleMixedTrigger}
-                    disabled={isMixedStarting}
-                    className="bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 hover:from-purple-700 hover:via-pink-700 hover:to-indigo-700 text-white font-extrabold h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9.5px] uppercase transition-all shrink-0 cursor-pointer shadow-md shadow-purple-500/20 active:scale-[0.98] border border-purple-400/20"
+              <div className="space-y-2 mt-1 flex-grow flex flex-col justify-between">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-slate-500 uppercase">
+                    OAuth 接入平台
+                  </label>
+                  <select
+                    value={oauthPlatform}
+                    onChange={(e) => {
+                      setOauthPlatform(e.target.value as 'cpa' | 'sub2api')
+                      setOauthUrl('')
+                      setOauthVerifier('')
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:border-purple-500 transition-all h-8 cursor-pointer shadow-sm"
                   >
-                    {isMixedStarting ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
-                    🛸 启动仿真浏览器自动提纯 (混合首选)
+                    <option value="cpa">CPA 平台 (localhost:1455)</option>
+                    <option value="sub2api">Sub2API 平台 (localhost:1456)</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    onClick={handleGenerateOauthUrl}
+                    disabled={isGeneratingUrl}
+                    className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 disabled:opacity-50 text-white font-black h-8 px-3 rounded-xl flex items-center justify-center gap-1.5 text-[9.5px] uppercase transition-all shadow-md shadow-purple-500/10 cursor-pointer w-full"
+                  >
+                    {isGeneratingUrl ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                    生成专属注册提纯链接
                   </button>
 
+                  <div className="relative flex items-center my-1">
+                    <div className="flex-grow border-t border-slate-200"></div>
+                    <span className="flex-shrink mx-2 text-[8px] font-bold text-slate-400 uppercase">或</span>
+                    <div className="flex-grow border-t border-slate-200"></div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-slate-500 uppercase flex items-center justify-between">
+                      <span>解析官方授权链接</span>
+                      {isParsingExternal && <Loader2 size={10} className="animate-spin text-purple-500" />}
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="粘贴官方 auth.openai.com 授权链接..."
+                        value={externalOauthUrl}
+                        onChange={(e) => setExternalOauthUrl(e.target.value)}
+                        className="flex-1 bg-white border border-slate-200 rounded-xl px-2.5 py-1 text-[10px] font-bold outline-none focus:border-purple-500 transition-all h-8 font-mono shadow-sm"
+                      />
+                      <button
+                        onClick={() => void handleParseExternalOauthUrl(externalOauthUrl)}
+                        disabled={isParsingExternal || !externalOauthUrl.trim()}
+                        className="bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white font-black h-8 px-2.5 rounded-xl flex items-center justify-center text-[9px] transition-all cursor-pointer shrink-0"
+                        title="解析并重构链接"
+                      >
+                        解析
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 步骤二：混合提纯模式 / 手动注册 */}
+            <div className={`bg-slate-50/60 hover:bg-white border border-slate-200/80 rounded-2xl p-4 transition-all duration-300 flex flex-col gap-3 hover:shadow-md relative ${
+              !oauthUrl ? 'opacity-50 select-none' : ''
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-black text-[10px] flex items-center justify-center shrink-0">
+                  2
+                </span>
+                <h4 className="text-[11px] font-black text-slate-700 tracking-wider uppercase">
+                  第二步：执行注册与提纯
+                </h4>
+              </div>
+              <p className="text-[10px] font-bold text-slate-400 leading-normal">
+                推荐使用混合首选模式，自动唤起有头浏览器捕捉凭证，亦可选择手动前往注册。
+              </p>
+
+              <div className="flex-grow flex flex-col gap-3 justify-center mt-2">
+                {/* 方案 A: 混合模式 */}
+                <div className="border border-purple-100 bg-purple-50/30 rounded-xl p-2.5 flex flex-col gap-2 relative overflow-hidden group/opt">
+                  <div className="absolute right-1.5 top-1.5 text-[8px] font-black bg-purple-650 text-white px-1.5 py-0.5 rounded leading-none">
+                    推荐
+                  </div>
+                  <h5 className="text-[10px] font-black text-purple-950 uppercase flex items-center gap-1">
+                    🚀 自动混合提纯模式
+                  </h5>
+                  <p className="text-[9px] font-medium text-slate-450 leading-relaxed">
+                    系统自动加载该重构链接，在您完成注册跳转后，<b>0.1秒内自动嗅探截获并入库</b>，免手动粘贴。
+                  </p>
+                  <button
+                    onClick={handleMixedTrigger}
+                    disabled={!oauthUrl || isMixedStarting}
+                    className="bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 hover:from-purple-700 hover:via-pink-700 hover:to-indigo-700 disabled:opacity-40 text-white font-extrabold h-8 px-3 rounded-xl flex items-center justify-center gap-1.5 text-[9.5px] uppercase transition-all shadow-md shadow-purple-500/20 active:scale-[0.98] border border-purple-400/20 cursor-pointer mt-1"
+                  >
+                    {isMixedStarting ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+                    🛸 启动仿真浏览器自动提纯
+                  </button>
+                </div>
+
+                {/* 方案 B: 手动模式 */}
+                <div className="border border-slate-200 bg-white rounded-xl p-2.5 flex flex-col gap-2">
+                  <h5 className="text-[10px] font-black text-slate-700 uppercase">
+                    🖥️ 手动前往官方注册 (备用)
+                  </h5>
+                  <p className="text-[9px] font-medium text-slate-450 leading-relaxed">
+                    在外部浏览器中打开并手动注册，注册完成后需在第三步手动粘贴回调链接。
+                  </p>
                   <button
                     onClick={() => {
+                      if (!oauthUrl) return
                       void navigator.clipboard.writeText(oauthUrl)
                       window.open(oauthUrl, '_blank')
                       showToast({
@@ -1040,44 +1097,79 @@ function RegistrationSubPanel({
                         desc: '请在官方注册页点击 Sign up 完成注册。',
                       })
                     }}
-                    className="bg-slate-900 hover:bg-slate-800 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9px] uppercase transition-all shrink-0 cursor-pointer shadow-sm"
+                    disabled={!oauthUrl}
+                    className="bg-slate-900 hover:bg-slate-800 disabled:opacity-45 text-white font-black h-8 px-3 rounded-xl flex items-center justify-center gap-1.5 text-[9px] uppercase transition-all cursor-pointer mt-1"
                   >
                     <ExternalLink size={11} />
-                    在新页中手动注册
+                    手动在新标签页中打开
                   </button>
-                </>
+                </div>
+              </div>
+
+              {!oauthUrl && (
+                <div className="absolute inset-0 bg-slate-50/40 backdrop-blur-[1px] rounded-2xl flex items-center justify-center z-10">
+                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest bg-white border border-slate-250 px-3 py-1 rounded-xl shadow-sm">
+                    🔒 请先生成或导入链接
+                  </span>
+                </div>
               )}
             </div>
-          </div>
 
-          {oauthVerifier && (
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 border-t border-slate-200/40 pt-3 animate-in slide-in-from-top-1 duration-200">
-              <div className="flex-1 space-y-1">
-                <label className="text-[9px] font-bold text-slate-500 uppercase">
-                  粘贴重定向后的完整回调链接 (包含 code 参数)
-                </label>
-                <input
-                  type="text"
-                  placeholder="例如: http://localhost:1455/auth/callback?code=xxxx&state=yyyy"
-                  value={oauthCallbackUrl}
-                  onChange={(e) => setOauthCallbackUrl(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all shadow-inner h-8 font-mono"
-                />
+            {/* 步骤三：手动兑换凭证 */}
+            <div className={`bg-slate-50/60 hover:bg-white border border-slate-200/80 rounded-2xl p-4 transition-all duration-300 flex flex-col gap-3 hover:shadow-md relative ${
+              !oauthVerifier ? 'opacity-50 select-none' : ''
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-black text-[10px] flex items-center justify-center shrink-0">
+                  3
+                </span>
+                <h4 className="text-[11px] font-black text-slate-700 tracking-wider uppercase">
+                  第三步：粘贴回调以提纯录入
+                </h4>
               </div>
-              <button
-                onClick={handleExchangeOauthCode}
-                disabled={isExchangingToken || !oauthCallbackUrl}
-                className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1 text-[9px] uppercase transition-all shadow-md shadow-emerald-500/10 cursor-pointer self-end"
-              >
-                {isExchangingToken ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <ShieldCheck size={11} />
-                )}
-                提取凭证并自动录入账号
-              </button>
+              <p className="text-[10px] font-bold text-slate-400 leading-normal">
+                如果您在第二步选择了<b>手动注册</b>，请在此处粘贴最终跳转的回调 URL。
+              </p>
+
+              <div className="flex-grow flex flex-col justify-end gap-2.5 mt-2">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-slate-500 uppercase">
+                    重定向后的完整回调链接
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="粘贴如: http://localhost:1455/auth/callback?code=xxxx&state=yyyy"
+                    value={oauthCallbackUrl}
+                    onChange={(e) => setOauthCallbackUrl(e.target.value)}
+                    disabled={!oauthVerifier}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-[10px] font-bold outline-none focus:border-purple-500 transition-all shadow-sm font-mono leading-normal resize-none"
+                  />
+                </div>
+
+                <button
+                  onClick={handleExchangeOauthCode}
+                  disabled={isExchangingToken || !oauthCallbackUrl.trim() || !oauthVerifier}
+                  className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 disabled:opacity-40 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9.5px] uppercase transition-all shadow-md shadow-emerald-500/10 cursor-pointer w-full mt-1"
+                >
+                  {isExchangingToken ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <ShieldCheck size={11} />
+                  )}
+                  提取凭证并自动录入账号
+                </button>
+              </div>
+
+              {!oauthVerifier && (
+                <div className="absolute inset-0 bg-slate-50/40 backdrop-blur-[1px] rounded-2xl flex items-center justify-center z-10">
+                  <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest bg-white border border-slate-250 px-3 py-1 rounded-xl shadow-sm">
+                    🔒 请先生成或导入链接
+                  </span>
+                </div>
+              )}
             </div>
-          )}
+
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
