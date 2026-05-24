@@ -1272,7 +1272,7 @@ impl BrowserDriver {
         // 轮询 80 次，每次 100ms，总计 8s
         for _ in 0..80 {
             let url = tab.get_url();
-            if url.contains("code=") && url.contains("state=") && url.contains("login-web") {
+            if url.contains("code=") && url.contains("state=") {
                 callback_url = Some(url);
                 break;
             }
