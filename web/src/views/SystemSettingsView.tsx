@@ -89,6 +89,7 @@ export default function SystemSettingsView() {
   const [sub2apiKey, setSub2apiKey] = useState('')
   const [showCloudflareToken, setShowCloudflareToken] = useState(false)
   const [showCpaKey, setShowCpaKey] = useState(false)
+  const [showSub2apiKey, setShowSub2apiKey] = useState(false)
   const [automationStatus, setAutomationStatus] = useState<CloudflareAutomationStatus | null>(null)
   const [cpaAuthStatus, setCpaAuthStatus] = useState<CpaAuthStatus>('unauthenticated')
   const [cpaAuthEmail, setCpaAuthEmail] = useState('')
@@ -1007,6 +1008,52 @@ export default function SystemSettingsView() {
                 </p>
               </div>
             )}
+          </SettingsSectionCard>
+
+          {/* Sub2API 账号分发 */}
+          <SettingsSectionCard icon={<Server size={14} />} title="账号分发 (Sub2API)" defaultExpanded={false}>
+            <SettingsRow
+              title="Sub2API 接口地址"
+              hint="推送产物的 API 端点 (例如 NewAPI 兼容接口)"
+              control={
+                <input
+                  aria-label="Sub2API 接口地址"
+                  title="Sub2API 接口地址"
+                  value={sub2apiUrl}
+                  onChange={(e) => setSub2apiUrl(e.target.value)}
+                  placeholder="https://sub2api.com/api/v1/accounts/import"
+                  disabled={isLoading}
+                  className="phantom-input w-full"
+                />
+              }
+            />
+            <SettingsRow
+              title="Sub2API 安全密钥"
+              hint="平台访问密钥 (x-api-key)"
+              control={
+                <div className="relative">
+                  <input
+                    aria-label="Sub2API 安全密钥"
+                    title="Sub2API 安全密钥"
+                    type={showSub2apiKey ? 'text' : 'password'}
+                    value={sub2apiKey}
+                    onChange={(e) => setSub2apiKey(e.target.value)}
+                    disabled={isLoading}
+                    placeholder="请输入接口访问密钥"
+                    className="phantom-input w-full pr-10"
+                  />
+                  <button
+                    type="button"
+                    aria-label={showSub2apiKey ? '隐藏 Sub2API 密钥' : '显示 Sub2API 密钥'}
+                    title={showSub2apiKey ? '隐藏 Sub2API 密钥' : '显示 Sub2API 密钥'}
+                    onClick={() => setShowSub2apiKey(!showSub2apiKey)}
+                    className="absolute right-0 top-0 bottom-0 px-3 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors"
+                  >
+                    <Lock size={14} className={showSub2apiKey ? 'text-blue-500' : ''} />
+                  </button>
+                </div>
+              }
+            />
           </SettingsSectionCard>
         </div>
       </div>
