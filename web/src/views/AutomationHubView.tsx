@@ -882,24 +882,24 @@ function RegistrationSubPanel({
 
         <div className="flex flex-wrap items-center gap-2">
           {/* 极简代理配置按钮 */}
-          {activePlatform !== 'oauth' && (
-            <button
-              type="button"
-              onClick={() => setIsProxyModalOpen(true)}
-              className={`flex items-center gap-1.5 px-3 py-1 h-7 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer shrink-0 ${
-                openaiProxy
-                  ? 'bg-emerald-50 text-emerald-600 border-emerald-250 hover:bg-emerald-100'
-                  : 'bg-slate-50 text-slate-500 border-slate-250 hover:bg-slate-100 hover:text-slate-850'
-              }`}
-              title={openaiProxy ? `已配置代理: ${maskProxyUrl(openaiProxy)}` : '未配置代理'}
-            >
-              <Globe
-                size={11}
-                className={openaiProxy ? 'text-emerald-500 animate-pulse' : 'text-slate-400'}
-              />
-              {openaiProxy ? '代理已就绪' : '配置代理'}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setIsProxyModalOpen(true)}
+            className={`flex items-center gap-1.5 px-3 py-1 h-7 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer shrink-0 ${
+              openaiProxy
+                ? activePlatform === 'oauth'
+                  ? 'bg-purple-50 text-purple-650 border-purple-250 hover:bg-purple-100'
+                  : 'bg-emerald-50 text-emerald-600 border-emerald-250 hover:bg-emerald-100'
+                : 'bg-slate-50 text-slate-500 border-slate-250 hover:bg-slate-100 hover:text-slate-850'
+            }`}
+            title={openaiProxy ? `已配置代理: ${maskProxyUrl(openaiProxy)}` : '未配置代理'}
+          >
+            <Globe
+              size={11}
+              className={openaiProxy ? (activePlatform === 'oauth' ? 'text-purple-500 animate-pulse' : 'text-emerald-500 animate-pulse') : 'text-slate-400'}
+            />
+            {openaiProxy ? '代理已就绪' : '配置代理'}
+          </button>
 
           {/* 执行模式切换 */}
           <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60 shadow-inner shrink-0">
