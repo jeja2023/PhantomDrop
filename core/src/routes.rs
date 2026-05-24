@@ -1521,6 +1521,117 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 }
             }
         }))
+        .route("/api/oauth/register-url", get({
+            move |Query(params): Query<HashMap<String, String>>| {
+                async move {
+                    let platform = params.get("platform").map(|s| s.as_str()).unwrap_or("cpa");
+                    let redirect_encoded = if platform == "sub2api" {
+                        "http%3A%2F%2Flocalhost%3A1456%2Fauth%2Fcallback"
+                    } else {
+                        "http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"
+                    };
+
+                    let pkce = openai::oauth::generate_pkce();
+                    let state = openai::oauth::generate_state();
+                    let url = format!(
+                        "https://auth.openai.com/oauth/authorize?client_id={}&code_challenge={}&code_challenge_method=S256&codex_cli_simplified_flow=true&id_token_add_organizations=true&prompt=login&redirect_uri={}&response_type=code&scope=openid+email+profile+offline_access&state={}",
+                        openai::constants::OPENAI_CLIENT_ID,
+                        pkce.code_challenge,
+                        redirect_encoded,
+                        state
+                    );
+                    Json(serde_json::json!({
+                        "url": url,
+                        "code_verifier": pkce.code_verifier,
+                        "state": state
+                    }))
+                }
+            }
+        }))
+        .route("/api/oauth/register-exchange", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<serde_json::Value>| {
+                let dl = dl.clone();
+                async move {
+                    let callback_url = match payload.get("callback_url").and_then(|v| v.as_str()) {
+                        Some(v) => v,
+                        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"status": "error", "message": "缺少 callback_url"}))).into_response(),
+                    };
+                    let code_verifier = match payload.get("code_verifier").and_then(|v| v.as_str()) {
+                        Some(v) => v,
+                        None => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"status": "error", "message": "缺少 code_verifier"}))).into_response(),
+                    };
+                    let platform = payload.get("platform").and_then(|v| v.as_str()).unwrap_or("cpa");
+                    let redirect_uri = if platform == "sub2api" {
+                        "http://localhost:1456/auth/callback"
+                    } else {
+                        "http://localhost:1455/auth/callback"
+                    };
+
+                    match openai::oauth::exchange_codex_code_with_redirect(callback_url, code_verifier, redirect_uri).await {
+                        Ok(auth_data) => {
+                            let email = auth_data.get_email().unwrap_or_else(|| {
+                                format!("oauth_{}@openai.com", uuid::Uuid::new_v4().simple())
+                            });
+                            let password = format!("OAuth_{}", uuid::Uuid::new_v4().simple().to_string().chars().take(8).collect::<String>());
+
+                            let account_id = match dl.create_generated_account(
+                                "oauth_register",
+                                &email,
+                                &password,
+                                "success",
+                                Some("free"),
+                                None
+                            ).await {
+                                Ok(id) => id,
+                                Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": format!("创建账号记录失败: {:?}", e)}))).into_response(),
+                            };
+
+                            let oauth_input = openai::oauth::OAuthCredentialInput {
+                                email: &email,
+                                access_token: Some(&auth_data.access_token),
+                                refresh_token: Some(&auth_data.refresh_token),
+                                id_token: Some(&auth_data.id_token),
+                                workspace_id: None,
+                                chatgpt_account_id: None,
+                                chatgpt_user_id: None,
+                                organization_id: None,
+                                plan_type: None,
+                                expires_in: Some(auth_data.expires_in as i64),
+                                token_version: None,
+                                stored_credentials: None,
+                            };
+                            let built = openai::oauth::build_oauth_credentials(oauth_input);
+
+                            match dl.update_account_tokens(
+                                &account_id,
+                                Some(&built.access_token),
+                                Some(&built.refresh_token),
+                                None,
+                                None,
+                                None,
+                                Some(&built.id_token),
+                                Some(&built.chatgpt_account_id),
+                                Some(&built.chatgpt_user_id),
+                                Some(&built.organization_id),
+                                Some(&built.plan_type),
+                                Some(built.expires_in),
+                                Some(built.token_version),
+                                built.json.as_deref(),
+                            ).await {
+                                Ok(_) => Json(serde_json::json!({
+                                    "status": "success",
+                                    "email": email,
+                                    "account_id": account_id
+                                })).into_response(),
+                                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status": "error", "message": format!("更新令牌凭证失败: {:?}", e)}))).into_response(),
+                            }
+                        },
+                        Err(e) => (StatusCode::BAD_REQUEST, Json(serde_json::json!({"status": "error", "message": e}))).into_response()
+                    }
+                }
+            }
+        }))
         .route("/api/cpa/auth-status", get({
             let dl = Arc::clone(&data_lake);
             move || {

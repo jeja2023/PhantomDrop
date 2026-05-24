@@ -15,6 +15,8 @@ import {
   Globe,
   Activity,
   FolderSync,
+  ShieldCheck,
+  ExternalLink,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
@@ -598,8 +600,8 @@ function RegistrationSubPanel({
   refreshIntervalMs: _refreshIntervalMs,
 }: RegistrationSubPanelProps) {
   const showToast = useToast()
-  
-  const [activePlatform, setActivePlatform] = useState<'openai' | 'custom'>('openai')
+
+  const [activePlatform, setActivePlatform] = useState<'openai' | 'custom' | 'oauth'>('openai')
   const [runningId, setRunningId] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
   const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
@@ -610,6 +612,16 @@ function RegistrationSubPanel({
   const [batchSize, setBatchSize] = useState(1)
   const [accountType, setAccountType] = useState('free')
   const [headless, setHeadless] = useState(true)
+
+  // OAuth 联合提纯注册状态
+  const [oauthPlatform, setOauthPlatform] = useState<'cpa' | 'sub2api'>('cpa')
+  const [oauthUrl, setOauthUrl] = useState('')
+  const [oauthVerifier, setOauthVerifier] = useState('')
+  const [oauthCallbackUrl, setOauthCallbackUrl] = useState('')
+  const [isGeneratingUrl, setIsGeneratingUrl] = useState(false)
+  const [isExchangingToken, setIsExchangingToken] = useState(false)
+  const [externalOauthUrl, setExternalOauthUrl] = useState('')
+  const [isParsingExternal, setIsParsingExternal] = useState(false)
 
   const targetWorkflowId = activePlatform === 'custom' ? 'openai_browser_register' : 'openai_register_default'
   const currentDef = workflows.find((w) => w.id === targetWorkflowId) ?? null
@@ -627,6 +639,125 @@ function RegistrationSubPanel({
   useEffect(() => {
     loadCurrentConfig()
   }, [loadCurrentConfig])
+
+  // 一键解析并重构外部已有的 OAuth 授权链接
+  const handleParseExternalOauthUrl = async (inputUrl: string) => {
+    if (!inputUrl.trim()) return
+    setIsParsingExternal(true)
+    try {
+      const urlObj = new URL(inputUrl.trim())
+      const params = urlObj.searchParams
+      const clientId = params.get('client_id')
+      const redirectUri = params.get('redirect_uri')
+
+      if (!clientId) {
+        showToast({ title: '解析失败', desc: '授权链接中未检测到 client_id 参数', tone: 'error' })
+        setIsParsingExternal(false)
+        return
+      }
+
+      // 根据 redirect_uri 匹配平台
+      let detectedPlatform: 'cpa' | 'sub2api' = 'cpa'
+      if (redirectUri) {
+        if (redirectUri.includes('localhost:1456') || redirectUri.includes('127.0.0.1:1456')) {
+          detectedPlatform = 'sub2api'
+        } else if (redirectUri.includes('localhost:1455') || redirectUri.includes('127.0.0.1:1455')) {
+          detectedPlatform = 'cpa'
+        }
+      }
+      setOauthPlatform(detectedPlatform)
+
+      // 向后端获取对应平台的全新 PKCE 凭证与 code_challenge
+      const res = await fetchJson<{ url: string; code_verifier: string }>(
+        `/api/oauth/register-url?platform=${detectedPlatform}`
+      )
+      const ourUrlObj = new URL(res.url)
+      const ourChallenge = ourUrlObj.searchParams.get('code_challenge')
+      const ourState = ourUrlObj.searchParams.get('state')
+
+      if (ourChallenge && ourState) {
+        // 重构第三方授权链接，替换为本地可闭环兑换的 PKCE 对
+        urlObj.searchParams.set('code_challenge', ourChallenge)
+        urlObj.searchParams.set('state', ourState)
+        urlObj.searchParams.set('prompt', 'login')
+        
+        const reconstructedUrl = urlObj.toString()
+        setOauthUrl(reconstructedUrl)
+        setOauthVerifier(res.code_verifier)
+        setExternalOauthUrl('')
+
+        showToast({
+          title: '外部官方授权链接重构成功！',
+          desc: `已为您安全替换为本地托管的 PKCE 验证配对，检测平台已切换为: ${detectedPlatform === 'sub2api' ? 'Sub2API' : 'CPA'}`,
+        })
+      } else {
+        showToast({ title: '参数重构失败', desc: '后端生成的 PKCE 对不完整', tone: 'error' })
+      }
+    } catch {
+      showToast({
+        title: '解析链接失败',
+        desc: '请输入有效的 auth.openai.com 官方授权链接',
+        tone: 'error',
+      })
+    } finally {
+      setIsParsingExternal(false)
+    }
+  }
+
+  // 生成专属 OAuth 注册链接
+  const handleGenerateOauthUrl = async () => {
+    setIsGeneratingUrl(true)
+    try {
+      const res = await fetchJson<{ url: string; code_verifier: string }>(
+        `/api/oauth/register-url?platform=${oauthPlatform}`
+      )
+      setOauthUrl(res.url)
+      setOauthVerifier(res.code_verifier)
+      showToast({ title: '注册链接已生成', desc: '专属 PKCE 密钥已就绪，请点击打开进行注册。' })
+    } catch {
+      showToast({ title: '生成注册链接失败', desc: '网络请求超时，请检查后端状态。', tone: 'error' })
+    } finally {
+      setIsGeneratingUrl(false)
+    }
+  }
+
+  // 粘贴并一键提纯落库
+  const handleExchangeOauthCode = async () => {
+    if (!oauthCallbackUrl.trim()) {
+      showToast({ title: '参数缺失', desc: '请先粘贴注册成功后的回调链接', tone: 'error' })
+      return
+    }
+    if (!oauthVerifier) {
+      showToast({ title: '凭证失效', desc: '请重新生成专属链接以初始化 PKCE', tone: 'error' })
+      return
+    }
+
+    setIsExchangingToken(true)
+    try {
+      const res = await postJson<
+        { status: string; email: string; account_id: string },
+        { callback_url: string; code_verifier: string; platform: string }
+      >('/api/oauth/register-exchange', {
+        callback_url: oauthCallbackUrl.trim(),
+        code_verifier: oauthVerifier,
+        platform: oauthPlatform,
+      })
+      if (res.status === 'success') {
+        showToast({
+          title: '凭证提纯并落库成功！',
+          desc: `已成功捕获 Access Token 链，录入账号: ${res.email}`,
+        })
+        setOauthCallbackUrl('')
+        // 重载
+        onLoadWorkflows()
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : '请确认回调链接中 code 的时效性'
+      showToast({ title: '令牌提纯交换失败', desc: msg, tone: 'error' })
+    } finally {
+      setIsExchangingToken(false)
+    }
+  }
 
   // 持久化保存
   const handleSaveConfig = async (): Promise<boolean> => {
@@ -653,7 +784,7 @@ function RegistrationSubPanel({
         status: 'ready',
         parameters_json: JSON.stringify(cleanParameters(currentDef.parameters || {})),
       })
-      
+
       showToast({ title: '注册配置已同步', desc: '极速注册参数已成功持久化至中枢。' })
       emitLog(`已保存工作流参数配置: ${currentDef.id}`, 'success')
       void onLoadWorkflows()
@@ -680,78 +811,209 @@ function RegistrationSubPanel({
     }
   }
 
-  const focusGlowInputStyle = "w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner focus:shadow-[0_0_12px_rgba(59,130,246,0.25)]"
+  const focusGlowInputStyle =
+    'w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all duration-300 shadow-inner focus:shadow-[0_0_12px_rgba(59,130,246,0.25)]'
 
   return (
     <div className="glass-panel rounded-3xl p-3 border border-slate-200 bg-white shadow-sm flex flex-col gap-3">
-        {/* 模式选择 Tab 与 动作控制栏 */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-2 mb-1 shrink-0">
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
-            <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">执行模式 (PLATFORM KINDS)</h3>
-          </div>
+      {/* 模式选择 Tab 与 动作控制栏 */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-2 mb-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
+          <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">
+            执行模式 (PLATFORM KINDS)
+          </h3>
+        </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* 极简代理配置按钮 */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 极简代理配置按钮 */}
+          {activePlatform !== 'oauth' && (
             <button
               type="button"
               onClick={() => setIsProxyModalOpen(true)}
               className={`flex items-center gap-1.5 px-3 py-1 h-7 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all duration-300 border cursor-pointer shrink-0 ${
-                openaiProxy 
-                  ? 'bg-emerald-50 text-emerald-600 border-emerald-250 hover:bg-emerald-100' 
+                openaiProxy
+                  ? 'bg-emerald-50 text-emerald-600 border-emerald-250 hover:bg-emerald-100'
                   : 'bg-slate-50 text-slate-500 border-slate-250 hover:bg-slate-100 hover:text-slate-850'
               }`}
               title={openaiProxy ? `已配置代理: ${maskProxyUrl(openaiProxy)}` : '未配置代理'}
             >
-              <Globe size={11} className={openaiProxy ? 'text-emerald-500 animate-pulse' : 'text-slate-400'} />
+              <Globe
+                size={11}
+                className={openaiProxy ? 'text-emerald-500 animate-pulse' : 'text-slate-400'}
+              />
               {openaiProxy ? '代理已就绪' : '配置代理'}
             </button>
+          )}
 
-            {/* 执行模式切换 */}
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60 shadow-inner shrink-0">
-              <button
-                onClick={() => setActivePlatform('openai')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
-                  activePlatform === 'openai' ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/20' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                🚀 极速协议模式
-              </button>
-              <button
-                onClick={() => setActivePlatform('custom')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
-                  activePlatform === 'custom' ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/20' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                🖥️ 模拟器可视化模式
-              </button>
-            </div>
-
-            {/* 垂直分界线 */}
-            <div className="hidden sm:block w-px h-5 bg-slate-200 mx-1 shrink-0" />
-
-            {/* 同步配置按钮 */}
+          {/* 执行模式切换 */}
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60 shadow-inner shrink-0">
             <button
-              onClick={handleSaveConfig}
-              disabled={isSaving}
-              className="px-3.5 py-1 h-7 rounded-lg border border-slate-250 hover:bg-slate-50 text-slate-655 hover:text-slate-855 transition-all font-black text-[9px] uppercase cursor-pointer shrink-0"
+              onClick={() => setActivePlatform('openai')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                activePlatform === 'openai'
+                  ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/20'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              {isSaving ? '保存中...' : '同步配置'}
+              🚀 极速协议模式
             </button>
-
-            {/* 触发极速注册按钮 */}
             <button
-              onClick={handleTrigger}
-              disabled={Boolean(runningId)}
-              className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-black shadow-sm h-7 px-4 rounded-xl flex items-center justify-center gap-1 text-[10px] uppercase transition-all active:scale-[0.98] cursor-pointer shrink-0"
+              onClick={() => setActivePlatform('custom')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                activePlatform === 'custom'
+                  ? 'bg-white text-emerald-600 shadow-sm border border-slate-200/20'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              {runningId ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
-              触发极速注册
+              🖥️ 模拟器可视化模式
+            </button>
+            <button
+              onClick={() => setActivePlatform('oauth')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                activePlatform === 'oauth'
+                  ? 'bg-white text-purple-650 shadow-sm border border-slate-200/20'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              🔌 OAuth 联合提纯模式
             </button>
           </div>
-        </div>
 
-        {/* 表单项 */}
+          {/* 垂直分界线与控制按钮仅在非 oauth 下显示 */}
+          {activePlatform !== 'oauth' && (
+            <>
+              <div className="hidden sm:block w-px h-5 bg-slate-200 mx-1 shrink-0" />
+              <button
+                onClick={handleSaveConfig}
+                disabled={isSaving}
+                className="px-3.5 py-1 h-7 rounded-lg border border-slate-250 hover:bg-slate-50 text-slate-655 hover:text-slate-855 transition-all font-black text-[9px] uppercase cursor-pointer shrink-0"
+              >
+                {isSaving ? '保存中...' : '同步配置'}
+              </button>
+              <button
+                onClick={handleTrigger}
+                disabled={Boolean(runningId)}
+                className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-black shadow-sm h-7 px-4 rounded-xl flex items-center justify-center gap-1 text-[10px] uppercase transition-all active:scale-[0.98] cursor-pointer shrink-0"
+              >
+                {runningId ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+                触发极速注册
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 条件展示表单内容 */}
+      {activePlatform === 'oauth' ? (
+        <div className="flex flex-col gap-3 bg-purple-50/10 border border-purple-100/30 rounded-2xl p-3 animate-in fade-in duration-300">
+          
+          {/* 解析外部已有的 OAuth 授权链接 */}
+          <div className="border-b border-slate-200/40 pb-3.5 flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+            <div className="flex-1 space-y-1">
+              <label className="text-[9px] font-bold text-slate-500 uppercase">
+                导入 / 解析外部第三方官方 OAuth 授权链接
+              </label>
+              <input
+                type="text"
+                placeholder="直接粘贴以 auth.openai.com 开头的官方授权注册链接 (包含 client_id & code_challenge)"
+                value={externalOauthUrl}
+                onChange={(e) => setExternalOauthUrl(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all shadow-inner h-8 font-mono"
+              />
+            </div>
+            <button
+              onClick={() => void handleParseExternalOauthUrl(externalOauthUrl)}
+              disabled={isParsingExternal || !externalOauthUrl.trim()}
+              className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1 text-[9px] uppercase transition-all shadow-md shadow-purple-500/10 cursor-pointer self-end shrink-0"
+            >
+              {isParsingExternal ? (
+                <Loader2 size={11} className="animate-spin" />
+              ) : (
+                <FolderSync size={11} />
+              )}
+              解析并重构链接
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+            <div className="space-y-1">
+              <label className="text-[9px] font-bold text-slate-500 uppercase">
+                OAuth 接入平台
+              </label>
+              <select
+                value={oauthPlatform}
+                onChange={(e) => {
+                  setOauthPlatform(e.target.value as 'cpa' | 'sub2api')
+                  setOauthUrl('')
+                  setOauthVerifier('')
+                }}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 transition-all h-8 cursor-pointer"
+              >
+                <option value="cpa">CPA 平台 (http://localhost:1455)</option>
+                <option value="sub2api">Sub2API 平台 (http://localhost:1456)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 md:col-span-2">
+              <button
+                onClick={handleGenerateOauthUrl}
+                disabled={isGeneratingUrl}
+                className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1 text-[9px] uppercase transition-all shrink-0 cursor-pointer shadow-md shadow-purple-500/10"
+              >
+                {isGeneratingUrl ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                生成专属注册提纯链接
+              </button>
+
+              {oauthUrl && (
+                <button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(oauthUrl)
+                    window.open(oauthUrl, '_blank')
+                    showToast({
+                      title: '链接已复制并打开',
+                      desc: '请在官方注册页点击 Sign up 完成注册。',
+                    })
+                  }}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9px] uppercase transition-all shrink-0 cursor-pointer shadow-sm"
+                >
+                  <ExternalLink size={11} />
+                  在新页中注册并提取
+                </button>
+              )}
+            </div>
+          </div>
+
+          {oauthVerifier && (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 border-t border-slate-200/40 pt-3 animate-in slide-in-from-top-1 duration-200">
+              <div className="flex-1 space-y-1">
+                <label className="text-[9px] font-bold text-slate-500 uppercase">
+                  粘贴重定向后的完整回调链接 (包含 code 参数)
+                </label>
+                <input
+                  type="text"
+                  placeholder="例如: http://localhost:1455/auth/callback?code=xxxx&state=yyyy"
+                  value={oauthCallbackUrl}
+                  onChange={(e) => setOauthCallbackUrl(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none focus:bg-white focus:border-purple-500 focus:ring-4 focus:ring-purple-100 transition-all shadow-inner h-8 font-mono"
+                />
+              </div>
+              <button
+                onClick={handleExchangeOauthCode}
+                disabled={isExchangingToken || !oauthCallbackUrl}
+                className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1 text-[9px] uppercase transition-all shadow-md shadow-emerald-500/10 cursor-pointer self-end"
+              >
+                {isExchangingToken ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <ShieldCheck size={11} />
+                )}
+                提取凭证并自动录入账号
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">并发线程数</label>
@@ -788,7 +1050,9 @@ function RegistrationSubPanel({
             </select>
           </div>
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">浏览器无头模式 (HEADLESS)</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase">
+              浏览器无头模式 (HEADLESS)
+            </label>
             <select
               value={activePlatform === 'openai' ? 'true' : String(headless)}
               disabled={activePlatform === 'openai'}
@@ -808,17 +1072,18 @@ function RegistrationSubPanel({
             </select>
           </div>
         </div>
+      )}
 
-        {/* 代理池管理 Modal */}
-        <ProxyModal
-          isOpen={isProxyModalOpen}
-          value={openaiProxy}
-          onChange={(p: string) => {
-            setOpenaiProxy(p)
-            setIsProxyModalOpen(false)
-          }}
-          onClose={() => setIsProxyModalOpen(false)}
-        />
+      {/* 代理池管理 Modal */}
+      <ProxyModal
+        isOpen={isProxyModalOpen}
+        value={openaiProxy}
+        onChange={(p: string) => {
+          setOpenaiProxy(p)
+          setIsProxyModalOpen(false)
+        }}
+        onClose={() => setIsProxyModalOpen(false)}
+      />
     </div>
   )
 }
