@@ -23,6 +23,9 @@ pub struct RegisterContext {
     pub full_name: Option<String>,
     pub age: Option<i32>,
     pub headless: bool,
+    pub oauth_authorize_url: Option<String>,
+    pub oauth_code_verifier: Option<String>,
+    pub oauth_platform: Option<String>,
 }
 
 /// 步骤回调函数签名

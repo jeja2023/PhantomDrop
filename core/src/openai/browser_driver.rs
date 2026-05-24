@@ -1255,17 +1255,30 @@ impl BrowserDriver {
             cb("info", "🔑 正在尝试触发官方 OAuth 流程以提取 Access Token & Refresh Token...");
         }
 
-        let pkce = crate::openai::oauth::generate_pkce();
-        let state = crate::openai::oauth::generate_state();
-        let authorize_url = format!(
-            "{}?client_id={}&scope={}&response_type=code&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
-            crate::openai::constants::AUTH_AUTHORIZE_URL,
-            crate::openai::constants::OPENAI_CLIENT_ID,
-            urlencoding_simple(crate::openai::constants::OPENAI_SCOPE),
-            urlencoding_simple(crate::openai::constants::REDIRECT_URI),
-            &state,
-            &pkce.code_challenge,
-        );
+        let (authorize_url, code_verifier, redirect_uri) = if let (Some(url), Some(verifier)) = (
+            &self.context.oauth_authorize_url,
+            &self.context.oauth_code_verifier,
+        ) {
+            let redirect = if self.context.oauth_platform.as_deref() == Some("sub2api") {
+                "http://localhost:1456/auth/callback"
+            } else {
+                "http://localhost:1455/auth/callback"
+            };
+            (url.clone(), verifier.clone(), redirect.to_string())
+        } else {
+            let pkce = crate::openai::oauth::generate_pkce();
+            let state = crate::openai::oauth::generate_state();
+            let url = format!(
+                "{}?client_id={}&scope={}&response_type=code&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256",
+                crate::openai::constants::AUTH_AUTHORIZE_URL,
+                crate::openai::constants::OPENAI_CLIENT_ID,
+                urlencoding_simple(crate::openai::constants::OPENAI_SCOPE),
+                urlencoding_simple(crate::openai::constants::REDIRECT_URI),
+                &state,
+                &pkce.code_challenge,
+            );
+            (url, pkce.code_verifier, crate::openai::constants::REDIRECT_URI.to_string())
+        };
 
         let _ = tab.navigate_to(&authorize_url);
         let mut callback_url = None;
@@ -1285,8 +1298,8 @@ impl BrowserDriver {
             }
             match crate::openai::oauth::exchange_codex_code_with_redirect(
                 &url,
-                &pkce.code_verifier,
-                crate::openai::constants::REDIRECT_URI
+                &code_verifier,
+                &redirect_uri
             ).await {
                 Ok(auth_data) => {
                     token_extracted = Some(auth_data.access_token.clone());

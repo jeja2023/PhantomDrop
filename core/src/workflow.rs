@@ -71,6 +71,12 @@ pub struct WorkflowParameters {
     pub account_type: Option<String>,
     /// 浏览器专用：是否开启无头模式
     pub headless: Option<bool>,
+    /// 混合模式专用：OAuth 重构授权链接
+    pub oauth_authorize_url: Option<String>,
+    /// 混合模式专用：OAuth code_verifier
+    pub oauth_code_verifier: Option<String>,
+    /// 混合模式专用：OAuth 平台分类
+    pub oauth_platform: Option<String>,
 }
 
 struct WorkflowRunContext {
@@ -910,6 +916,9 @@ impl WorkflowEngine {
                 step_callback: Some(Box::new(move |level, msg| {
                     let _ = tx.send((level.to_string(), msg.to_string()));
                 })),
+                oauth_authorize_url: None,
+                oauth_code_verifier: None,
+                oauth_platform: None,
             };
 
             let dl_clone = Arc::clone(dl);
@@ -1290,6 +1299,9 @@ impl WorkflowEngine {
                 step_callback: Some(Box::new(move |level, msg| {
                     let _ = tx.send((level.to_string(), msg.to_string()));
                 })),
+                oauth_authorize_url: parameters.oauth_authorize_url.clone(),
+                oauth_code_verifier: parameters.oauth_code_verifier.clone(),
+                oauth_platform: parameters.oauth_platform.clone(),
             };
 
             let driver =

@@ -622,6 +622,7 @@ function RegistrationSubPanel({
   const [isExchangingToken, setIsExchangingToken] = useState(false)
   const [externalOauthUrl, setExternalOauthUrl] = useState('')
   const [isParsingExternal, setIsParsingExternal] = useState(false)
+  const [isMixedStarting, setIsMixedStarting] = useState(false)
 
   const targetWorkflowId = activePlatform === 'custom' ? 'openai_browser_register' : 'openai_register_default'
   const currentDef = workflows.find((w) => w.id === targetWorkflowId) ?? null
@@ -756,6 +757,60 @@ function RegistrationSubPanel({
       showToast({ title: '令牌提纯交换失败', desc: msg, tone: 'error' })
     } finally {
       setIsExchangingToken(false)
+    }
+  }
+
+  // 混合模式：一键自动唤起有头仿真浏览器自动提纯
+  const handleMixedTrigger = async () => {
+    if (!oauthUrl || !oauthVerifier) {
+      showToast({ title: '无法启动', desc: '请先生成或解析专属 OAuth 链接', tone: 'error' })
+      return
+    }
+
+    setIsMixedStarting(true)
+    try {
+      // 1. 查找 openai_browser_register 可视化工作流模板
+      const browserWorkflow = workflows.find((w) => w.id === 'openai_browser_register')
+      if (!browserWorkflow) {
+        showToast({ title: '模板未找到', desc: '系统内未检测到 openai_browser_register 工作流', tone: 'error' })
+        setIsMixedStarting(false)
+        return
+      }
+
+      // 2. 临时混入 OAuth 自持验证参数并保存至工作流配置中
+      const mixedParams = {
+        ...(browserWorkflow.parameters || {}),
+        batch_size: 1,
+        headless: false, // 混合模式下，默认强制弹出可视化浏览器以便用户在遇到 CF 人机时能够直接手动介入
+        proxy_url: openaiProxy.trim() || undefined,
+        oauth_authorize_url: oauthUrl,
+        oauth_code_verifier: oauthVerifier,
+        oauth_platform: oauthPlatform,
+      }
+
+      await postJson<{ status: string }, WorkflowSavePayload>('/api/workflows/save', {
+        id: browserWorkflow.id,
+        kind: browserWorkflow.kind,
+        title: browserWorkflow.title,
+        summary: browserWorkflow.summary,
+        status: 'ready',
+        parameters_json: JSON.stringify(mixedParams),
+      })
+
+      // 3. 异步触发工作流运行，拉起有头浏览器！
+      onTriggerRun(browserWorkflow.id)
+      
+      showToast({
+        title: '仿真浏览器已成功唤起！',
+        desc: '系统正在自动启动可视化 Chrome，请关注左侧任务与右侧终端日志，遇到人机时在窗口里手动通过即可。',
+      })
+      
+      setOauthCallbackUrl('')
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : '启动失败'
+      showToast({ title: '唤起混合模式失败', desc: msg, tone: 'error' })
+    } finally {
+      setIsMixedStarting(false)
     }
   }
 
@@ -966,20 +1021,31 @@ function RegistrationSubPanel({
               </button>
 
               {oauthUrl && (
-                <button
-                  onClick={() => {
-                    void navigator.clipboard.writeText(oauthUrl)
-                    window.open(oauthUrl, '_blank')
-                    showToast({
-                      title: '链接已复制并打开',
-                      desc: '请在官方注册页点击 Sign up 完成注册。',
-                    })
-                  }}
-                  className="bg-slate-900 hover:bg-slate-800 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9px] uppercase transition-all shrink-0 cursor-pointer shadow-sm"
-                >
-                  <ExternalLink size={11} />
-                  在新页中注册并提取
-                </button>
+                <>
+                  <button
+                    onClick={handleMixedTrigger}
+                    disabled={isMixedStarting}
+                    className="bg-gradient-to-r from-purple-600 via-pink-600 to-indigo-600 hover:from-purple-700 hover:via-pink-700 hover:to-indigo-700 text-white font-extrabold h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9.5px] uppercase transition-all shrink-0 cursor-pointer shadow-md shadow-purple-500/20 active:scale-[0.98] border border-purple-400/20"
+                  >
+                    {isMixedStarting ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+                    🛸 启动仿真浏览器自动提纯 (混合首选)
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(oauthUrl)
+                      window.open(oauthUrl, '_blank')
+                      showToast({
+                        title: '链接已复制并打开',
+                        desc: '请在官方注册页点击 Sign up 完成注册。',
+                      })
+                    }}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-black h-8 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[9px] uppercase transition-all shrink-0 cursor-pointer shadow-sm"
+                  >
+                    <ExternalLink size={11} />
+                    在新页中手动注册
+                  </button>
+                </>
               )}
             </div>
           </div>
