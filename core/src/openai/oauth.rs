@@ -93,8 +93,9 @@ pub async fn exchange_codex_code(
     exchange_codex_code_with_redirect(
         callback_url,
         code_verifier,
-        "http://localhost:1455/auth/callback"
-    ).await
+        "http://localhost:1455/auth/callback",
+    )
+    .await
 }
 
 /// 支持自定义重定向 URI 的令牌交换
@@ -103,7 +104,7 @@ pub async fn exchange_codex_code_with_redirect(
     code_verifier: &str,
     redirect_uri: &str,
 ) -> Result<CodexAuthData, String> {
-    let url = url::Url::parse(callback_url).map_err(|e| format!("URL 解析失败: {}", e))?;
+    let url = url::Url::parse(callback_url).map_err(|e| format!("URL 解析失败: {e}"))?;
     let code = url
         .query_pairs()
         .find(|(k, _)| k == "code")
@@ -124,18 +125,18 @@ pub async fn exchange_codex_code_with_redirect(
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("令牌交换请求失败: {}", e))?;
+        .map_err(|e| format!("令牌交换请求失败: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        return Err(format!("令牌交换失败 ({}): {}", status, error_text));
+        return Err(format!("令牌交换失败 ({status}): {error_text}"));
     }
 
     let auth_data = response
         .json::<CodexAuthData>()
         .await
-        .map_err(|e| format!("解析令牌响应失败: {}", e))?;
+        .map_err(|e| format!("解析令牌响应失败: {e}"))?;
 
     Ok(auth_data)
 }
@@ -649,10 +650,7 @@ pub fn generate_mock_id_token(email: &str) -> String {
     let payload_b64 =
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload_str.as_bytes());
 
-    format!(
-        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{}.mock_signature",
-        payload_b64
-    )
+    format!("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{payload_b64}.mock_signature")
 }
 
 #[cfg(test)]
@@ -825,9 +823,6 @@ mod tests {
         use base64::Engine;
         let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_string(&payload).unwrap().as_bytes());
-        format!(
-            "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{}.signature",
-            payload_b64
-        )
+        format!("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.{payload_b64}.signature")
     }
 }

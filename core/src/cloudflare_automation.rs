@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use tokio::process::Command;
 use uuid::Uuid;
 
+use crate::db::DataLake;
 use crate::stream::{StreamHub, StreamPayload};
+use crate::tunnel::TunnelManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CloudflareAutomationRunPayload {
@@ -42,14 +44,23 @@ pub struct CloudflareAutomationManager {
     status: Arc<Mutex<CloudflareAutomationStatus>>,
     project_root: PathBuf,
     stream_hub: Arc<StreamHub>,
+    data_lake: Arc<DataLake>,
+    tunnel_manager: Arc<TunnelManager>,
 }
 
 impl CloudflareAutomationManager {
-    pub fn new(project_root: PathBuf, stream_hub: Arc<StreamHub>) -> Self {
+    pub fn new(
+        project_root: PathBuf,
+        stream_hub: Arc<StreamHub>,
+        data_lake: Arc<DataLake>,
+        tunnel_manager: Arc<TunnelManager>,
+    ) -> Self {
         Self {
             status: Arc::new(Mutex::new(CloudflareAutomationStatus::default())),
             project_root,
             stream_hub,
+            data_lake,
+            tunnel_manager,
         }
     }
 
@@ -190,20 +201,43 @@ impl CloudflareAutomationManager {
 
         command.arg("-File").arg(&script_path);
 
-        if let Some(mode) = payload
+        let settings = self.data_lake.list_settings().await.unwrap_or_default();
+        let mode = payload
             .mode
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-        {
+            .or_else(|| settings.get("cloudflare_default_mode").map(String::as_str));
+        if let Some(mode) = mode {
             command.arg("-Mode").arg(mode.trim());
         }
 
-        if let Some(public_url) = payload
+        let public_url = payload
             .public_url
             .as_deref()
             .filter(|value| !value.trim().is_empty())
-        {
+            .or_else(|| settings.get("cloudflare_public_url").map(String::as_str));
+        if let Some(public_url) = public_url {
             command.arg("-PublicUrl").arg(public_url.trim());
+        }
+
+        for (setting_key, environment_key) in [
+            ("cloudflare_api_token", "CLOUDFLARE_API_TOKEN"),
+            ("cloudflare_zone_id", "CLOUDFLARE_ZONE_ID"),
+            ("cloudflare_account_id", "CLOUDFLARE_ACCOUNT_ID"),
+            ("cloudflare_zone_domain", "CLOUDFLARE_ZONE_DOMAIN"),
+        ] {
+            if let Some(value) = settings
+                .get(setting_key)
+                .filter(|value| !value.trim().is_empty())
+            {
+                command.env(environment_key, value.trim());
+            }
+        }
+        if let Some(route_local_part) = settings
+            .get("cloudflare_route_local_part")
+            .filter(|value| !value.trim().is_empty())
+        {
+            command.arg("-RouteLocalPart").arg(route_local_part.trim());
         }
 
         command.current_dir(&self.project_root);
@@ -234,8 +268,28 @@ impl CloudflareAutomationManager {
             });
         }
 
+        let summary = read_summary_file(&self.project_root);
+        if let Some(public_url) = summary_string(summary.as_ref(), "public_url") {
+            if let Err(error) = self
+                .data_lake
+                .upsert_setting("public_hub_url", &public_url)
+                .await
+            {
+                eprintln!("保存自动化公网地址失败: {error:?}");
+            }
+            let public_hub_port = settings
+                .get("public_hub_port")
+                .and_then(|value| value.parse::<u16>().ok())
+                .or_else(|| std::env::var("PORT").ok()?.parse::<u16>().ok())
+                .unwrap_or(9010);
+            let _ = self
+                .tunnel_manager
+                .start(public_hub_port, None, Some(public_url))
+                .await;
+        }
+
         Ok(ExecutionResult {
-            summary: read_summary_file(&self.project_root),
+            summary,
             stdout,
             stderr,
         })

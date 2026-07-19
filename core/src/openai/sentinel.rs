@@ -45,18 +45,18 @@ pub async fn request_sentinel_token(
         .json(&payload)
         .send()
         .await
-        .map_err(|e| format!("Sentinel 请求失败: {}", e))?;
+        .map_err(|e| format!("Sentinel 请求失败: {e}"))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Sentinel 响应异常: {} / {}", status, body));
+        return Err(format!("Sentinel 响应异常: {status} / {body}"));
     }
 
     let body: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| format!("Sentinel 响应解析失败: {}", e))?;
+        .map_err(|e| format!("Sentinel 响应解析失败: {e}"))?;
 
     let token = body["token"].as_str().unwrap_or("").to_string();
 
@@ -79,7 +79,7 @@ pub fn solve_pow(seed: &str, difficulty: u32) -> String {
     let required_zero_bytes = leading_zeros / 8;
 
     for nonce in 0u64.. {
-        let input = format!("{}{}", seed, nonce);
+        let input = format!("{seed}{nonce}");
         let hash = crate::openai::oauth::simple_sha256_public(input.as_bytes());
 
         // 检查前导零
@@ -122,12 +122,12 @@ pub async fn check_ip_quality(client: &reqwest::Client) -> Result<IpQualityInfo,
         .get("http://ip-api.com/json/?fields=status,message,country,city,org,as,query,hosting")
         .send()
         .await
-        .map_err(|e| format!("环境预检失败 (网络异常): {}", e))?;
+        .map_err(|e| format!("环境预检失败 (网络异常): {e}"))?;
 
     let data: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| format!("环境预检失败 (解析异常): {}", e))?;
+        .map_err(|e| format!("环境预检失败 (解析异常): {e}"))?;
 
     if data["status"].as_str() != Some("success") {
         return Err(format!(
@@ -157,5 +157,5 @@ pub async fn check_ip_quality(client: &reqwest::Client) -> Result<IpQualityInfo,
 }
 
 fn hex_encode(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{:02x}", b)).collect()
+    data.iter().map(|b| format!("{b:02x}")).collect()
 }

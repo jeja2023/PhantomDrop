@@ -8,12 +8,12 @@ pub async fn upload_account_json(
 ) -> Result<(), String> {
     let res = client
         .post(api_url)
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {api_key}"))
         .header("x-api-key", api_key)
         .json(&payload)
         .send()
         .await
-        .map_err(|e| format!("JSON 分发失败: {}", e))?;
+        .map_err(|e| format!("JSON 分发失败: {e}"))?;
 
     if res.status().is_success() {
         Ok(())
@@ -43,24 +43,24 @@ pub async fn upload_account_multipart(
     let part = reqwest::multipart::Part::text(json_content)
         .file_name(filename)
         .mime_str("application/json")
-        .map_err(|e| format!("构建 Part 失败: {}", e))?;
+        .map_err(|e| format!("构建 Part 失败: {e}"))?;
 
     let form = reqwest::multipart::Form::new().part("file", part);
 
     let res = client
         .post(cpa_url)
-        .header("Authorization", format!("Bearer {}", cpa_key))
+        .header("Authorization", format!("Bearer {cpa_key}"))
         .header("x-management-key", cpa_key) // 兼容 CLIProxyAPI 的 Header
         .multipart(form)
         .send()
         .await
-        .map_err(|e| format!("Multipart 分发失败: {}", e))?;
+        .map_err(|e| format!("Multipart 分发失败: {e}"))?;
 
     if res.status().is_success() {
         Ok(())
     } else {
         let status = res.status();
         let err_body = res.text().await.unwrap_or_default();
-        Err(format!("CPA 平台拒绝 ({}): {}", status, err_body))
+        Err(format!("CPA 平台拒绝 ({status}): {err_body}"))
     }
 }

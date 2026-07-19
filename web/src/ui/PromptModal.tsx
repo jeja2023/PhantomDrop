@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Edit3, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
@@ -29,12 +29,6 @@ export default function PromptModal({
   const [inputValue, setInputValue] = useState(defaultValue)
 
   // 当 defaultValue 改变或者弹窗打开时更新输入框内容
-  useEffect(() => {
-    if (isOpen) {
-      setInputValue(defaultValue)
-    }
-  }, [isOpen, defaultValue])
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     onConfirm(inputValue)

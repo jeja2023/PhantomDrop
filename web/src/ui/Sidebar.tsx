@@ -8,12 +8,10 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
-  const handleLogout = () => {
-    localStorage.removeItem('phantom_auth_token')
-    document.cookie = 'phantom_auth_token=; path=/; max-age=0; SameSite=Lax'
+  const handleLogout = async () => {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
     window.location.reload()
   }
-
   return (
     <nav className="w-16 shrink-0 md:w-64 bg-white border-r border-[#f1f5f9] flex flex-col p-4 z-20 h-screen transition-all select-none shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
       <div className="flex items-center gap-3 mb-10 px-2 mt-4">
@@ -22,7 +20,7 @@ export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         </div>
         <div className="flex flex-col hidden md:flex">
           <span className="font-extrabold text-sm tracking-tighter text-slate-900 leading-none">幻影中枢</span>
-          <span className="text-[9px] text-slate-700 font-mono tracking-widest mt-1 font-bold">核心节点 0.0.31</span>
+          <span className="text-[9px] text-slate-700 font-mono tracking-widest mt-1 font-bold">核心节点 0.0.33</span>
         </div>
       </div>
 

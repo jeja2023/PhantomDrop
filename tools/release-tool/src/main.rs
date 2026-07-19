@@ -26,7 +26,11 @@ impl Version {
             .parse::<u64>()
             .map_err(|_| format!("无效的修订版本号: {}", value))?;
 
-        Ok(Self { major, minor, patch })
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
     }
 
     fn bump(&self, kind: &str) -> Result<Self, String> {
@@ -102,16 +106,30 @@ fn print_usage() {
 }
 
 fn find_project_root() -> Result<PathBuf, String> {
-    let exe_path = env::current_exe().map_err(|error| format!("无法定位可执行文件: {error}"))?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or("无法定位工具目录".to_string())?;
+    let current_dir = env::current_dir().map_err(|error| format!("无法定位当前目录: {error}"))?;
+    if let Some(root) = find_project_root_from(&current_dir) {
+        return Ok(root);
+    }
 
-    exe_dir
-        .parent()
-        .and_then(Path::parent)
+    let exe_path = env::current_exe().map_err(|error| format!("无法定位可执行文件: {error}"))?;
+    find_project_root_from(&exe_path).ok_or("无法定位 PhantomDrop 项目根目录".to_string())
+}
+
+fn find_project_root_from(start: &Path) -> Option<PathBuf> {
+    let start_dir = if start.is_file() {
+        start.parent()?
+    } else {
+        start
+    };
+
+    start_dir
+        .ancestors()
+        .find(|candidate| {
+            candidate.join("core").join("Cargo.toml").is_file()
+                && candidate.join("web").join("package.json").is_file()
+                && candidate.join("network").join("package.json").is_file()
+        })
         .map(Path::to_path_buf)
-        .ok_or("无法推导项目根目录".to_string())
 }
 
 fn parse_target_version(args: &[String], current: &Version) -> Result<Version, String> {
@@ -119,7 +137,9 @@ fn parse_target_version(args: &[String], current: &Version) -> Result<Version, S
     while index < args.len() {
         match args[index].as_str() {
             "--set" => {
-                let value = args.get(index + 1).ok_or("--set 需要跟一个版本号".to_string())?;
+                let value = args
+                    .get(index + 1)
+                    .ok_or("--set 需要跟一个版本号".to_string())?;
                 return Version::parse(value);
             }
             "--bump" => {
@@ -142,7 +162,8 @@ fn parse_target_version(args: &[String], current: &Version) -> Result<Version, S
 
 fn read_current_version(root: &Path) -> Result<Version, String> {
     let path = root.join("core").join("Cargo.toml");
-    let content = fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -154,18 +175,44 @@ fn read_current_version(root: &Path) -> Result<Version, String> {
     Err("未在 core/Cargo.toml 中找到版本号".to_string())
 }
 
-fn apply_release(config: &ReleaseConfig, current: &Version, target: &Version) -> Result<(), String> {
+fn apply_release(
+    config: &ReleaseConfig,
+    current: &Version,
+    target: &Version,
+) -> Result<(), String> {
     update_core_cargo_toml(config, current, target)?;
     update_core_cargo_lock(config, current, target)?;
-    update_package_json(config.root.join("web").join("package.json"), current, target)?;
-    update_package_lock(config.root.join("web").join("package-lock.json"), current, target)?;
-    update_package_json(config.root.join("network").join("package.json"), current, target)?;
+    update_package_json(
+        config.root.join("web").join("package.json"),
+        current,
+        target,
+    )?;
+    update_package_lock(
+        config.root.join("web").join("package-lock.json"),
+        current,
+        target,
+    )?;
+    update_package_json(
+        config.root.join("network").join("package.json"),
+        current,
+        target,
+    )?;
+    update_package_lock(
+        config.root.join("network").join("package-lock.json"),
+        current,
+        target,
+    )?;
     update_sidebar_version(config, current, target)?;
+    update_docker_version(config, current, target)?;
     update_changelog(config, target)?;
     Ok(())
 }
 
-fn update_core_cargo_toml(config: &ReleaseConfig, current: &Version, target: &Version) -> Result<(), String> {
+fn update_core_cargo_toml(
+    config: &ReleaseConfig,
+    current: &Version,
+    target: &Version,
+) -> Result<(), String> {
     let path = config.root.join("core").join("Cargo.toml");
     replace_in_file(
         &path,
@@ -174,9 +221,14 @@ fn update_core_cargo_toml(config: &ReleaseConfig, current: &Version, target: &Ve
     )
 }
 
-fn update_core_cargo_lock(config: &ReleaseConfig, current: &Version, target: &Version) -> Result<(), String> {
+fn update_core_cargo_lock(
+    config: &ReleaseConfig,
+    current: &Version,
+    target: &Version,
+) -> Result<(), String> {
     let path = config.root.join("core").join("Cargo.lock");
-    let content = fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
     let marker = format!("name = \"core\"\nversion = \"{}\"", current.plain());
     let replacement = format!("name = \"core\"\nversion = \"{}\"", target.plain());
 
@@ -197,7 +249,8 @@ fn update_package_json(path: PathBuf, current: &Version, target: &Version) -> Re
 }
 
 fn update_package_lock(path: PathBuf, current: &Version, target: &Version) -> Result<(), String> {
-    let content = fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
     let current_line = format!("\"version\": \"{}\",", current.plain());
     let target_line = format!("\"version\": \"{}\",", target.plain());
     let mut replacements = 0;
@@ -225,36 +278,57 @@ fn update_package_lock(path: PathBuf, current: &Version, target: &Version) -> Re
     fs::write(&path, updated).map_err(|error| format!("写入 {} 失败: {error}", path.display()))
 }
 
-fn update_sidebar_version(config: &ReleaseConfig, current: &Version, target: &Version) -> Result<(), String> {
-    let path = config.root.join("web").join("src").join("ui").join("Sidebar.tsx");
+fn update_sidebar_version(
+    config: &ReleaseConfig,
+    current: &Version,
+    target: &Version,
+) -> Result<(), String> {
+    let path = config
+        .root
+        .join("web")
+        .join("src")
+        .join("ui")
+        .join("Sidebar.tsx");
     replace_in_file(
         &path,
-        &format!("CORE {}", current.tag()),
-        &format!("CORE {}", target.tag()),
+        &format!("核心节点 {}", current.plain()),
+        &format!("核心节点 {}", target.plain()),
+    )
+}
+
+fn update_docker_version(
+    config: &ReleaseConfig,
+    current: &Version,
+    target: &Version,
+) -> Result<(), String> {
+    let path = config.root.join("Dockerfile");
+    replace_in_file(
+        &path,
+        &format!("org.opencontainers.image.version=\"{}\"", current.plain()),
+        &format!("org.opencontainers.image.version=\"{}\"", target.plain()),
     )
 }
 
 fn update_changelog(config: &ReleaseConfig, target: &Version) -> Result<(), String> {
     let path = config.root.join("更新日志.md");
-    let content = fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
     let target_heading = format!("## [{}] - {}", target.tag(), config.date);
 
     if content.contains(&target_heading) {
         return Ok(());
     }
 
-    let separator = "\n---\n";
     let insert_at = content
-        .find(separator)
-        .map(|index| index + separator.len())
-        .ok_or("未在更新日志中找到插入位置".to_string())?;
+        .find("\n## [")
+        .map(|index| index + 1)
+        .ok_or("未在更新日志中找到现有版本条目".to_string())?;
 
     let new_section = format!(
-        "\n## [{}] - {}\n\n### Changed\n- 待补充\n",
+        "## [{}] - {}\n\n### Changed\n\n- 待补充\n\n---\n\n",
         target.tag(),
         config.date
     );
-
     let mut updated = String::with_capacity(content.len() + new_section.len());
     updated.push_str(&content[..insert_at]);
     updated.push_str(&new_section);
@@ -268,7 +342,8 @@ fn update_changelog(config: &ReleaseConfig, target: &Version) -> Result<(), Stri
 }
 
 fn replace_in_file(path: &Path, from: &str, to: &str) -> Result<(), String> {
-    let content = fs::read_to_string(path).map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
     if !content.contains(from) {
         return Err(format!("未在 {} 中找到目标内容: {}", path.display(), from));
     }

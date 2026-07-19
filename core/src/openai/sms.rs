@@ -41,7 +41,7 @@ impl SmsActivateClient {
             }
         }
 
-        Err(format!("获取号码失败: {}", text))
+        Err(format!("获取号码失败: {text}"))
     }
 
     /// 等待验证码，超时返回错误
@@ -71,7 +71,7 @@ impl SmsActivateClient {
             } else if text == "STATUS_CANCEL" {
                 return Err("号码已被取消".to_string());
             } else {
-                return Err(format!("异常状态: {}", text));
+                return Err(format!("异常状态: {text}"));
             }
 
             sleep(Duration::from_secs(5)).await;

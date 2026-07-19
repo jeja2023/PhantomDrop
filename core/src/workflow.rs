@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 /**
@@ -16,6 +17,7 @@ use uuid::Uuid;
 pub struct WorkflowEngine {
     hub: Arc<StreamHub>,
     dl: Arc<DataLake>,
+    run_slots: Arc<Semaphore>,
 }
 
 #[derive(Clone, Serialize)]
@@ -88,7 +90,16 @@ struct WorkflowRunContext {
 
 impl WorkflowEngine {
     pub fn new(hub: Arc<StreamHub>, dl: Arc<DataLake>) -> Self {
-        Self { hub, dl }
+        let max_runs = env::var("MAX_CONCURRENT_WORKFLOWS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(2);
+        Self {
+            hub,
+            dl,
+            run_slots: Arc::new(Semaphore::new(max_runs)),
+        }
     }
 
     pub fn builtin_definitions() -> Vec<WorkflowDefinition> {
@@ -231,7 +242,7 @@ impl WorkflowEngine {
     async fn resolve_definition(&self, workflow_id: &str) -> Result<WorkflowDefinition, String> {
         let definitions = self.definitions().await;
         Self::find_definition(&definitions, workflow_id)
-            .ok_or_else(|| format!("工作流不存在: {}", workflow_id))
+            .ok_or_else(|| format!("工作流不存在: {workflow_id}"))
     }
 
     pub fn validate_definition_input(
@@ -266,6 +277,9 @@ impl WorkflowEngine {
     pub async fn execute(&self, workflow_id: &str) -> Result<String, String> {
         let hub = Arc::clone(&self.hub);
         let dl = Arc::clone(&self.dl);
+        let permit = Arc::clone(&self.run_slots)
+            .try_acquire_owned()
+            .map_err(|_| "工作流并发已达上限，请稍后重试".to_string())?;
         let definition = self.resolve_definition(workflow_id).await?;
         let id = definition.id.clone();
         let run_id = Uuid::new_v4().to_string();
@@ -284,6 +298,7 @@ impl WorkflowEngine {
         let definition_for_task = definition;
 
         tokio::spawn(async move {
+            let _permit = permit;
             let mut context = WorkflowRunContext {
                 run_id: run_id_for_task.clone(),
                 workflow_id: id.clone(),
@@ -297,7 +312,7 @@ impl WorkflowEngine {
                 &dl,
                 &mut context,
                 "info",
-                &format!("开始执行工作流: [{}] / RUN_ID: {}", id, run_id_for_task),
+                &format!("开始执行工作流: [{id}] / RUN_ID: {run_id_for_task}"),
             )
             .await;
 
@@ -481,10 +496,7 @@ impl WorkflowEngine {
             dl,
             context,
             "info",
-            &format!(
-                "正在通过 Catch-all 下发表单，目标批次: {} 个账户...",
-                generated_count
-            ),
+            &format!("正在通过 Catch-all 下发表单，目标批次: {generated_count} 个账户..."),
         )
         .await;
         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
@@ -515,7 +527,7 @@ impl WorkflowEngine {
 
             let suffix = Uuid::new_v4().simple().to_string();
             let password = format!("Pwd{}_{}", Utc::now().timestamp() % 100000, &suffix[8..12]);
-            let address = format!("{}@{}", local_part, domain);
+            let address = format!("{local_part}@{domain}");
 
             match dl
                 .create_generated_account(
@@ -536,7 +548,7 @@ impl WorkflowEngine {
                             dl,
                             context,
                             "info",
-                            &format!("已生成账号产物: {}", address),
+                            &format!("已生成账号产物: {address}"),
                         )
                         .await;
                     }
@@ -547,7 +559,7 @@ impl WorkflowEngine {
                         dl,
                         context,
                         "warn",
-                        &format!("账号产物写入失败: {} ({})", address, e),
+                        &format!("账号产物写入失败: {address} ({e})"),
                     )
                     .await;
                 }
@@ -559,7 +571,7 @@ impl WorkflowEngine {
             dl,
             context,
             "success",
-            &format!("账号产物写入完成: {}/{}", created, generated_count),
+            &format!("账号产物写入完成: {created}/{generated_count}"),
         )
         .await;
 
@@ -635,19 +647,19 @@ impl WorkflowEngine {
             &dl,
             context,
             "info",
-            &format!("正在评估数据湖过期指纹记录，保留天数: {}...", resolved),
+            &format!("正在评估数据湖过期指纹记录，保留天数: {resolved}..."),
         )
         .await;
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         match dl.cleanup_emails(resolved).await {
             Ok(count) => {
-                let message = format!("数据湖自动清理完成: 成功回收 {} 条过期记录", count);
+                let message = format!("数据湖自动清理完成: 成功回收 {count} 条过期记录");
                 Self::log_step(&hub, &dl, context, "success", &message).await;
                 Ok(message)
             }
             Err(e) => {
-                let message = format!("数据清理执行异常: {:?}", e);
+                let message = format!("数据清理执行异常: {e:?}");
                 Self::log_step(&hub, &dl, context, "warn", &message).await;
                 Err(message)
             }
@@ -667,10 +679,7 @@ impl WorkflowEngine {
             dl,
             context,
             "info",
-            &format!(
-                "正在对 SQLite 数据湖进行健康度快照，统计窗口: {}h...",
-                report_window_hours
-            ),
+            &format!("正在对 SQLite 数据湖进行健康度快照，统计窗口: {report_window_hours}h..."),
         )
         .await;
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -678,7 +687,7 @@ impl WorkflowEngine {
         let stats = dl
             .get_dashboard_stats()
             .await
-            .map_err(|error| format!("统计查询失败: {:?}", error))?;
+            .map_err(|error| format!("统计查询失败: {error:?}"))?;
         let coverage = if stats.total_emails == 0 {
             0
         } else {
@@ -703,14 +712,8 @@ impl WorkflowEngine {
     ) -> Result<String, String> {
         Self::log_step(hub, dl, context, "info", "正在读取中枢与边缘配置快照...").await;
 
-        let fallback_env_secret = env::var("HUB_SECRET")
+        let hub_secret = env::var("HUB_SECRET")
             .ok()
-            .filter(|value| !value.trim().is_empty());
-        let saved_secret = dl
-            .get_setting("auth_secret")
-            .await
-            .ok()
-            .flatten()
             .filter(|value| !value.trim().is_empty());
         let public_hub_url = dl
             .get_setting("public_hub_url")
@@ -732,42 +735,15 @@ impl WorkflowEngine {
         let require_public_hub_url = parameters.require_public_hub_url.unwrap_or(true);
         let require_webhook = parameters.require_webhook.unwrap_or(false);
 
-        if saved_secret.is_some() {
-            Self::log_step(
-                hub,
-                dl,
-                context,
-                "success",
-                "全局设置中已配置接口令牌 auth_secret",
-            )
-            .await;
+        if hub_secret.is_some() {
+            Self::log_step(hub, dl, context, "success", "已配置机器通信密钥 HUB_SECRET").await;
         } else {
             Self::log_step(
                 hub,
                 dl,
                 context,
                 "warn",
-                "全局设置中尚未配置接口令牌 auth_secret，邮件接入会被拒绝",
-            )
-            .await;
-        }
-
-        if fallback_env_secret.is_some() {
-            Self::log_step(
-                hub,
-                dl,
-                context,
-                "info",
-                "检测到可选兜底环境变量 HUB_SECRET",
-            )
-            .await;
-        } else {
-            Self::log_step(
-                hub,
-                dl,
-                context,
-                "info",
-                "未配置兜底环境变量 HUB_SECRET，将完全使用全局设置接口令牌",
+                "未配置 HUB_SECRET，Worker 邮件接入处于禁用状态",
             )
             .await;
         }
@@ -791,7 +767,7 @@ impl WorkflowEngine {
                 dl,
                 context,
                 "success",
-                &format!("Webhook 配置可用，当前活跃数: {}", active_hooks),
+                &format!("Webhook 配置可用，当前活跃数: {active_hooks}"),
             )
             .await;
         } else {
@@ -800,7 +776,7 @@ impl WorkflowEngine {
 
         let public_hub_ok = public_hub_url.is_some() || !require_public_hub_url;
         let webhook_ok = webhook_url.is_some() || active_hooks > 0 || !require_webhook;
-        let secrets_ok = saved_secret.is_some() || fallback_env_secret.is_some();
+        let secrets_ok = hub_secret.is_some();
 
         if secrets_ok && public_hub_ok && webhook_ok {
             let message = "环境变量同步校验完成 / SECRETS_SYNCED_OK".to_string();
@@ -834,22 +810,15 @@ impl WorkflowEngine {
             dl,
             context,
             "info",
-            &format!(
-                "正在初始化 OpenAI 协议套件 | 目标批次: {} | 域名: {}",
-                batch_size, domain
-            ),
+            &format!("正在初始化 OpenAI 协议套件 | 目标批次: {batch_size} | 域名: {domain}"),
         )
         .await;
 
-        if proxy_url.as_ref().is_some_and(|proxy| !proxy.trim().is_empty()) {
-            Self::log_step(
-                hub,
-                dl,
-                context,
-                "info",
-                "代理服务器已配置（详情已隐藏）",
-            )
-            .await;
+        if proxy_url
+            .as_ref()
+            .is_some_and(|proxy| !proxy.trim().is_empty())
+        {
+            Self::log_step(hub, dl, context, "info", "代理服务器已配置（详情已隐藏）").await;
         }
 
         let mut success_count = 0usize;
@@ -878,7 +847,7 @@ impl WorkflowEngine {
                 .take(len)
                 .map(|b| char::from(b).to_ascii_lowercase())
                 .collect();
-            let email = format!("{}@{}", local_part, domain);
+            let email = format!("{local_part}@{domain}");
             let password: String = rand::thread_rng()
                 .sample_iter(&Alphanumeric)
                 .take(12)
@@ -1031,14 +1000,19 @@ impl WorkflowEngine {
                                 "🔑 检测到 Session Token，正在触发后端自动双重校验与 Access Token 换取...",
                             )
                             .await;
-                            match crate::openai::checker::check_account_status(Arc::clone(dl), &account_id).await {
+                            match crate::openai::checker::check_account_status(
+                                Arc::clone(dl),
+                                &account_id,
+                            )
+                            .await
+                            {
                                 Ok(status) => {
                                     Self::log_step(
                                         hub,
                                         dl,
                                         context,
                                         "success",
-                                        &format!("✅ 自动双重校验完成，当前账户状态: {}", status),
+                                        &format!("✅ 自动双重校验完成，当前账户状态: {status}"),
                                     )
                                     .await;
                                 }
@@ -1048,7 +1022,7 @@ impl WorkflowEngine {
                                         dl,
                                         context,
                                         "warn",
-                                        &format!("⚠️ 自动双重校验及 Token 补全失败: {}", e),
+                                        &format!("⚠️ 自动双重校验及 Token 补全失败: {e}"),
                                     )
                                     .await;
                                 }
@@ -1071,7 +1045,10 @@ impl WorkflowEngine {
                         }
                         if final_cpa_key.trim().is_empty() {
                             if let Ok(Some(auth_json)) = dl.get_setting("cpa_auth_json").await {
-                                if let Ok(auth_data) = serde_json::from_str::<crate::openai::oauth::CodexAuthData>(&auth_json) {
+                                if let Ok(auth_data) = serde_json::from_str::<
+                                    crate::openai::oauth::CodexAuthData,
+                                >(&auth_json)
+                                {
                                     final_cpa_key = auth_data.access_token;
                                 }
                             }
@@ -1079,8 +1056,13 @@ impl WorkflowEngine {
 
                         if !final_cpa_url.trim().is_empty() && !final_cpa_key.trim().is_empty() {
                             let mut cpa_url_endpoint = final_cpa_url.trim().to_string();
-                            if !cpa_url_endpoint.contains("/v0/") && !cpa_url_endpoint.contains("/api/") {
-                                cpa_url_endpoint = format!("{}/v0/management/auth-files", cpa_url_endpoint.trim_end_matches('/'));
+                            if !cpa_url_endpoint.contains("/v0/")
+                                && !cpa_url_endpoint.contains("/api/")
+                            {
+                                cpa_url_endpoint = format!(
+                                    "{}/v0/management/auth-files",
+                                    cpa_url_endpoint.trim_end_matches('/')
+                                );
                             }
 
                             Self::log_step(
@@ -1096,9 +1078,29 @@ impl WorkflowEngine {
                             )
                             .await;
 
-                            let client = reqwest::Client::new();
+                            let client = match crate::routes::build_ssrf_safe_client(
+                                &cpa_url_endpoint,
+                            )
+                            .await
+                            {
+                                Ok((_, client)) => client,
+                                Err(error) => {
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "error",
+                                        &format!("CPA 地址安全校验失败: {error}"),
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                            };
                             if let Ok(Some(acc)) = dl.get_generated_account(&account_id).await {
-                                let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Cpa);
+                                let payload = crate::exporter::AccountExporter::transform(
+                                    &acc,
+                                    crate::exporter::ExportFormat::Cpa,
+                                );
                                 match crate::uploader::upload_account_multipart(
                                     &client,
                                     &cpa_url_endpoint,
@@ -1208,15 +1210,14 @@ impl WorkflowEngine {
         }
 
         let summary = format!(
-            "OpenAI 批量注册完成 | 成功: {} | 失败: {} | 总计: {}",
-            success_count, fail_count, batch_size
+            "OpenAI 批量注册完成 | 成功: {success_count} | 失败: {fail_count} | 总计: {batch_size}"
         );
         Self::log_step(hub, dl, context, "success", &summary).await;
 
         if success_count > 0 {
             Ok(summary)
         } else {
-            Err(format!("全部 {} 个账号注册失败", batch_size))
+            Err(format!("全部 {batch_size} 个账号注册失败"))
         }
     }
 
@@ -1267,7 +1268,7 @@ impl WorkflowEngine {
                 .take(len)
                 .map(|b| char::from(b).to_ascii_lowercase())
                 .collect();
-            let email = format!("{}@{}", local_part, domain);
+            let email = format!("{local_part}@{domain}");
             let password: String = rand::thread_rng()
                 .sample_iter(&rand::distributions::Alphanumeric)
                 .take(12)
@@ -1279,7 +1280,7 @@ impl WorkflowEngine {
                 dl,
                 context,
                 "info",
-                &format!("🚀 准备注册: {} | 密码: ******", email),
+                &format!("🚀 准备注册: {email} | 密码: ******"),
             )
             .await;
 
@@ -1398,7 +1399,7 @@ impl WorkflowEngine {
                             dl,
                             context,
                             "success",
-                            &format!("✅ 账号及其凭证已保存至数据库: {}", email),
+                            &format!("✅ 账号及其凭证已保存至数据库: {email}"),
                         )
                         .await;
 
@@ -1412,14 +1413,19 @@ impl WorkflowEngine {
                                 "🔑 检测到 Session Token，正在触发后端自动双重校验与 Access Token 换取...",
                             )
                             .await;
-                            match crate::openai::checker::check_account_status(Arc::clone(dl), &account_id).await {
+                            match crate::openai::checker::check_account_status(
+                                Arc::clone(dl),
+                                &account_id,
+                            )
+                            .await
+                            {
                                 Ok(status) => {
                                     Self::log_step(
                                         hub,
                                         dl,
                                         context,
                                         "success",
-                                        &format!("✅ 自动双重校验完成，当前账户状态: {}", status),
+                                        &format!("✅ 自动双重校验完成，当前账户状态: {status}"),
                                     )
                                     .await;
                                 }
@@ -1429,7 +1435,7 @@ impl WorkflowEngine {
                                         dl,
                                         context,
                                         "warn",
-                                        &format!("⚠️ 自动双重校验及 Token 补全失败: {}", e),
+                                        &format!("⚠️ 自动双重校验及 Token 补全失败: {e}"),
                                     )
                                     .await;
                                 }
@@ -1452,7 +1458,10 @@ impl WorkflowEngine {
                         }
                         if final_cpa_key.trim().is_empty() {
                             if let Ok(Some(auth_json)) = dl.get_setting("cpa_auth_json").await {
-                                if let Ok(auth_data) = serde_json::from_str::<crate::openai::oauth::CodexAuthData>(&auth_json) {
+                                if let Ok(auth_data) = serde_json::from_str::<
+                                    crate::openai::oauth::CodexAuthData,
+                                >(&auth_json)
+                                {
                                     final_cpa_key = auth_data.access_token;
                                 }
                             }
@@ -1460,8 +1469,13 @@ impl WorkflowEngine {
 
                         if !final_cpa_url.trim().is_empty() && !final_cpa_key.trim().is_empty() {
                             let mut cpa_url_endpoint = final_cpa_url.trim().to_string();
-                            if !cpa_url_endpoint.contains("/v0/") && !cpa_url_endpoint.contains("/api/") {
-                                cpa_url_endpoint = format!("{}/v0/management/auth-files", cpa_url_endpoint.trim_end_matches('/'));
+                            if !cpa_url_endpoint.contains("/v0/")
+                                && !cpa_url_endpoint.contains("/api/")
+                            {
+                                cpa_url_endpoint = format!(
+                                    "{}/v0/management/auth-files",
+                                    cpa_url_endpoint.trim_end_matches('/')
+                                );
                             }
 
                             Self::log_step(
@@ -1477,9 +1491,29 @@ impl WorkflowEngine {
                             )
                             .await;
 
-                            let client = reqwest::Client::new();
+                            let client = match crate::routes::build_ssrf_safe_client(
+                                &cpa_url_endpoint,
+                            )
+                            .await
+                            {
+                                Ok((_, client)) => client,
+                                Err(error) => {
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "error",
+                                        &format!("CPA 地址安全校验失败: {error}"),
+                                    )
+                                    .await;
+                                    continue;
+                                }
+                            };
                             if let Ok(Some(acc)) = dl.get_generated_account(&account_id).await {
-                                let payload = crate::exporter::AccountExporter::transform(&acc, crate::exporter::ExportFormat::Cpa);
+                                let payload = crate::exporter::AccountExporter::transform(
+                                    &acc,
+                                    crate::exporter::ExportFormat::Cpa,
+                                );
                                 match crate::uploader::upload_account_multipart(
                                     &client,
                                     &cpa_url_endpoint,
@@ -1541,19 +1575,18 @@ impl WorkflowEngine {
                             dl,
                             context,
                             "error",
-                            &format!("账号入库失败: {}", email),
+                            &format!("账号入库失败: {email}"),
                         )
                         .await;
                     }
                 }
                 Ok(Err(e)) => {
                     fail_count += 1;
-                    Self::log_step(hub, dl, context, "error", &format!("单次注册失败: {}", e))
-                        .await;
+                    Self::log_step(hub, dl, context, "error", &format!("单次注册失败: {e}")).await;
                 }
                 Err(e) => {
                     fail_count += 1;
-                    Self::log_step(hub, dl, context, "error", &format!("任务意外崩溃: {:?}", e))
+                    Self::log_step(hub, dl, context, "error", &format!("任务意外崩溃: {e:?}"))
                         .await;
                 }
             }
@@ -1566,7 +1599,7 @@ impl WorkflowEngine {
                     dl,
                     context,
                     "info",
-                    &format!("💤 等待 {} 秒后开始下一个任务...", sleep_secs),
+                    &format!("💤 等待 {sleep_secs} 秒后开始下一个任务..."),
                 )
                 .await;
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
@@ -1574,15 +1607,14 @@ impl WorkflowEngine {
         }
 
         let summary = format!(
-            "OpenAI 浏览器模拟注册批量完成 | 成功: {} | 失败: {} | 总计: {}",
-            success_count, fail_count, batch_size
+            "OpenAI 浏览器模拟注册批量完成 | 成功: {success_count} | 失败: {fail_count} | 总计: {batch_size}"
         );
         Self::log_step(hub, dl, context, "success", &summary).await;
 
         if success_count > 0 {
             Ok(summary)
         } else {
-            Err(format!("全部 {} 个浏览器注册任务均失败", batch_size))
+            Err(format!("全部 {batch_size} 个浏览器注册任务均失败"))
         }
     }
 
@@ -1649,6 +1681,41 @@ fn build_oauth_credentials(
     })
 }
 
+impl WorkflowKind {
+    pub fn as_storage(&self) -> &'static str {
+        match self {
+            WorkflowKind::AccountGenerate => "account_generate",
+            WorkflowKind::DataCleanup => "data_cleanup",
+            WorkflowKind::StatusReport => "status_report",
+            WorkflowKind::EnvironmentCheck => "environment_check",
+            WorkflowKind::OpenAIRegister => "openai_register",
+            WorkflowKind::OpenAIRegisterBrowser => "openai_register_browser",
+        }
+    }
+
+    pub fn from_storage(value: &str) -> Self {
+        match value {
+            "data_cleanup" => WorkflowKind::DataCleanup,
+            "status_report" => WorkflowKind::StatusReport,
+            "environment_check" => WorkflowKind::EnvironmentCheck,
+            "openai_register" => WorkflowKind::OpenAIRegister,
+            "openai_register_browser" => WorkflowKind::OpenAIRegisterBrowser,
+            _ => WorkflowKind::AccountGenerate,
+        }
+    }
+
+    pub fn try_from_storage(value: &str) -> Result<Self, String> {
+        match value {
+            "account_generate" => Ok(WorkflowKind::AccountGenerate),
+            "data_cleanup" => Ok(WorkflowKind::DataCleanup),
+            "status_report" => Ok(WorkflowKind::StatusReport),
+            "environment_check" => Ok(WorkflowKind::EnvironmentCheck),
+            "openai_register" => Ok(WorkflowKind::OpenAIRegister),
+            "openai_register_browser" => Ok(WorkflowKind::OpenAIRegisterBrowser),
+            _ => Err(format!("不支持的工作流类型: {value}")),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1681,41 +1748,5 @@ mod tests {
         };
 
         assert!(super::WorkflowEngine::validate_parameters(&definition).is_ok());
-    }
-}
-
-impl WorkflowKind {
-    pub fn as_storage(&self) -> &'static str {
-        match self {
-            WorkflowKind::AccountGenerate => "account_generate",
-            WorkflowKind::DataCleanup => "data_cleanup",
-            WorkflowKind::StatusReport => "status_report",
-            WorkflowKind::EnvironmentCheck => "environment_check",
-            WorkflowKind::OpenAIRegister => "openai_register",
-            WorkflowKind::OpenAIRegisterBrowser => "openai_register_browser",
-        }
-    }
-
-    pub fn from_storage(value: &str) -> Self {
-        match value {
-            "data_cleanup" => WorkflowKind::DataCleanup,
-            "status_report" => WorkflowKind::StatusReport,
-            "environment_check" => WorkflowKind::EnvironmentCheck,
-            "openai_register" => WorkflowKind::OpenAIRegister,
-            "openai_register_browser" => WorkflowKind::OpenAIRegisterBrowser,
-            _ => WorkflowKind::AccountGenerate,
-        }
-    }
-
-    pub fn try_from_storage(value: &str) -> Result<Self, String> {
-        match value {
-            "account_generate" => Ok(WorkflowKind::AccountGenerate),
-            "data_cleanup" => Ok(WorkflowKind::DataCleanup),
-            "status_report" => Ok(WorkflowKind::StatusReport),
-            "environment_check" => Ok(WorkflowKind::EnvironmentCheck),
-            "openai_register" => Ok(WorkflowKind::OpenAIRegister),
-            "openai_register_browser" => Ok(WorkflowKind::OpenAIRegisterBrowser),
-            _ => Err(format!("不支持的工作流类型: {}", value)),
-        }
     }
 }

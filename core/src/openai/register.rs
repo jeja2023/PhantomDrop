@@ -58,7 +58,11 @@ pub async fn execute_registration(
     if let Some(ref cb) = context.step_callback {
         cb(
             "info",
-            if context.proxy_url.as_ref().is_some_and(|u| !u.trim().is_empty()) {
+            if context
+                .proxy_url
+                .as_ref()
+                .is_some_and(|u| !u.trim().is_empty())
+            {
                 "初始化 HTTP 客户端 (代理已配置，详情已隐藏)"
             } else {
                 "初始化 HTTP 客户端 (直连)"
@@ -97,7 +101,7 @@ pub async fn execute_registration(
             if let Some(ref cb) = context.step_callback {
                 cb(
                     "warn",
-                    &format!("环境预检跳过 (第三方 API 暂时不可达): {}", e),
+                    &format!("环境预检跳过 (第三方 API 暂时不可达): {e}"),
                 );
             }
         }
@@ -176,7 +180,7 @@ pub async fn execute_registration(
         .header("referer", "https://chatgpt.com/")
         .send()
         .await
-        .map_err(|e| format!("OAuth 预热请求失败: {}", e))?;
+        .map_err(|e| format!("OAuth 预热请求失败: {e}"))?;
 
     if auth_prep_res.status().as_u16() == 403 {
         return Err("OpenAI 防火墙拦截 (403 Forbidden)，请更换更高质量的代理端点".to_string());
@@ -208,7 +212,7 @@ pub async fn execute_registration(
         ))
         .send()
         .await
-        .map_err(|e| format!("注册表单提交失败: {}", e))?;
+        .map_err(|e| format!("注册表单提交失败: {e}"))?;
 
     if !signup_response.status().is_success() && signup_response.status().as_u16() != 302 {
         return Err(format!("注册表单响应异常: {}", signup_response.status()));
@@ -230,10 +234,7 @@ pub async fn execute_registration(
         .header("origin", "https://auth.openai.com")
         .header(
             "referer",
-            format!(
-                "https://auth.openai.com/u/signup/password?state={}",
-                &state
-            ),
+            format!("https://auth.openai.com/u/signup/password?state={}", &state),
         )
         .header("sec-ch-ua-mobile", "?0")
         .header("sec-fetch-dest", "document")
@@ -246,7 +247,7 @@ pub async fn execute_registration(
         ))
         .send()
         .await
-        .map_err(|e| format!("密码提交失败: {}", e))?;
+        .map_err(|e| format!("密码提交失败: {e}"))?;
 
     if !password_response.status().is_success() && password_response.status().as_u16() != 302 {
         return Err(format!("密码提交响应异常: {}", password_response.status()));
@@ -274,6 +275,7 @@ pub async fn execute_registration(
                 "Your code is 123456",
                 "Your code is 123456",
                 Some("123456"),
+                None,
                 None,
                 None,
             )
@@ -317,7 +319,7 @@ pub async fn execute_registration(
 
     if let Some(otp) = otp_code {
         if let Some(ref cb) = context.step_callback {
-            cb("success", &format!("成功提取 OTP 验证码: {}", otp));
+            cb("success", &format!("成功提取 OTP 验证码: {otp}"));
             cb("info", "[Step 7] 正在提交 OTP 验证码以激活邮箱...");
         }
 
@@ -329,7 +331,7 @@ pub async fn execute_registration(
             }))
             .send()
             .await
-            .map_err(|e| format!("OTP 验证请求失败: {}", e))?;
+            .map_err(|e| format!("OTP 验证请求失败: {e}"))?;
 
         if !otp_response.status().is_success() {
             return Err(format!("OTP 验证码被拒绝或失效: {}", otp_response.status()));
@@ -350,7 +352,7 @@ pub async fn execute_registration(
             .get(&link)
             .send()
             .await
-            .map_err(|e| format!("链接验证请求失败: {}", e))?;
+            .map_err(|e| format!("链接验证请求失败: {e}"))?;
 
         if !link_res.status().is_success() {
             return Err(format!("验证链接访问异常: {}", link_res.status()));
@@ -401,7 +403,7 @@ pub async fn execute_registration(
             .unwrap_or_else(|| {
                 let f = first_names[rng.gen_range(0..first_names.len())];
                 let l = last_names[rng.gen_range(0..last_names.len())];
-                format!("{} {}", f, l)
+                format!("{f} {l}")
             });
 
         let age = context.age.unwrap_or_else(|| rng.gen_range(19..45));
@@ -411,7 +413,7 @@ pub async fn execute_registration(
     if let Some(ref cb) = context.step_callback {
         cb(
             "info",
-            &format!("资料详情 -> 姓名: {}, 年龄: {}", final_full_name, final_age),
+            &format!("资料详情 -> 姓名: {final_full_name}, 年龄: {final_age}"),
         );
     }
 
@@ -424,7 +426,7 @@ pub async fn execute_registration(
         }))
         .send()
         .await
-        .map_err(|e| format!("账号创建请求失败: {}", e))?;
+        .map_err(|e| format!("账号创建请求失败: {e}"))?;
 
     if !create_user_response.status().is_success() {
         return Err(format!("创建账号失败: {}", create_user_response.status()));
@@ -453,12 +455,12 @@ pub async fn execute_registration(
             let (order_id, phone_number) = sms_client
                 .get_number("dr", None)
                 .await
-                .map_err(|e| format!("获取手机号失败: {}", e))?;
+                .map_err(|e| format!("获取手机号失败: {e}"))?;
 
             if let Some(ref cb) = context.step_callback {
                 cb(
                     "success",
-                    &format!("已成功申领号码: {} (Order ID: {})", phone_number, order_id),
+                    &format!("已成功申领号码: {phone_number} (Order ID: {order_id})"),
                 );
                 cb("info", "正在向 OpenAI 提交号码并请求验证码...");
             }
@@ -473,13 +475,13 @@ pub async fn execute_registration(
                 }))
                 .send()
                 .await
-                .map_err(|e| format!("手机验证码请求异常: {}", e))?;
+                .map_err(|e| format!("手机验证码请求异常: {e}"))?;
 
             if !sms_req_res.status().is_success() {
                 let status = sms_req_res.status();
                 let err_body = sms_req_res.text().await.unwrap_or_default();
                 sms_client.set_status(&order_id, "8").await.ok(); // 取消码
-                return Err(format!("OpenAI 拒绝发送短信: {} - {}", status, err_body));
+                return Err(format!("OpenAI 拒绝发送短信: {status} - {err_body}"));
             }
 
             // 9.3 等待接码
@@ -489,7 +491,7 @@ pub async fn execute_registration(
             let sms_code = sms_client.wait_for_code(&order_id, 300).await?;
 
             if let Some(ref cb) = context.step_callback {
-                cb("success", &format!("已捕获手机验证码: {}", sms_code));
+                cb("success", &format!("已捕获手机验证码: {sms_code}"));
                 cb("info", "正在提交验证码以解除账号限制...");
             }
 
@@ -502,7 +504,7 @@ pub async fn execute_registration(
                 }))
                 .send()
                 .await
-                .map_err(|e| format!("手机验证码校验异常: {}", e))?;
+                .map_err(|e| format!("手机验证码校验异常: {e}"))?;
 
             if !sms_val_res.status().is_success() {
                 sms_client.set_status(&order_id, "1").await.ok(); // 要求重发
@@ -527,10 +529,7 @@ pub async fn execute_registration(
             "warn",
             "[Phase B] 协议模式无法捕获 OAuth callback code，Token 需通过浏览器驱动补全",
         );
-        cb(
-            "success",
-            "Phase A 注册流程完成，账号已创建并激活",
-        );
+        cb("success", "Phase A 注册流程完成，账号已创建并激活");
     }
 
     Ok(RegisterResult {
@@ -555,7 +554,7 @@ fn urlencoding_simple(s: &str) -> String {
             }
             _ => {
                 result.push('%');
-                result.push_str(&format!("{:02X}", byte));
+                result.push_str(&format!("{byte:02X}"));
             }
         }
     }

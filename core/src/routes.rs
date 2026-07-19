@@ -1,10 +1,14 @@
-mod emails;
+pub(crate) mod emails;
 
 use crate::cloudflare_automation::{CloudflareAutomationManager, CloudflareAutomationRunPayload};
 use crate::config::AppConfig;
 use crate::db::DataLake;
 use crate::stream::StreamHub;
 use crate::{openai, stream, tunnel, workflow};
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+};
 use axum::extract::{Path, Query};
 use axum::{
     Json, Router,
@@ -15,10 +19,326 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path as FsPath};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tower_http::services::ServeDir;
 
+#[derive(Deserialize)]
+struct LoginPayload {
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct AdminCredentialUpdatePayload {
+    current_password: String,
+    username: Option<String>,
+    new_password: Option<String>,
+}
+
+struct LoginAttempts {
+    window_started: Instant,
+    failures: u32,
+}
+
+static LOGIN_ATTEMPTS: OnceLock<Mutex<HashMap<IpAddr, LoginAttempts>>> = OnceLock::new();
+static SESSION_SALT: OnceLock<[u8; 32]> = OnceLock::new();
+
+fn login_attempt_allowed(peer: IpAddr) -> bool {
+    let attempts = LOGIN_ATTEMPTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut attempts = attempts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    attempts.retain(|_, entry| entry.window_started.elapsed() < Duration::from_secs(60));
+    attempts
+        .get(&peer)
+        .map(|entry| entry.failures < 5)
+        .unwrap_or(true)
+}
+
+fn record_login_failure(peer: IpAddr) {
+    let attempts = LOGIN_ATTEMPTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut attempts = attempts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = attempts.entry(peer).or_insert(LoginAttempts {
+        window_started: Instant::now(),
+        failures: 0,
+    });
+    if entry.window_started.elapsed() >= Duration::from_secs(60) {
+        entry.window_started = Instant::now();
+        entry.failures = 0;
+    }
+    entry.failures += 1;
+}
+
+fn clear_login_failures(peer: IpAddr) {
+    if let Some(attempts) = LOGIN_ATTEMPTS.get() {
+        attempts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&peer);
+    }
+}
+
+fn validate_admin_username(username: &str) -> Result<(), &'static str> {
+    let length = username.chars().count();
+    if !(3..=64).contains(&length) {
+        return Err("用户名长度必须为 3 到 64 个字符");
+    }
+    if username.chars().any(char::is_control) {
+        return Err("用户名不能包含控制字符");
+    }
+    Ok(())
+}
+
+fn validate_admin_password(password: &str) -> Result<(), &'static str> {
+    if password.chars().count() < 12 {
+        return Err("密码长度至少为 12 个字符");
+    }
+    if password.chars().count() > 256 {
+        return Err("密码长度不能超过 256 个字符");
+    }
+    Ok(())
+}
+
+async fn hash_admin_password(password: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let salt = SaltString::generate(&mut rand::rngs::OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .map(|hash| hash.to_string())
+            .map_err(|error| format!("密码哈希失败: {error}"))
+    })
+    .await
+    .map_err(|error| format!("密码哈希任务失败: {error}"))?
+}
+
+async fn verify_admin_password(password_hash: String, password: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        let Ok(parsed_hash) = PasswordHash::new(&password_hash) else {
+            return false;
+        };
+        Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .is_ok()
+    })
+    .await
+    .unwrap_or(false)
+}
+
+fn validate_legacy_auth_migration(
+    legacy_auth_secret: Option<&str>,
+    configured_hub_secret: Option<&str>,
+) -> anyhow::Result<()> {
+    let Some(legacy_secret) = legacy_auth_secret
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(hub_secret) = configured_hub_secret
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        anyhow::bail!(
+            "检测到旧 auth_secret。升级前请将原机器通信密钥配置为 HUB_SECRET；旧值尚未删除"
+        );
+    };
+    if !constant_time_eq(legacy_secret.as_bytes(), hub_secret.as_bytes()) {
+        anyhow::bail!(
+            "HUB_SECRET 与旧 auth_secret 不一致。首次升级必须保持相同值，以免 Worker 中断"
+        );
+    }
+    Ok(())
+}
+
+pub async fn ensure_admin_credentials(data_lake: &DataLake) -> anyhow::Result<()> {
+    let legacy_auth_secret = data_lake
+        .get_setting("auth_secret")
+        .await?
+        .filter(|value| !value.trim().is_empty());
+    let configured_hub_secret = std::env::var("HUB_SECRET").ok();
+    validate_legacy_auth_migration(
+        legacy_auth_secret.as_deref(),
+        configured_hub_secret.as_deref(),
+    )?;
+
+    if data_lake.get_admin_credentials().await?.is_some() {
+        if legacy_auth_secret.is_some() {
+            data_lake.delete_setting("auth_secret").await?;
+        }
+        return Ok(());
+    }
+
+    let username = std::env::var("ADMIN_USERNAME")
+        .unwrap_or_else(|_| "admin".to_string())
+        .trim()
+        .to_string();
+    validate_admin_username(&username).map_err(anyhow::Error::msg)?;
+    let password = std::env::var("ADMIN_PASSWORD")
+        .map_err(|_| anyhow::anyhow!("首次启动必须设置 ADMIN_PASSWORD（至少 12 个字符）"))?;
+    validate_admin_password(&password).map_err(anyhow::Error::msg)?;
+    let password_hash = hash_admin_password(password)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    data_lake
+        .replace_admin_credentials(&username, &password_hash)
+        .await?;
+    if legacy_auth_secret.is_some() {
+        data_lake.delete_setting("auth_secret").await?;
+    }
+    println!("管理员账户已初始化: {username}");
+    Ok(())
+}
+
+async fn login_handler(
+    peer: SocketAddr,
+    data_lake: Arc<DataLake>,
+    Json(payload): Json<LoginPayload>,
+) -> axum::response::Response {
+    if !login_attempt_allowed(peer.ip()) {
+        return auth_error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "登录尝试过于频繁，请稍后重试",
+            false,
+        );
+    }
+    let Ok(Some(credentials)) = data_lake.get_admin_credentials().await else {
+        return auth_error_response(StatusCode::SERVICE_UNAVAILABLE, "管理员账户未初始化", false);
+    };
+    let username = payload.username.trim();
+    if username.chars().count() > 64 || payload.password.chars().count() > 256 {
+        record_login_failure(peer.ip());
+        return auth_error_response(StatusCode::UNAUTHORIZED, "用户名或密码错误", false);
+    }
+    let username_matches = constant_time_eq(username.as_bytes(), credentials.username.as_bytes());
+    let password_matches =
+        verify_admin_password(credentials.password_hash.clone(), payload.password).await;
+    if !username_matches || !password_matches {
+        record_login_failure(peer.ip());
+        return auth_error_response(StatusCode::UNAUTHORIZED, "用户名或密码错误", false);
+    }
+    clear_login_failures(peer.ip());
+    let secure = std::env::var("COOKIE_SECURE")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    let cookie = format!(
+        "phantom_auth_token={}; Path=/; Max-Age=28800; HttpOnly; SameSite=Strict{}",
+        auth_session_token(&credentials.username, &credentials.password_hash),
+        if secure { "; Secure" } else { "" }
+    );
+    axum::response::Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header("Set-Cookie", cookie)
+        .header("Cache-Control", "no-store")
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+async fn update_admin_credentials_handler(
+    data_lake: Arc<DataLake>,
+    Json(payload): Json<AdminCredentialUpdatePayload>,
+) -> axum::response::Response {
+    let Ok(Some(current)) = data_lake.get_admin_credentials().await else {
+        return auth_error_response(StatusCode::SERVICE_UNAVAILABLE, "管理员账户未初始化", false);
+    };
+    if payload.current_password.chars().count() > 256 {
+        return auth_error_response(StatusCode::UNAUTHORIZED, "当前密码错误", false);
+    }
+    if !verify_admin_password(current.password_hash.clone(), payload.current_password).await {
+        return auth_error_response(StatusCode::UNAUTHORIZED, "当前密码错误", false);
+    }
+
+    let username = payload
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&current.username)
+        .to_string();
+    if let Err(message) = validate_admin_username(&username) {
+        return auth_error_response(StatusCode::BAD_REQUEST, message, false);
+    }
+
+    let password_hash =
+        if let Some(new_password) = payload.new_password.filter(|value| !value.is_empty()) {
+            if let Err(message) = validate_admin_password(&new_password) {
+                return auth_error_response(StatusCode::BAD_REQUEST, message, false);
+            }
+            match hash_admin_password(new_password).await {
+                Ok(hash) => hash,
+                Err(error) => {
+                    return auth_error_response(StatusCode::INTERNAL_SERVER_ERROR, &error, false);
+                }
+            }
+        } else {
+            current.password_hash
+        };
+
+    match data_lake
+        .replace_admin_credentials(&username, &password_hash)
+        .await
+    {
+        Ok(()) => {
+            Json(serde_json::json!({"status": "success", "username": username})).into_response()
+        }
+        Err(error) => {
+            eprintln!("更新管理员凭据失败: {error:?}");
+            auth_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "更新管理员凭据失败",
+                false,
+            )
+        }
+    }
+}
+async fn logout_handler() -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(
+            "Set-Cookie",
+            "phantom_auth_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
+        )
+        .header("Cache-Control", "no-store")
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn auth_session_token(username: &str, password_hash: &str) -> String {
+    use base64::Engine;
+    use rand::RngCore;
+    let salt = SESSION_SALT.get_or_init(|| {
+        let mut value = [0_u8; 32];
+        rand::thread_rng().fill_bytes(&mut value);
+        value
+    });
+    let mut material = Vec::with_capacity(username.len() + password_hash.len() + salt.len() + 1);
+    material.extend_from_slice(username.as_bytes());
+    material.push(0);
+    material.extend_from_slice(password_hash.as_bytes());
+    material.extend_from_slice(salt);
+    let digest = crate::openai::oauth::simple_sha256_public(&material);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+fn constant_time_eq(expected: &[u8], provided: &[u8]) -> bool {
+    let mut difference = expected.len() ^ provided.len();
+    let length = expected.len().max(provided.len());
+    for index in 0..length {
+        difference |= usize::from(
+            expected.get(index).copied().unwrap_or_default()
+                ^ provided.get(index).copied().unwrap_or_default(),
+        );
+    }
+    difference == 0
+}
 #[derive(Deserialize)]
 struct WorkflowTrigger {
     workflow_id: String,
@@ -45,7 +365,7 @@ struct TunnelConfig {
 struct SettingsPayload {
     webhook_url: Option<String>,
     update_rate: Option<u64>,
-    auth_secret: Option<String>,
+    admin_username: Option<String>,
     decode_depth: Option<String>,
     public_hub_url: Option<String>,
     account_domain: Option<String>,
@@ -76,6 +396,48 @@ struct WorkflowRunQuery {
 struct UpdatePoolPayload {
     ids: Vec<String>,
     pool_tag: String,
+}
+#[derive(Serialize)]
+struct AccountSummary {
+    id: String,
+    run_id: String,
+    address: String,
+    status: String,
+    created_at: i64,
+    upload_status: Option<String>,
+    account_type: Option<String>,
+    pool_tag: Option<String>,
+    last_used_at: Option<i64>,
+    rate_limit_reset_at: Option<i64>,
+    consecutive_failures: Option<i64>,
+    request_count_24h: Option<i64>,
+    last_failure_reason: Option<String>,
+    proxy_rtt: Option<i64>,
+    proxy_ip_type: Option<String>,
+    proxy_status: Option<String>,
+    proxy_last_checked_at: Option<i64>,
+}
+
+fn account_summary(account: crate::db::GeneratedAccountRecord) -> AccountSummary {
+    AccountSummary {
+        id: account.id,
+        run_id: account.run_id,
+        address: account.address,
+        status: account.status,
+        created_at: account.created_at,
+        upload_status: account.upload_status,
+        account_type: account.account_type,
+        pool_tag: account.pool_tag,
+        last_used_at: account.last_used_at,
+        rate_limit_reset_at: account.rate_limit_reset_at,
+        consecutive_failures: account.consecutive_failures,
+        request_count_24h: account.request_count_24h,
+        last_failure_reason: account.last_failure_reason,
+        proxy_rtt: account.proxy_rtt,
+        proxy_ip_type: account.proxy_ip_type,
+        proxy_status: account.proxy_status,
+        proxy_last_checked_at: account.proxy_last_checked_at,
+    }
 }
 
 async fn console_index() -> Html<&'static str> {
@@ -128,75 +490,74 @@ async fn debug_asset(name: String, enabled: bool) -> axum::response::Response {
         })
 }
 
-pub fn validate_ssrf_url(url_str: &str) -> Result<url::Url, String> {
-    let parsed = url::Url::parse(url_str).map_err(|e| format!("无效的 URL 格式: {}", e))?;
-
-    let scheme = parsed.scheme().to_lowercase();
-    if scheme != "https" {
-        if scheme == "http" {
-            if let Some(host) = parsed.host_str() {
-                if host != "localhost" && host != "127.0.0.1" && host != "::1" {
-                    return Err(
-                        "非 HTTPS 协议仅允许在 localhost/127.0.0.1 环回地址下使用".to_string()
-                    );
-                }
-            } else {
-                return Err("仅支持 HTTPS 协议".to_string());
-            }
-        } else {
-            return Err("仅支持 HTTPS 或本地 HTTP 协议".to_string());
-        }
-    }
-
-    if let Some(host) = parsed.host_str() {
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            if is_intranet_ip(ip) {
-                return Err("禁止使用内网 IP 地址进行外联".to_string());
-            }
-        } else {
-            use std::net::ToSocketAddrs;
-            let host_str = host.to_string();
-            let is_intranet = std::thread::spawn(move || {
-                if let Ok(addrs) = (host_str.as_str(), 80).to_socket_addrs() {
-                    for addr in addrs {
-                        if is_intranet_ip(addr.ip()) {
-                            if addr.ip().is_loopback() {
-                                continue;
-                            }
-                            return true;
-                        }
-                    }
-                }
-                false
-            })
-            .join()
-            .unwrap_or(false);
-
-            if is_intranet {
-                return Err("DNS 解析结果包含内网 IP 地址，禁止外联".to_string());
-            }
-        }
-    } else {
-        return Err("无效的主机名".to_string());
-    }
-
-    Ok(parsed)
+pub async fn validate_ssrf_url(url_str: &str) -> Result<url::Url, String> {
+    build_ssrf_safe_client(url_str).await.map(|(url, _)| url)
 }
 
+pub async fn build_ssrf_safe_client(url_str: &str) -> Result<(url::Url, reqwest::Client), String> {
+    let parsed = url::Url::parse(url_str).map_err(|error| format!("URL 格式无效: {error}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL 缺少主机名".to_string())?
+        .to_string();
+    let is_local_http = matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1");
+    match parsed.scheme() {
+        "https" => {}
+        "http" if is_local_http => {}
+        _ => return Err("仅支持 HTTPS 或本机 HTTP 地址".to_string()),
+    }
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15));
+    if !is_local_http {
+        let port = parsed.port_or_known_default().unwrap_or(443);
+        let addresses: Vec<SocketAddr> = tokio::time::timeout(
+            Duration::from_secs(3),
+            tokio::net::lookup_host((host.as_str(), port)),
+        )
+        .await
+        .map_err(|_| "DNS 解析超时".to_string())?
+        .map_err(|error| format!("DNS 解析失败: {error}"))?
+        .collect();
+        if addresses.is_empty() {
+            return Err("DNS 未返回可用地址".to_string());
+        }
+        if addresses.iter().any(|address| is_intranet_ip(address.ip())) {
+            return Err("目标地址解析到了内网或保留 IP".to_string());
+        }
+        builder = builder.resolve_to_addrs(&host, &addresses);
+    }
+    let client = builder
+        .build()
+        .map_err(|error| format!("HTTP 客户端初始化失败: {error}"))?;
+    Ok((parsed, client))
+}
 fn is_intranet_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(ipv4) => {
-            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local() || ipv4.is_unspecified()
+            let [first, second, ..] = ipv4.octets();
+            ipv4.is_loopback()
+                || ipv4.is_private()
+                || ipv4.is_link_local()
+                || ipv4.is_unspecified()
+                || ipv4.is_broadcast()
+                || ipv4.is_documentation()
+                || ipv4.is_multicast()
+                || first == 0
+                || (first == 100 && (64..=127).contains(&second))
+                || (first == 198 && (18..=19).contains(&second))
+                || first >= 240
         }
         std::net::IpAddr::V6(ipv6) => {
             ipv6.is_loopback()
                 || ipv6.is_unspecified()
+                || ipv6.is_multicast()
                 || (ipv6.segments()[0] & 0xfe00) == 0xfc00
                 || (ipv6.segments()[0] & 0xffc0) == 0xfe80
+                || ipv6.segments()[0] == 0x2001 && ipv6.segments()[1] == 0x0db8
         }
     }
 }
-
 fn extract_cookie_token(cookie_header: &str) -> Option<String> {
     for cookie in cookie_header.split(';') {
         let mut parts = cookie.trim().splitn(2, '=');
@@ -214,50 +575,15 @@ fn auth_error_response(status: StatusCode, message: &str, html: bool) -> axum::r
         return axum::response::Response::builder()
             .status(status)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(format!(
-                r#"{{"status":"error","message":"{}"}}"#,
-                message
-            )))
+            .body(axum::body::Body::from(
+                serde_json::json!({"status": "error", "message": message}).to_string(),
+            ))
             .unwrap_or_else(|_| {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Response build error").into_response()
             });
     }
 
-    let login_html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>PhantomDrop - Auth</title>
-    <style>
-        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-        .card{background:#fff;padding:30px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.05);width:320px;text-align:center;border:1px solid #e2e8f0}
-        h2{margin-top:0;color:#0f172a;font-size:1.5rem}p{color:#64748b;font-size:.875rem;margin-bottom:24px}
-        input{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;box-sizing:border-box;margin-bottom:16px;font-size:14px;outline:none}
-        input:focus{border-color:#2563eb}button{width:100%;padding:10px;background:#2563eb;color:white;border:0;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer}
-        button:hover{background:#1d4ed8}.error{color:#ef4444;font-size:12px;margin-top:10px;display:none}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h2>System Auth</h2>
-        <p>Enter auth_secret to continue.</p>
-        <input type="password" id="secret" placeholder="auth_secret" onkeydown="if(event.key==='Enter')login()">
-        <button onclick="login()">Login</button>
-        <div id="error" class="error">Invalid secret or auth is not configured.</div>
-    </div>
-    <script>
-        function login(){
-            var val=document.getElementById('secret').value;
-            if(!val)return;
-            var secure=location.protocol==='https:'?'; Secure':'';
-            document.cookie='phantom_auth_token='+encodeURIComponent(val)+'; path=/; max-age=31536000; SameSite=Lax'+secure;
-            window.location.reload();
-        }
-        if(document.cookie.indexOf('phantom_auth_token')>-1){document.getElementById('error').style.display='block';}
-    </script>
-</body>
-</html>"#;
-
+    let login_html = r#"<!DOCTYPE html><html><body><p>Authentication required.</p></body></html>"#;
     axum::response::Response::builder()
         .status(status)
         .header("Content-Type", "text/html; charset=utf-8")
@@ -267,22 +593,6 @@ fn auth_error_response(status: StatusCode, message: &str, html: bool) -> axum::r
         })
 }
 
-async fn get_auth_secret(dl: &DataLake) -> Option<String> {
-    if let Ok(Some(secret)) = dl.get_setting("auth_secret").await {
-        let trimmed = secret.trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(trimmed);
-        }
-    }
-    if let Ok(secret) = std::env::var("HUB_SECRET") {
-        let trimmed = secret.trim().to_string();
-        if !trimmed.is_empty() {
-            return Some(trimmed);
-        }
-    }
-    None
-}
-
 async fn auth_middleware(
     axum::extract::State(data_lake): axum::extract::State<Arc<DataLake>>,
     req: axum::http::Request<axum::body::Body>,
@@ -290,66 +600,44 @@ async fn auth_middleware(
 ) -> Result<axum::response::Response, StatusCode> {
     let path = req.uri().path();
 
-    if path == "/health" || path == "/ingest" || path == "/v1/chat/completions" {
+    if path == "/health"
+        || path == "/ingest"
+        || path == "/v1/chat/completions"
+        || path == "/auth/login"
+    {
         return Ok(next.run(req).await);
     }
 
     let is_protected = path.starts_with("/api/")
         || path == "/stream"
         || path == "/stream/"
-        || path.starts_with("/console");
+        || path.starts_with("/console")
+        || path.starts_with("/debug/");
 
     if is_protected {
         let wants_html = !(path.starts_with("/api/") || path.starts_with("/stream"));
-        let Some(expected_secret) = get_auth_secret(&data_lake).await else {
+        let Ok(Some(credentials)) = data_lake.get_admin_credentials().await else {
             return Ok(auth_error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "认证密钥未配置，管理接口已锁定",
+                "管理员账户未初始化，管理接口已锁定",
                 wants_html,
             ));
         };
-
-        let mut provided_secret = None;
-
-        if let Some(auth_val) = req
+        let provided_token = req
             .headers()
-            .get("authorization")
-            .and_then(|h| h.to_str().ok())
-        {
-            if auth_val.to_lowercase().starts_with("bearer ") {
-                provided_secret = Some(auth_val[7..].trim().to_string());
-            }
-        }
-
-        if provided_secret.is_none() {
-            if let Some(token_val) = req
-                .headers()
-                .get("x-auth-token")
-                .and_then(|h| h.to_str().ok())
-            {
-                provided_secret = Some(token_val.trim().to_string());
-            }
-        }
-
-        if provided_secret.is_none() {
-            if let Some(cookie_val) = req.headers().get("cookie").and_then(|h| h.to_str().ok()) {
-                provided_secret = extract_cookie_token(cookie_val);
-            }
-        }
-
-        let authenticated = match provided_secret {
-            Some(ref secret) => secret == &expected_secret,
-            None => false,
-        };
+            .get("cookie")
+            .and_then(|header| header.to_str().ok())
+            .and_then(extract_cookie_token);
+        let expected_token = auth_session_token(&credentials.username, &credentials.password_hash);
+        let authenticated = provided_token
+            .as_deref()
+            .map(|token| constant_time_eq(token.as_bytes(), expected_token.as_bytes()))
+            .unwrap_or(false);
 
         if !authenticated {
-            println!(
-                "AUTH FAILED: provided={}, expected=[已隐藏]",
-                if provided_secret.is_some() { "[已提供]" } else { "[未提供]" }
-            );
             return Ok(auth_error_response(
                 StatusCode::UNAUTHORIZED,
-                "未授权，请输入正确的接口密钥",
+                "登录已失效，请使用管理员用户名和密码重新登录",
                 wants_html,
             ));
         }
@@ -357,7 +645,6 @@ async fn auth_middleware(
 
     Ok(next.run(req).await)
 }
-
 #[allow(dead_code)]
 fn mask_credential(val: Option<String>) -> Option<String> {
     val.map(|s| {
@@ -373,7 +660,7 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
     SettingsPayload {
         webhook_url: map.get("webhook_url").cloned().filter(|v| !v.is_empty()),
         update_rate: map.get("update_rate").and_then(|v| v.parse::<u64>().ok()),
-        auth_secret: map.get("auth_secret").cloned().filter(|v| !v.is_empty()),
+        admin_username: map.get("admin_username").cloned().filter(|v| !v.is_empty()),
         decode_depth: map.get("decode_depth").cloned().filter(|v| !v.is_empty()),
         public_hub_url: map.get("public_hub_url").cloned().filter(|v| !v.is_empty()),
         account_domain: map.get("account_domain").cloned().filter(|v| !v.is_empty()),
@@ -393,9 +680,11 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
             .get("cloudflare_zone_domain")
             .cloned()
             .filter(|v| !v.is_empty()),
-        cloudflare_api_token: map.get("cloudflare_api_token")
+        cloudflare_api_token: mask_credential(
+            map.get("cloudflare_api_token")
                 .cloned()
                 .filter(|v| !v.is_empty()),
+        ),
         cloudflare_zone_id: map
             .get("cloudflare_zone_id")
             .cloned()
@@ -405,10 +694,10 @@ fn settings_from_map(map: HashMap<String, String>) -> SettingsPayload {
             .cloned()
             .filter(|v| !v.is_empty()),
         cpa_url: map.get("cpa_url").cloned().filter(|v| !v.is_empty()),
-        cpa_key: map.get("cpa_key").cloned().filter(|v| !v.is_empty()),
+        cpa_key: mask_credential(map.get("cpa_key").cloned().filter(|v| !v.is_empty())),
         sub2api_url: map.get("sub2api_url").cloned().filter(|v| !v.is_empty()),
-        sub2api_key: map.get("sub2api_key").cloned().filter(|v| !v.is_empty()),
-        cpa_auth_json: map.get("cpa_auth_json").cloned().filter(|v| !v.is_empty()),
+        sub2api_key: mask_credential(map.get("sub2api_key").cloned().filter(|v| !v.is_empty())),
+        cpa_auth_json: mask_credential(map.get("cpa_auth_json").cloned().filter(|v| !v.is_empty())),
     }
 }
 
@@ -432,12 +721,28 @@ pub fn build_router(ctx: RouterContext) -> Router {
     let web_dist = ctx.web_dist;
 
     Router::new()
+        .route("/auth/login", post({
+            let dl = Arc::clone(&data_lake);
+            move |axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<SocketAddr>,
+                  Json(payload): Json<LoginPayload>| {
+                let dl = dl.clone();
+                async move { login_handler(peer, dl, Json(payload)).await }
+            }
+        }))
+        .route("/auth/logout", post(logout_handler))
+        .route("/api/admin/credentials", post({
+            let dl = Arc::clone(&data_lake);
+            move |Json(payload): Json<AdminCredentialUpdatePayload>| {
+                let dl = dl.clone();
+                async move { update_admin_credentials_handler(dl, Json(payload)).await }
+            }
+        }))
         .route("/v1/chat/completions", post({
             let dl = Arc::clone(&data_lake);
-            move |Query(params): Query<HashMap<String, String>>, req: axum::extract::Request| {
+            move |req: axum::extract::Request| {
                 let dl = dl.clone();
                 async move {
-                    crate::openai::gateway::chat_completions_gateway(dl, params, req).await
+                    crate::openai::gateway::chat_completions_gateway(dl, req).await
                 }
             }
         }))
@@ -455,7 +760,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match dl.list_settings().await {
                         Ok(settings) => Json(settings_from_map(settings)).into_response(),
                         Err(e) => {
-                            eprintln!("读取配置失败: {:?}", e);
+                            eprintln!("读取配置失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取配置失败"}))
@@ -473,7 +778,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match dl.get_dashboard_stats().await {
                         Ok(stats) => Json(stats).into_response(),
                         Err(e) => {
-                            eprintln!("读取统计失败: {:?}", e);
+                            eprintln!("读取统计失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取统计失败"}))
@@ -522,7 +827,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                         eprintln!("❌ 工作流保存预校验失败:");
                         eprintln!(" - ID: {}", payload.id);
                         eprintln!(" - Kind: {}", payload.kind);
-                        eprintln!(" - 原因: {}", message);
+                        eprintln!(" - 原因: {message}");
                         return (
                             StatusCode::BAD_REQUEST,
                             Json(serde_json::json!({"status": "error", "message": message}))
@@ -539,7 +844,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     ).await {
                         Ok(_) => Json(serde_json::json!({"status": "success"})).into_response(),
                         Err(e) => {
-                            eprintln!("保存工作流定义失败: {:?}", e);
+                            eprintln!("保存工作流定义失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "保存工作流定义失败"}))
@@ -568,7 +873,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             Json(serde_json::json!({"status": "error", "message": "工作流不存在"}))
                         ).into_response(),
                         Err(e) => {
-                            eprintln!("删除工作流定义失败: {:?}", e);
+                            eprintln!("删除工作流定义失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "删除工作流定义失败"}))
@@ -594,7 +899,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     ).await {
                         Ok(result) => Json(result).into_response(),
                         Err(e) => {
-                            eprintln!("读取工作流执行记录失败: {:?}", e);
+                            eprintln!("读取工作流执行记录失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取工作流执行记录失败"}))
@@ -612,7 +917,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match dl.list_workflow_steps(&run_id, 100).await {
                         Ok(steps) => Json(steps).into_response(),
                         Err(e) => {
-                            eprintln!("读取工作流步骤失败: {:?}", e);
+                            eprintln!("读取工作流步骤失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取工作流步骤失败"}))
@@ -634,7 +939,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             Json(serde_json::json!({"status": "error", "message": "工作流未运行或未找到"}))
                         ).into_response(),
                         Err(e) => {
-                            eprintln!("停止工作流失败: {:?}", e);
+                            eprintln!("停止工作流失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "停止工作流失败"}))
@@ -650,9 +955,9 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 let dl = dl.clone();
                 async move {
                     match dl.list_generated_accounts(&run_id, 200).await {
-                        Ok(accounts) => Json(accounts).into_response(),
+                        Ok(accounts) => Json(accounts.into_iter().map(account_summary).collect::<Vec<_>>()).into_response(),
                         Err(e) => {
-                            eprintln!("读取生成账号失败: {:?}", e);
+                            eprintln!("读取生成账号失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取生成账号失败"}))
@@ -691,7 +996,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             ).into_response()
                         }
                         Err(e) => {
-                            eprintln!("导出生成账号失败: {:?}", e);
+                            eprintln!("导出生成账号失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "导出生成账号失败"}))
@@ -730,7 +1035,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             "email": email,
                         })).into_response(),
                         Err(e) => {
-                            eprintln!("OTP 轮询失败: {:?}", e);
+                            eprintln!("OTP 轮询失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "OTP 轮询失败"}))
@@ -758,13 +1063,13 @@ pub fn build_router(ctx: RouterContext) -> Router {
 
                     match (items, total) {
                         (Ok(items), Ok(total)) => Json(serde_json::json!({
-                            "items": items,
+                            "items": items.into_iter().map(account_summary).collect::<Vec<_>>(),
                             "limit": limit,
                             "offset": offset,
                             "total": total,
                         })).into_response(),
                         (Err(e), _) | (_, Err(e)) => {
-                            eprintln!("读取全局账号列表失败: {:?}", e);
+                            eprintln!("读取全局账号列表失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取全局账号列表失败"}))
@@ -786,7 +1091,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             "ids": ids
                         })).into_response(),
                         Err(e) => {
-                            eprintln!("读取全部账号 ID 失败: {:?}", e);
+                            eprintln!("读取全部账号 ID 失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取全部账号 ID 失败"}))
@@ -810,7 +1115,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             ).into_response();
                         }
                         Err(e) => {
-                            eprintln!("读取账号 Token 失败: {:?}", e);
+                            eprintln!("读取账号 Token 失败: {e:?}");
                             return (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "读取账号 Token 失败"}))
@@ -939,7 +1244,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     ).await {
                         Ok(_) => Json(serde_json::json!({"status": "success"})).into_response(),
                         Err(e) => {
-                            eprintln!("更新账号 Token 失败: {:?}", e);
+                            eprintln!("更新账号 Token 失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "更新账号 Token 失败"}))
@@ -961,7 +1266,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             Json(serde_json::json!({"status": "error", "message": "账号不存在"}))
                         ).into_response(),
                         Err(e) => {
-                            eprintln!("删除账号失败: {:?}", e);
+                            eprintln!("删除账号失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "删除账号失败"}))
@@ -979,7 +1284,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match openai::checker::check_account_status(dl, &id).await {
                         Ok(status) => Json(serde_json::json!({"status": "success", "account_status": status})).into_response(),
                         Err(e) => {
-                            eprintln!("检查账号状态失败: {:?}", e);
+                            eprintln!("检查账号状态失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": e}))
@@ -1003,7 +1308,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                             "id": id,
                             "status": match res {
                                 Ok(s) => s,
-                                Err(e) => format!("Error: {}", e),
+                                Err(e) => format!("Error: {e}"),
                             }
                         }));
                     }
@@ -1020,7 +1325,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match dl.delete_generated_accounts(&ids).await {
                         Ok(count) => Json(serde_json::json!({"status": "success", "deleted": count})).into_response(),
                         Err(e) => {
-                            eprintln!("批量删除账号失败: {:?}", e);
+                            eprintln!("批量删除账号失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "批量删除账号失败"}))
@@ -1039,7 +1344,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     let pool_tag = payload.pool_tag.trim().to_string();
                     let mut success_count = 0;
                     for id in ids {
-                        if let Ok(_) = dl.update_account_pool_tag(&id, &pool_tag).await {
+                        if dl.update_account_pool_tag(&id, &pool_tag).await.is_ok() {
                             success_count += 1;
                         }
                     }
@@ -1058,7 +1363,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match dl.delete_failed_accounts().await {
                         Ok(count) => Json(serde_json::json!({"status": "success", "deleted": count})).into_response(),
                         Err(e) => {
-                            eprintln!("清理失败账号失败: {:?}", e);
+                            eprintln!("清理失败账号失败: {e:?}");
                             (
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 Json(serde_json::json!({"status": "error", "message": "清理失败账号失败"}))
@@ -1086,10 +1391,6 @@ pub fn build_router(ctx: RouterContext) -> Router {
                          _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 CPA 接口地址").into_response(),
                     };
 
-                    if let Err(e) = validate_ssrf_url(&cpa_url) {
-                        return (StatusCode::BAD_REQUEST, format!("CPA 接口地址安全校验失败: {}", e)).into_response();
-                    }
-
                     // 自动补全路径 (针对 CLIProxyAPI)
                     if !cpa_url.contains("/v0/") && !cpa_url.contains("/api/") {
                         cpa_url = format!("{}/v0/management/auth-files", cpa_url.trim_end_matches('/'));
@@ -1110,7 +1411,16 @@ pub fn build_router(ctx: RouterContext) -> Router {
                          return (StatusCode::BAD_REQUEST, "请求失败：未配置 CPA 密钥且未进行 Codex 授权").into_response();
                     }
 
-                    let client = reqwest::Client::new();
+                    let client = match build_ssrf_safe_client(&cpa_url).await {
+                        Ok((_, client)) => client,
+                        Err(error) => {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                format!("CPA 接口地址安全校验失败: {error}"),
+                            )
+                                .into_response();
+                        }
+                    };
                     let mut success_count = 0;
                     let mut fail_count = 0;
 
@@ -1128,7 +1438,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                                      success_count += 1;
                                  },
                                  Err(e) => {
-                                     eprintln!("CPA 上传失败 ({}): {}", id, e);
+                                     eprintln!("CPA 上传失败 ({id}): {e}");
                                      fail_count += 1;
                                  }
                              }
@@ -1157,12 +1467,18 @@ pub fn build_router(ctx: RouterContext) -> Router {
                          _ => return (StatusCode::BAD_REQUEST, "请先在设置中配置 Sub2API 接口地址").into_response(),
                     };
 
-                    if let Err(e) = validate_ssrf_url(&sub2api_url) {
-                        return (StatusCode::BAD_REQUEST, format!("Sub2API 接口地址安全校验失败: {}", e)).into_response();
-                    }
                     let sub2api_key = settings.get("sub2api_key").cloned().unwrap_or_default();
 
-                    let client = reqwest::Client::new();
+                    let client = match build_ssrf_safe_client(&sub2api_url).await {
+                        Ok((_, client)) => client,
+                        Err(error) => {
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                format!("Sub2API 地址安全校验失败: {error}"),
+                            )
+                                .into_response();
+                        }
+                    };
                     let mut success_count = 0;
                     let mut fail_count = 0;
 
@@ -1180,7 +1496,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                                      success_count += 1;
                                  },
                                  Err(e) => {
-                                     eprintln!("Sub2API 上传失败 ({}): {}", id, e);
+                                     eprintln!("Sub2API 上传失败 ({id}): {e}");
                                      fail_count += 1;
                                  }
                              }
@@ -1284,10 +1600,10 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     match tm.start(payload.port, payload.subdomain, payload.public_url).await {
                         Ok(url) => {
                             if let Err(e) = dl.upsert_setting("public_hub_url", &url).await {
-                                eprintln!("保存公网地址失败: {:?}", e);
+                                eprintln!("保存公网地址失败: {e:?}");
                             }
                             if let Err(e) = dl.upsert_setting("public_hub_port", &payload.port.to_string()).await {
-                                eprintln!("保存公网端口失败: {:?}", e);
+                                eprintln!("保存公网端口失败: {e:?}");
                             }
                             Json(serde_json::json!({"status": "success", "url": url})).into_response()
                         }
@@ -1305,7 +1621,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 async move {
                     tm.stop().await;
                     if let Err(e) = dl.upsert_setting("public_hub_url", "").await {
-                        eprintln!("清理公网地址失败: {:?}", e);
+                        eprintln!("清理公网地址失败: {e:?}");
                     }
                     Json(serde_json::json!({"status": "success"}))
                 }
@@ -1321,7 +1637,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     if let Some(webhook_url) = payload.webhook_url.as_deref() {
                         let trimmed = webhook_url.trim();
                         if !trimmed.is_empty() {
-                            if let Err(e) = validate_ssrf_url(trimmed) {
+                            if let Err(e) = validate_ssrf_url(trimmed).await {
                                 return (
                                     StatusCode::BAD_REQUEST,
                                     Json(serde_json::json!({"status": "error", "message": format!("推送地址不合法: {}", e)}))
@@ -1338,12 +1654,6 @@ pub fn build_router(ctx: RouterContext) -> Router {
                         let _ = dl.upsert_setting("update_rate", &update_rate.to_string()).await;
                     }
 
-                    if let Some(auth_secret) = payload.auth_secret.as_deref() {
-                        let trimmed = auth_secret.trim();
-                        if trimmed != "******" {
-                            let _ = dl.upsert_setting("auth_secret", trimmed).await;
-                        }
-                    }
 
                     if let Some(decode_depth) = payload.decode_depth.as_deref() {
                         let _ = dl.upsert_setting("decode_depth", decode_depth).await;
@@ -1417,7 +1727,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     if let Some(cpa_url) = payload.cpa_url.as_deref() {
                         let trimmed = cpa_url.trim();
                         if !trimmed.is_empty() {
-                            if let Err(e) = validate_ssrf_url(trimmed) {
+                            if let Err(e) = validate_ssrf_url(trimmed).await {
                                 return (
                                     StatusCode::BAD_REQUEST,
                                     Json(serde_json::json!({"status": "error", "message": format!("CPA 接口地址不合法: {}", e)}))
@@ -1439,7 +1749,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                     if let Some(sub2api_url) = payload.sub2api_url.as_deref() {
                         let trimmed = sub2api_url.trim();
                         if !trimmed.is_empty() {
-                            if let Err(e) = validate_ssrf_url(trimmed) {
+                            if let Err(e) = validate_ssrf_url(trimmed).await {
                                 return (
                                     StatusCode::BAD_REQUEST,
                                     Json(serde_json::json!({"status": "error", "message": format!("Sub2API 接口地址不合法: {}", e)}))
@@ -1507,7 +1817,7 @@ pub fn build_router(ctx: RouterContext) -> Router {
                                 .unwrap_or(false)
                             {
                                 if let Err(e) = std::fs::write("codex_auth.json", &json_str) {
-                                    eprintln!("写入 codex_auth.json 失败: {:?}", e);
+                                    eprintln!("写入 codex_auth.json 失败: {e:?}");
                                 }
                             }
 
@@ -1750,5 +2060,66 @@ async fn test_proxy_route(Json(payload): Json<ProxyTestPayload>) -> impl IntoRes
             "message": format!("联通测试失败: {}", e)
         }))
         .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        auth_session_token, constant_time_eq, hash_admin_password, is_intranet_ip,
+        validate_admin_password, validate_admin_username, validate_legacy_auth_migration,
+        verify_admin_password,
+    };
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn session_token_is_derived_and_stable() {
+        let token = auth_session_token("admin", "password-hash");
+        assert_ne!(token, "password-hash");
+        assert_eq!(token, auth_session_token("admin", "password-hash"));
+    }
+
+    #[test]
+    fn secret_comparison_checks_content_and_length() {
+        assert!(constant_time_eq(b"secret", b"secret"));
+        assert!(!constant_time_eq(b"secret", b"different"));
+    }
+
+    #[test]
+    fn admin_credential_rules_enforce_safe_bounds() {
+        assert!(validate_admin_username("admin").is_ok());
+        assert!(validate_admin_username("ab").is_err());
+        assert!(validate_admin_password("twelve-chars!").is_ok());
+        assert!(validate_admin_password("too-short").is_err());
+    }
+
+    #[tokio::test]
+    async fn admin_password_is_hashed_and_verified() {
+        let password = "correct-horse-battery-staple";
+        let hash = hash_admin_password(password.to_string())
+            .await
+            .expect("password should hash");
+        assert!(hash.starts_with("$argon2"));
+        assert!(!hash.contains(password));
+        assert!(verify_admin_password(hash.clone(), password.to_string()).await);
+        assert!(!verify_admin_password(hash, "wrong-password-value".to_string()).await);
+    }
+
+    #[test]
+    fn legacy_machine_secret_migration_is_fail_closed() {
+        assert!(validate_legacy_auth_migration(None, None).is_ok());
+        assert!(validate_legacy_auth_migration(Some("old-secret"), None).is_err());
+        assert!(validate_legacy_auth_migration(Some("old-secret"), Some("wrong-secret")).is_err());
+        assert!(validate_legacy_auth_migration(Some(" old-secret "), Some("old-secret")).is_ok());
+    }
+
+    #[test]
+    fn blocks_private_and_loopback_addresses() {
+        assert!(is_intranet_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+        assert!(is_intranet_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(is_intranet_ip(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(is_intranet_ip(IpAddr::V4(Ipv4Addr::new(198, 18, 0, 1))));
+        assert!(is_intranet_ip(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))));
+        assert!(!is_intranet_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
     }
 }

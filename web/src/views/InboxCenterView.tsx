@@ -10,7 +10,6 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   ArchiveRestore,
   Archive,
   Trash2,
@@ -18,9 +17,6 @@ import {
   Database,
   RefreshCw,
   Trash,
-  Key,
-  ShieldCheck,
-  Lock,
 } from 'lucide-react'
 import { deleteJson, fetchJson, postJson } from '../lib/api'
 import { useClipboard } from '../ui/useClipboard'
@@ -180,7 +176,7 @@ function EmailListTab({ defaultSearchQuery }: { defaultSearchQuery?: string }) {
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
   // 初始加载历史邮件
-  const loadInitialEmails = async () => {
+  const loadInitialEmails = useCallback(async () => {
     try {
       const data = await fetchJson<EmailRecordApi[]>('/api/emails')
       setEmails(data.map(formatEmail))
@@ -190,11 +186,11 @@ function EmailListTab({ defaultSearchQuery }: { defaultSearchQuery?: string }) {
     } catch (error) {
       console.error('Failed to load initial emails:', error)
     }
-  }
+  }, [query])
 
   useEffect(() => {
     void loadInitialEmails()
-  }, [])
+  }, [loadInitialEmails])
 
   // 查询与检索过滤
   useEffect(() => {
@@ -1458,8 +1454,8 @@ function AccountListTab() {
                       <td className="font-mono text-[11px] font-bold text-slate-800 break-all select-all">
                         {account.address}
                       </td>
-                      <td className="font-mono text-[11px] text-slate-500 font-bold select-all truncate max-w-[120px]" title={account.password}>
-                        {account.password || '---'}
+                      <td className="font-mono text-[11px] text-slate-500 font-bold truncate max-w-[120px]">
+                        {account.account_type || 'standard'}
                       </td>
                       <td>
                         <span className="px-2 py-0.5 rounded-lg border border-indigo-50 bg-indigo-50/40 text-indigo-600 text-[10px] font-black tracking-wide font-mono">
@@ -1608,209 +1604,35 @@ export interface AccountDetailModalProps {
 
 export function AccountDetailModal({
   account,
-  oauthFolded,
-  setOauthFolded,
   onClose,
-  copyToClipboard,
 }: AccountDetailModalProps) {
-  const credentials = useMemo(() => {
-    try {
-      if (account.oauth_credentials_json) {
-        return typeof account.oauth_credentials_json === 'string'
-          ? (JSON.parse(account.oauth_credentials_json) as Record<string, unknown>)
-          : (account.oauth_credentials_json as unknown as Record<string, unknown>)
-      }
-      return {}
-    } catch {
-      return {}
-    }
-  }, [account.oauth_credentials_json])
-
-  const sessionKey = account.session_token || (credentials.session_key as string) || ''
-  const accessToken = account.access_token || (credentials.access_token as string) || ''
-  const refreshToken = account.refresh_token || (credentials.refresh_token as string) || ''
-  const apiSecret = account.password || ''
-
-  // 拼接 Session 完整串
-  const formattedSession = `session_key=${sessionKey}; access_token=${accessToken}`
-
   return createPortal(
     <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-900/60 backdrop-blur-md"
       onClick={onClose}
     >
       <div
-        className="w-[680px] max-w-[95vw] bg-white rounded-3xl border border-slate-200 shadow-2xl flex flex-col max-h-[85vh] overflow-hidden relative animate-in fade-in zoom-in-95 duration-200"
-        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+        className="w-[520px] max-w-[95vw] rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+        onClick={(event: React.MouseEvent) => event.stopPropagation()}
       >
-        {/* 顶部标题区 */}
-        <div className="p-5 border-b border-slate-100 bg-gradient-to-br from-indigo-50/50 via-purple-50/20 to-blue-50/30 shrink-0 relative overflow-hidden">
-          <div className="absolute inset-0 bg-white/20 backdrop-blur-[1px]" />
-          <div className="relative z-10 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-inner border border-indigo-150/40">
-                <Key size={16} />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-800 leading-none mb-1">
-                  凭证与提取参数详情 (CREDENTIALS)
-                </h3>
-                <span className="font-mono text-[9px] text-slate-450 leading-none uppercase tracking-widest">
-                  Secure Credentials Vault
-                </span>
-              </div>
-            </div>
-
-            <button
-              onClick={onClose}
-              className="h-8 w-8 flex items-center justify-center rounded-xl bg-white text-slate-400 hover:text-slate-800 transition-colors shadow-sm border border-slate-150/50 hover:bg-slate-50"
-              title="关闭凭证库"
-              aria-label="关闭凭证库"
-            >
-              <X size={14} />
-            </button>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-black text-slate-800">账号详情</h3>
+            <p className="mt-1 font-mono text-[10px] text-slate-500">{account.address}</p>
           </div>
+          <button type="button" onClick={onClose} className="phantom-btn phantom-btn--secondary" title="关闭">
+            <X size={14} />
+          </button>
         </div>
-
-        {/* 滚动内容区域 */}
-        <div className="flex-grow overflow-y-auto p-6 custom-scrollbar bg-slate-50/40 space-y-5">
-          {/* 一键复制三件套聚合面板 */}
-          <div className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-2 mb-1">
-              <ShieldCheck className="text-emerald-500" size={14} />
-              <span className="text-[10px] font-black uppercase text-indigo-600 tracking-wider">
-                聚合提取四件套 (QUICK COPY PANEL)
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {/* API 密匙 / Session_key */}
-              <div className="group relative rounded-xl border border-slate-150 bg-slate-50/30 p-3 hover:bg-slate-50 transition-colors">
-                <div className="text-[8px] font-bold text-slate-400 uppercase mb-1 flex items-center justify-between">
-                  <span>Session Key (API 登录密钥)</span>
-                  <button
-                    onClick={() => copyToClipboard(sessionKey)}
-                    disabled={!sessionKey}
-                    className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-bold h-4"
-                    title="复制 API 登录密钥"
-                  >
-                    <Copy size={11} /> 复制
-                  </button>
-                </div>
-                <div className="font-mono text-[10px] text-slate-850 break-all pr-8 select-all font-bold">
-                  {sessionKey || '--- 未生成 ---'}
-                </div>
-              </div>
-
-              {/* JWT 权限 Token */}
-              <div className="group relative rounded-xl border border-slate-150 bg-slate-50/30 p-3 hover:bg-slate-50 transition-colors">
-                <div className="text-[8px] font-bold text-slate-400 uppercase mb-1 flex items-center justify-between">
-                  <span>Access Token (JWT 访问签名)</span>
-                  <button
-                    onClick={() => copyToClipboard(accessToken)}
-                    disabled={!accessToken}
-                    className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-bold h-4"
-                    title="复制 JWT 访问签名"
-                  >
-                    <Copy size={11} /> 复制
-                  </button>
-                </div>
-                <div className="font-mono text-[10px] text-slate-500 break-all pr-8 select-all truncate">
-                  {accessToken || '--- 未生成 ---'}
-                </div>
-              </div>
-
-              {/* Refresh Token */}
-              <div className="group relative rounded-xl border border-slate-150 bg-slate-50/30 p-3 hover:bg-slate-50 transition-colors">
-                <div className="text-[8px] font-bold text-slate-400 uppercase mb-1 flex items-center justify-between">
-                  <span>Refresh Token (账号刷新令牌)</span>
-                  <button
-                    onClick={() => copyToClipboard(refreshToken)}
-                    disabled={!refreshToken}
-                    className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-bold h-4"
-                    title="复制账号刷新令牌"
-                  >
-                    <Copy size={11} /> 复制
-                  </button>
-                </div>
-                <div className="font-mono text-[10px] text-slate-500 break-all pr-8 select-all truncate">
-                  {refreshToken || '--- 未生成 ---'}
-                </div>
-              </div>
-
-              {/* Session 完整装配串 */}
-              <div className="group relative rounded-xl border border-indigo-150 bg-indigo-50/10 p-3 hover:bg-indigo-50/30 transition-colors">
-                <div className="text-[8px] font-black text-indigo-500 uppercase mb-1 flex items-center justify-between">
-                  <span>Session 拼装串 (直接装配至浏览器登录 COOKIE)</span>
-                  <button
-                    onClick={() => copyToClipboard(formattedSession)}
-                    disabled={!sessionKey && !accessToken}
-                    className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 font-black h-4"
-                    title="复制拼装完整 Session 串"
-                  >
-                    <Copy size={11} /> 快捷复制完整 Session
-                  </button>
-                </div>
-                <div className="font-mono text-[10px] text-indigo-900 break-all pr-8 select-all truncate font-bold">
-                  {sessionKey || accessToken ? formattedSession : '--- 未生成 ---'}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 属性网格 */}
-          <div className="grid grid-cols-2 gap-3">
-            <FieldCard label="数据库记录 ID (DB_INDEX)" value={account.id} />
-            <FieldCard label="中枢分组池标签 (POOL_TAG)" value={account.pool_tag || 'default'} />
-            <FieldCard label="邮箱账号 (EMAIL)" value={account.address} />
-            <FieldCard label="刷新令牌 (REFRESH_TOKEN)" value={refreshToken || '---'} />
-            <FieldCard label="关联并发工作流 (RUN_ID)" value={account.run_id} />
-            <FieldCard label="安全登录密匙 (AUTH_SECRET)" value={apiSecret || '---'} />
-          </div>
-
-          {/* 底层 OAuth 与 凭证完整 JSON 折叠抽屉 */}
-          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm transition-all hover:border-slate-350">
-            <button
-              type="button"
-              onClick={() => setOauthFolded(!oauthFolded)}
-              className="w-full flex items-center justify-between px-5 py-3.5 bg-slate-50 border-b border-slate-100 hover:bg-slate-100 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <Database size={13} className="text-slate-500" />
-                <span className="text-[10px] font-black text-slate-700 tracking-wider uppercase">
-                  底层凭证完整 JSON (CREDENTIALS DUMP)
-                </span>
-              </div>
-              <ChevronDown
-                size={14}
-                className={`text-slate-400 transition-transform duration-300 ${oauthFolded ? '' : 'rotate-180'}`}
-              />
-            </button>
-
-            {!oauthFolded && (
-              <div className="p-5 bg-slate-900 relative">
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard(JSON.stringify(credentials, null, 2))}
-                  className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors p-1"
-                  title="复制 JSON DUMP"
-                >
-                  <Copy size={13} />
-                </button>
-                <pre className="text-[9px] font-mono leading-relaxed text-slate-200 select-all overflow-x-auto max-h-[220px] custom-scrollbar">
-                  {JSON.stringify(credentials, null, 2)}
-                </pre>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 凭证库页脚 */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-[8px] font-mono text-slate-400 shrink-0">
-          <span>SAFE_CREDS_HASH: {account.id.slice(0, 16).toUpperCase()}</span>
-          <span className="flex items-center gap-1 text-indigo-500 font-bold uppercase tracking-widest">
-            <Lock size={10} /> phantom secure vault
-          </span>
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <FieldCard label="记录 ID" value={account.id} />
+          <FieldCard label="状态" value={account.status} />
+          <FieldCard label="账号池" value={account.pool_tag || 'default'} />
+          <FieldCard label="账号类型" value={account.account_type || 'standard'} />
+          <FieldCard label="工作流" value={account.run_id} />
+          <FieldCard label="请求计数" value={String(account.request_count_24h || 0)} />
+          <FieldCard label="代理状态" value={account.proxy_status || 'unknown'} />
+          <FieldCard label="代理延迟" value={`${account.proxy_rtt || 0} ms`} />
         </div>
       </div>
     </div>,

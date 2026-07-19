@@ -28,7 +28,7 @@ impl AccountUploader {
         access_token: Option<&str>,
         session_token: Option<&str>,
     ) -> Result<(), String> {
-        let auth_header = format!("Bearer {}", api_key);
+        let auth_header = format!("Bearer {api_key}");
         let form = reqwest::multipart::Form::new()
             .text("username", email.to_string())
             .text("password", password.to_string())
@@ -43,7 +43,7 @@ impl AccountUploader {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| format!("CPA 上传网络失败: {}", e))?;
+            .map_err(|e| format!("CPA 上传网络失败: {e}"))?;
 
         if !response.status().is_success() {
             return Err(format!("CPA 服务器拒绝: {}", response.status()));
@@ -78,7 +78,7 @@ impl AccountUploader {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("NewAPI 上传网络失败: {}", e))?;
+            .map_err(|e| format!("NewAPI 上传网络失败: {e}"))?;
 
         if !response.status().is_success() {
             return Err(format!("NewAPI 服务器拒绝: {}", response.status()));

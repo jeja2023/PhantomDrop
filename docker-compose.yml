@@ -5,24 +5,29 @@ services:
       dockerfile: Dockerfile
     container_name: phantom-drop-app
     restart: unless-stopped
-    # 针对低内存 VPS 优化：弃用 xvfb-run，直接运行后端程序
-    command: [ "/app/phantom-core" ]
-    tty: true
-    stdin_open: true
     environment:
-      - APP_ENV=${APP_ENV:-development}
+      - APP_ENV=${APP_ENV:-production}
       - PHANTOM_DB_URL=${PHANTOM_DB_URL:-sqlite:///app/data/phantom_core.db?mode=rwc}
       - BIND_ADDR=${BIND_ADDR:-0.0.0.0}
       - PORT=${PORT:-9010}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:9010,http://localhost:9010}
       - ENABLE_DEBUG_ASSETS=${ENABLE_DEBUG_ASSETS:-false}
       - WRITE_CODEX_AUTH_FILE=${WRITE_CODEX_AUTH_FILE:-false}
-      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID}
-      - RUST_BACKTRACE=1
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - HUB_SECRET=${HUB_SECRET:-}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}
+      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID:-}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARE_ZONE_DOMAIN=${CLOUDFLARE_ZONE_DOMAIN:-}
+      - RUST_BACKTRACE=${RUST_BACKTRACE:-0}
+      - PHANTOM_GATEWAY_KEYS=${PHANTOM_GATEWAY_KEYS:-}
+      - MAX_CONCURRENT_WORKFLOWS=${MAX_CONCURRENT_WORKFLOWS:-2}
+      - MAX_CONCURRENT_PROXY_CHECKS=${MAX_CONCURRENT_PROXY_CHECKS:-8}
     volumes:
-      - ./data:/app/data
-      - ./.automation:/app/.automation
+      - data:/app/data
+      - automation:/app/.automation
     ports:
       - "9010:9010"
     extra_hosts:

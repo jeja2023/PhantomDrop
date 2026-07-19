@@ -35,7 +35,7 @@ impl BrowserDriver {
         if let Some(cb) = callback {
             cb(
                 "info",
-                &format!("🚀 正在初始化 PhantomBrowser 仿真容器 ({})...", mode_text),
+                &format!("🚀 正在初始化 PhantomBrowser 仿真容器 ({mode_text})..."),
             );
         }
 
@@ -68,7 +68,7 @@ impl BrowserDriver {
             }
             Err(e) => {
                 if let Some(cb) = callback {
-                    cb("warn", &format!("环境预检跳过 (检测服务暂时不可达): {}", e));
+                    cb("warn", &format!("环境预检跳过 (检测服务暂时不可达): {e}"));
                 }
             }
         }
@@ -76,13 +76,9 @@ impl BrowserDriver {
         // 1. 启动浏览器 (极致伪装以绕过检测)
         let mut launch_args = vec![
             "--disable-blink-features=AutomationControlled".to_string(),
-            "--no-sandbox".to_string(),
-            "--disable-dev-shm-usage".to_string(), 
+            "--disable-dev-shm-usage".to_string(),
             "--disable-infobars".to_string(),
             "--window-position=0,0".to_string(),
-            "--ignore-certificate-errors".to_string(),
-            "--disable-web-security".to_string(),
-            "--allow-running-insecure-content".to_string(),
             "--disable-gpu".to_string(), // 虚拟显示环境建议禁用 GPU
             "--hide-scrollbars".to_string(),
             "--mute-audio".to_string(),
@@ -94,7 +90,10 @@ impl BrowserDriver {
             "--disable-default-apps".to_string(),
             "--disable-extensions".to_string(),
             "--use-fake-ui-for-media-stream".to_string(),
-            format!("--user-agent={}", crate::openai::constants::DEFAULT_USER_AGENT),
+            format!(
+                "--user-agent={}",
+                crate::openai::constants::DEFAULT_USER_AGENT
+            ),
         ];
 
         // 1. 启动浏览器 (极致伪装以绕过检测)
@@ -114,7 +113,7 @@ impl BrowserDriver {
                     );
                 }
             }
-            launch_args.push(format!("--proxy-server={}", s));
+            launch_args.push(format!("--proxy-server={s}"));
         }
 
         let options = LaunchOptions::default_builder()
@@ -128,13 +127,12 @@ impl BrowserDriver {
                     .collect(),
             )
             .build()
-            .map_err(|e| format!("浏览器启动失败: {}", e))?;
+            .map_err(|e| format!("浏览器启动失败: {e}"))?;
 
-        let browser =
-            Browser::new(options).map_err(|e| format!("无法连接到 Chrome 实例: {}", e))?;
+        let browser = Browser::new(options).map_err(|e| format!("无法连接到 Chrome 实例: {e}"))?;
         let tab = browser
             .new_tab()
-            .map_err(|e| format!("打开标签页失败: {}", e))?;
+            .map_err(|e| format!("打开标签页失败: {e}"))?;
 
         // 1.5 处理代理认证 (如果存在)
         if let Some((user, pass)) = proxy_auth {
@@ -155,13 +153,13 @@ impl BrowserDriver {
                     });
                 }
             }))
-            .map_err(|e| format!("添加认证监听器失败: {}", e))?;
+            .map_err(|e| format!("添加认证监听器失败: {e}"))?;
 
             tab.call_method(headless_chrome::protocol::cdp::Fetch::Enable {
                 patterns: None,
                 handle_auth_requests: Some(true),
             })
-            .map_err(|e| format!("启用 Fetch 域失败: {}", e))?;
+            .map_err(|e| format!("启用 Fetch 域失败: {e}"))?;
         }
 
         // 注入增强型指纹伪装脚本 (极致风控过级，对标 puppeteer-extra-stealth 全套)
@@ -360,9 +358,9 @@ impl BrowserDriver {
         }
 
         tab.navigate_to("https://chatgpt.com/auth/login?screen_hint=signup")
-            .map_err(|e| format!("导航失败: {}", e))?;
+            .map_err(|e| format!("导航失败: {e}"))?;
         tab.wait_until_navigated()
-            .map_err(|e| format!("页面加载超时: {}", e))?;
+            .map_err(|e| format!("页面加载超时: {e}"))?;
 
         // 记录导航后的状态
         let current_url = tab.get_url();
@@ -375,10 +373,7 @@ impl BrowserDriver {
         if let Some(cb) = callback {
             cb(
                 "info",
-                &format!(
-                    "📍 页面已加载 | 标题: {} | URL: {}",
-                    page_title, current_url
-                ),
+                &format!("📍 页面已加载 | 标题: {page_title} | URL: {current_url}"),
             );
         }
 
@@ -398,7 +393,7 @@ impl BrowserDriver {
         for attempt in 0..5 {
             let has_email_form = tab
                 .evaluate(
-                    &format!("document.querySelector({:?}) !== null", email_selectors),
+                    &format!("document.querySelector({email_selectors:?}) !== null"),
                     false,
                 )
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
@@ -500,15 +495,12 @@ impl BrowserDriver {
                 None,
                 true,
             ) {
-                let path = format!("./data/{}", filename);
+                let path = format!("./data/{filename}");
                 let _ = std::fs::write(&path, png);
                 if let Some(cb) = callback {
                     cb(
                         "warn",
-                        &format!(
-                            "📸 [{} 步骤快照] 已存证: [点击预览](/debug/{})",
-                            name, filename
-                        ),
+                        &format!("📸 [{name} 步骤快照] 已存证: [点击预览](/debug/{filename})"),
                     );
                 }
                 return Some(path);
@@ -520,14 +512,18 @@ impl BrowserDriver {
         let mut cf_retry = 0;
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let is_cf_page = tab.evaluate(r#"
+            let is_cf_page = tab
+                .evaluate(
+                    r#"
                 document.title.includes('请稍候') ||
                 document.title.includes('Just a moment') ||
                 !!document.querySelector('#turnstile-wrapper') ||
                 !!document.querySelector('iframe[src*="challenges.cloudflare.com"]') ||
                 document.body.innerText.includes('Verify you are human') ||
                 document.body.innerText.includes('检查您是否是真人')
-            "#, false)
+            "#,
+                    false,
+                )
                 .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                 .unwrap_or(false);
 
@@ -623,7 +619,13 @@ impl BrowserDriver {
 
                         if !sitekey.is_empty() {
                             if let Some(cb) = callback {
-                                cb("info", &format!("📍 提取到 Turnstile sitekey: {}...", &sitekey[..8.min(sitekey.len())]));
+                                cb(
+                                    "info",
+                                    &format!(
+                                        "📍 提取到 Turnstile sitekey: {}...",
+                                        &sitekey[..8.min(sitekey.len())]
+                                    ),
+                                );
                             }
                             // 此处可集成 CapSolver / 2Captcha 等第三方打码 API
                             // 当前版本记录 sitekey 以供外部手动处理
@@ -695,14 +697,14 @@ impl BrowserDriver {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "页面诊断信息获取失败".to_string());
                 if let Some(cb) = callback {
-                    cb("warn", &format!("注册页诊断: {}", diagnostics));
+                    cb("warn", &format!("注册页诊断: {diagnostics}"));
                 }
-                format!("未找到邮箱输入框，环境检测可能未通过或注册入口结构已变化 (当前 URL: {})", current_url)
+                format!("未找到邮箱输入框，环境检测可能未通过或注册入口结构已变化 (当前 URL: {current_url})")
             })?;
 
         email_input.click().ok();
         tab.type_str(&self.context.email)
-            .map_err(|e| format!("邮箱输入失败: {}", e))?;
+            .map_err(|e| format!("邮箱输入失败: {e}"))?;
         take_shot("邮箱输入后", &tab);
 
         if let Ok(btn) = tab.find_element(continue_selectors) {
@@ -737,8 +739,7 @@ impl BrowserDriver {
             Err(_) => {
                 let on_otp_page = tab.evaluate(
                     &format!(
-                        "document.querySelector({:?}) !== null || document.body.innerText.includes('Check your inbox') || document.body.innerText.includes('检查你的收件箱')",
-                        otp_selectors
+                        "document.querySelector({otp_selectors:?}) !== null || document.body.innerText.includes('Check your inbox') || document.body.innerText.includes('检查你的收件箱')"
                     ),
                     false,
                 )
@@ -818,7 +819,7 @@ impl BrowserDriver {
                         ),
                     );
                 }
-                take_shot(&format!("waiting_email_retry_{}", attempt), &tab);
+                take_shot(&format!("waiting_email_retry_{attempt}"), &tab);
             }
         }
 
@@ -826,7 +827,7 @@ impl BrowserDriver {
             if let Some(cb) = callback {
                 cb(
                     "success",
-                    &format!("成功提取 OTP 验证码: {}，正在浏览器中注入...", otp),
+                    &format!("成功提取 OTP 验证码: {otp}，正在浏览器中注入..."),
                 );
             }
 
@@ -892,14 +893,14 @@ impl BrowserDriver {
             for _ in 0..45 {
                 let has_pwd = tab
                     .evaluate(
-                        &format!("document.querySelector({:?}) !== null", pwd_selectors),
+                        &format!("document.querySelector({pwd_selectors:?}) !== null"),
                         false,
                     )
                     .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
                     .unwrap_or(false);
                 let has_profile = tab
                     .evaluate(
-                        &format!("document.querySelector({:?}) !== null", profile_selectors),
+                        &format!("document.querySelector({profile_selectors:?}) !== null"),
                         false,
                     )
                     .map(|r| r.value.and_then(|v| v.as_bool()).unwrap_or(false))
@@ -992,7 +993,7 @@ impl BrowserDriver {
                 .unwrap_or_else(|| {
                     let f = first_names[rng.gen_range(0..first_names.len())];
                     let l = last_names[rng.gen_range(0..last_names.len())];
-                    format!("{} {}", f, l)
+                    format!("{f} {l}")
                 });
 
             let a = self.context.age.unwrap_or_else(|| rng.gen_range(19..45));
@@ -1002,7 +1003,7 @@ impl BrowserDriver {
         if let Some(cb) = callback {
             cb(
                 "info",
-                &format!("资料生成 -> 姓名: {}, 年龄: {}", full_name, age),
+                &format!("资料生成 -> 姓名: {full_name}, 年龄: {age}"),
             );
         }
 
@@ -1023,7 +1024,7 @@ impl BrowserDriver {
         let age_value = age.to_string();
         let age_json = serde_json::to_string(&age_value).unwrap_or_else(|_| "\"18\"".into());
         let birth_year = chrono::Utc::now().year() - age;
-        let birthday_value = format!("{}-01-01", birth_year);
+        let birthday_value = format!("{birth_year}-01-01");
         let birthday_json =
             serde_json::to_string(&birthday_value).unwrap_or_else(|_| "\"1990-01-01\"".into());
 
@@ -1147,8 +1148,7 @@ impl BrowserDriver {
         if !profile_fill_ok {
             take_shot("资料填写失败", &tab);
             return Err(format!(
-                "个人资料填写失败: {} (原始返回: {})",
-                parsed_value, profile_fill_value
+                "个人资料填写失败: {parsed_value} (原始返回: {profile_fill_value})"
             ));
         }
         if let Some(cb) = callback {
@@ -1213,7 +1213,7 @@ impl BrowserDriver {
             // 再次尝试点击可能的引导按钮
             let _ = tab.evaluate("Array.from(document.querySelectorAll('button, [role=\"button\"]')).forEach(b => { const text = (b.innerText || b.textContent || '').toLowerCase(); if(['next', 'done', '继续', '完成', 'okay', 'skip', '跳过'].some(k => text.includes(k))) { try { b.click(); } catch(e) {} } })", false);
             if i % 4 == 3 {
-                take_shot(&format!("dashboard_waiting_step_{}", i), &tab);
+                take_shot(&format!("dashboard_waiting_step_{i}"), &tab);
             }
             tokio::time::sleep(Duration::from_millis(1500)).await;
         }
@@ -1228,8 +1228,7 @@ impl BrowserDriver {
                 cb(
                     "warn",
                     &format!(
-                        "📍 未能识别到主控台特征 (当前 URL: {}), 正在尝试强行重定向并提取...",
-                        final_url
+                        "📍 未能识别到主控台特征 (当前 URL: {final_url}), 正在尝试强行重定向并提取..."
                     ),
                 );
             }
@@ -1252,7 +1251,10 @@ impl BrowserDriver {
 
         // 尝试通过后台静默 OAuth 流程捕获官方 API 凭证 (Access Token & Refresh Token)
         if let Some(cb) = callback {
-            cb("info", "🔑 正在尝试触发官方 OAuth 流程以提取 Access Token & Refresh Token...");
+            cb(
+                "info",
+                "🔑 正在尝试触发官方 OAuth 流程以提取 Access Token & Refresh Token...",
+            );
         }
 
         let (authorize_url, code_verifier, redirect_uri) = if let (Some(url), Some(verifier)) = (
@@ -1277,7 +1279,11 @@ impl BrowserDriver {
                 &state,
                 &pkce.code_challenge,
             );
-            (url, pkce.code_verifier, crate::openai::constants::REDIRECT_URI.to_string())
+            (
+                url,
+                pkce.code_verifier,
+                crate::openai::constants::REDIRECT_URI.to_string(),
+            )
         };
 
         let _ = tab.navigate_to(&authorize_url);
@@ -1294,31 +1300,43 @@ impl BrowserDriver {
 
         if let Some(url) = callback_url {
             if let Some(cb) = callback {
-                cb("success", "✅ 已成功捕获 OAuth 回调，正在与 OpenAI 认证中心进行令牌交换...");
+                cb(
+                    "success",
+                    "✅ 已成功捕获 OAuth 回调，正在与 OpenAI 认证中心进行令牌交换...",
+                );
             }
             match crate::openai::oauth::exchange_codex_code_with_redirect(
                 &url,
                 &code_verifier,
-                &redirect_uri
-            ).await {
+                &redirect_uri,
+            )
+            .await
+            {
                 Ok(auth_data) => {
                     token_extracted = Some(auth_data.access_token.clone());
                     refresh_token_extracted = Some(auth_data.refresh_token.clone());
                     id_token_extracted = Some(auth_data.id_token.clone());
                     if let Some(cb) = callback {
-                        cb("success", "🎉 成功捕获官方 API Access Token & Refresh Token 凭证！");
+                        cb(
+                            "success",
+                            "🎉 成功捕获官方 API Access Token & Refresh Token 凭证！",
+                        );
                     }
                 }
                 Err(e) => {
                     if let Some(cb) = callback {
-                        cb("warn", &format!("⚠️ 官方 OAuth 令牌交换失败: {}，将降级扫描普通 Web Session", e));
+                        cb(
+                            "warn",
+                            &format!("⚠️ 官方 OAuth 令牌交换失败: {e}，将降级扫描普通 Web Session"),
+                        );
                     }
                 }
             }
-        } else {
-            if let Some(cb) = callback {
-                cb("warn", "⚠️ 未能捕获到 OAuth 回调跳转，将降级扫描普通 Web Session");
-            }
+        } else if let Some(cb) = callback {
+            cb(
+                "warn",
+                "⚠️ 未能捕获到 OAuth 回调跳转，将降级扫描普通 Web Session",
+            );
         }
 
         // 强行导航回 chatgpt 首页以维持 Session cookie 及正常的控制台特征
@@ -1327,7 +1345,10 @@ impl BrowserDriver {
 
         if token_extracted.is_none() {
             if let Some(cb) = callback {
-                cb("info", "🔑 正在等待会话就绪并提取 Web Session Access Token...");
+                cb(
+                    "info",
+                    "🔑 正在等待会话就绪并提取 Web Session Access Token...",
+                );
             }
         }
 
@@ -1597,11 +1618,11 @@ impl BrowserDriver {
             };
 
             let host = url.host_str().unwrap_or("");
-            let port = url.port().map(|p| format!(":{}", p)).unwrap_or_default();
+            let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
 
             // 构造不含认证信息的标准代理字符串
             let sanitized = if !host.is_empty() {
-                format!("{}://{}{}", scheme, host, port)
+                format!("{scheme}://{host}{port}")
             } else {
                 proxy_url.to_string()
             };
@@ -1631,7 +1652,7 @@ fn urlencoding_simple(s: &str) -> String {
             }
             _ => {
                 result.push('%');
-                result.push_str(&format!("{:02X}", byte));
+                result.push_str(&format!("{byte:02X}"));
             }
         }
     }

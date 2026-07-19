@@ -1,8 +1,7 @@
-param(
+﻿param(
     [ValidateSet("local_trycloudflare", "public_ip", "public_domain")]
     [string]$DefaultMode = "public_domain",
     [string]$DefaultPublicUrl,
-    [string]$HubSecret = "local_dev_secret",
     [string]$RouteLocalPart = "inbox",
     [string]$ZoneDomain,
     [string]$CloudflareApiToken,
@@ -84,7 +83,6 @@ function Show-InitializationDialog([hashtable]$Defaults) {
         @{ Label = "默认公网地址"; Key = "default_public_url"; Type = "text" },
         @{ Label = "收件地址前缀"; Key = "route_local_part"; Type = "text" },
         @{ Label = "主域名"; Key = "zone_domain"; Type = "text" },
-        @{ Label = "Hub Secret"; Key = "hub_secret"; Type = "text" },
         @{ Label = "Cloudflare API Token"; Key = "cloudflare_api_token"; Type = "text" },
         @{ Label = "Cloudflare Zone ID"; Key = "cloudflare_zone_id"; Type = "text" },
         @{ Label = "Cloudflare Account ID"; Key = "cloudflare_account_id"; Type = "text" }
@@ -171,7 +169,6 @@ function Show-InitializationDialog([hashtable]$Defaults) {
         default_public_url = $controls["default_public_url"].Text
         route_local_part = $controls["route_local_part"].Text
         zone_domain = $controls["zone_domain"].Text
-        hub_secret = $controls["hub_secret"].Text
         cloudflare_api_token = $controls["cloudflare_api_token"].Text
         cloudflare_zone_id = $controls["cloudflare_zone_id"].Text
         cloudflare_account_id = $controls["cloudflare_account_id"].Text
@@ -233,12 +230,12 @@ if ($RunWranglerLogin) {
 }
 
 $config = Load-Config
+$null = $config.Remove("hub_secret")
 $dialogDefaults = @{
     default_mode = Select-Value @($config.default_mode, $DefaultMode)
     default_public_url = Select-Value @($config.default_public_url, $DefaultPublicUrl)
     route_local_part = Select-Value @($config.route_local_part, $RouteLocalPart)
     zone_domain = Select-Value @($config.zone_domain, $ZoneDomain)
-    hub_secret = Select-Value @($config.hub_secret, $HubSecret)
     cloudflare_api_token = Select-Value @($config.cloudflare_api_token, $CloudflareApiToken)
     cloudflare_zone_id = Select-Value @($config.cloudflare_zone_id, $CloudflareZoneId)
     cloudflare_account_id = Select-Value @($config.cloudflare_account_id, $CloudflareAccountId)
@@ -251,7 +248,6 @@ if (-not $NoDialog) {
     $DefaultPublicUrl = [string]$dialogValues.default_public_url
     $RouteLocalPart = [string]$dialogValues.route_local_part
     $ZoneDomain = [string]$dialogValues.zone_domain
-    $HubSecret = [string]$dialogValues.hub_secret
     $CloudflareApiToken = [string]$dialogValues.cloudflare_api_token
     $CloudflareZoneId = [string]$dialogValues.cloudflare_zone_id
     $CloudflareAccountId = [string]$dialogValues.cloudflare_account_id
@@ -259,7 +255,6 @@ if (-not $NoDialog) {
 }
 
 $config.default_mode = $DefaultMode
-$config.hub_secret = if ($null -ne $HubSecret) { $HubSecret.Trim() } else { $HubSecret }
 $config.route_local_part = $RouteLocalPart
 
 $normalizedPublicUrl = Normalize-PublicUrl -ModeValue $DefaultMode -CandidateUrl $DefaultPublicUrl

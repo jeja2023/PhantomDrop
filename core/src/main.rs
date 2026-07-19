@@ -16,6 +16,10 @@ mod openai;
 mod parser;
 mod register;
 mod routes;
+#[path = "sqlx.rs"]
+mod sqlx_facade;
+pub use sqlx_facade::*;
+extern crate self as sqlx;
 mod stream;
 mod tunnel;
 mod uploader;
@@ -51,7 +55,7 @@ fn detect_project_root() -> std::path::PathBuf {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🌌 幻影中枢 (PhantomDrop-Hub) 正在启动...");
     let app_config = AppConfig::from_env().unwrap_or_else(|error| {
         eprintln!("配置错误: {error}");
@@ -62,9 +66,15 @@ async fn main() {
     let database_url = std::env::var("PHANTOM_DB_URL")
         .unwrap_or_else(|_| "sqlite://phantom_core.db?mode=rwc".to_string());
     let data_lake = DataLake::new(&database_url).await;
+    routes::ensure_admin_credentials(&data_lake).await?;
+    let recovered_runs = data_lake.recover_interrupted_workflow_runs().await?;
+    if recovered_runs > 0 {
+        eprintln!("已将 {recovered_runs} 个中断的工作流标记为 interrupted");
+    }
 
     // 启动代理质量与 RTT 心跳检测后台循环
     crate::openai::proxy_checker::start_proxy_heartbeat_loop(Arc::clone(&data_lake));
+    crate::routes::emails::start_webhook_worker(Arc::clone(&data_lake));
 
     let saved_settings = data_lake.list_settings().await.unwrap_or_default();
     let project_root = detect_project_root();
@@ -92,12 +102,14 @@ async fn main() {
     let automation_manager = Arc::new(CloudflareAutomationManager::new(
         project_root,
         Arc::clone(&stream_hub),
+        Arc::clone(&data_lake),
+        Arc::clone(&tunnel_manager),
     ));
 
     // 5. 准备前端静态文件服务
     // 环境优先：支持外部指定前端目录，默认为当前目录下的 web 文件夹
     let web_dist = std::env::var("WEB_DIST").unwrap_or_else(|_| "web".to_string());
-    println!("🌐 静态资源目录: {}", web_dist);
+    println!("🌐 静态资源目录: {web_dist}");
 
     // 6. 构建全站 API 网关
     let app = routes::build_router(routes::RouterContext {
@@ -112,9 +124,38 @@ async fn main() {
     .layer(app_config.cors_layer());
 
     // 4. 开启监听
-    let listener = tokio::net::TcpListener::bind(app_config.bind_addr)
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(app_config.bind_addr).await?;
     println!("⚡ 监听中枢已就绪: http://{}", app_config.bind_addr);
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
+    Ok(())
+}
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            eprintln!("无法监听 Ctrl+C: {error}");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => eprintln!("无法监听 SIGTERM: {error}"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }

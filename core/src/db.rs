@@ -3,6 +3,12 @@ use sqlx::{Pool, Row, Sqlite, sqlite::SqlitePoolOptions};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Clone)]
+pub struct AdminCredentials {
+    pub username: String,
+    pub password_hash: String,
+}
+
 /**
  * 幻影中台 - 数据湖基座 (Data Lake)
  * 职责：管理所有热数据 (SQLite 映射) 与归档数据 (CSV.GZ)
@@ -141,9 +147,16 @@ pub struct EmailPage {
     pub page_size: i64,
 }
 
+#[derive(sqlx::FromRow)]
+pub struct WebhookOutboxRecord {
+    pub id: String,
+    pub webhook_url: String,
+    pub payload: String,
+    pub attempts: i64,
+}
+
 pub struct DataLake {
     pub pool: Pool<Sqlite>,
-    pub write_buffer: std::sync::Mutex<HashMap<String, (i64, i64)>>,
 }
 
 impl DataLake {
@@ -166,6 +179,7 @@ impl DataLake {
             .expect("无法连接到 SQLite 数据湖");
 
         Self::configure_sqlite(&pool).await;
+        Self::prepare_legacy_data_for_migrations(&pool).await;
 
         sqlx::migrate!("./migrations")
             .run(&pool)
@@ -173,23 +187,7 @@ impl DataLake {
             .expect("数据库迁移失败");
         Self::ensure_legacy_columns(&pool).await;
 
-        let data_lake = Arc::new(Self {
-            pool,
-            write_buffer: std::sync::Mutex::new(HashMap::new()),
-        });
-
-        // 启动异步缓冲批量合并刷盘后台任务，每 10 秒写入一次，极大释放 SQLite 并发锁性能
-        let dl_clone = Arc::clone(&data_lake);
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                if let Err(e) = dl_clone.flush_write_buffer().await {
-                    eprintln!("🔴 [写入缓冲区] 异步合并刷盘失败: {:?}", e);
-                }
-            }
-        });
-
-        data_lake
+        Arc::new(Self { pool })
     }
 
     async fn configure_sqlite(pool: &Pool<Sqlite>) {
@@ -209,6 +207,54 @@ impl DataLake {
             .execute(pool)
             .await
             .expect("SQLite 外键配置失败");
+    }
+
+    async fn prepare_legacy_data_for_migrations(pool: &Pool<Sqlite>) {
+        let migration_table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("检查迁移记录表失败");
+        if migration_table_exists > 0 {
+            let migration_applied: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 202607190001 AND success = 1",
+            )
+            .fetch_one(pool)
+            .await
+            .expect("检查性能迁移状态失败");
+            if migration_applied > 0 {
+                return;
+            }
+        }
+
+        let steps_table_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'workflow_run_steps'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("检查旧工作流步骤表失败");
+        if steps_table_exists == 0 {
+            return;
+        }
+
+        let result = sqlx::query(
+            "DELETE FROM workflow_run_steps
+             WHERE rowid NOT IN (
+                 SELECT MIN(rowid)
+                 FROM workflow_run_steps
+                 GROUP BY run_id, step_index
+             )",
+        )
+        .execute(pool)
+        .await
+        .expect("清理旧工作流重复步骤失败");
+        if result.rows_affected() > 0 {
+            eprintln!(
+                "数据库升级：已清理 {} 条重复工作流步骤",
+                result.rows_affected()
+            );
+        }
     }
 
     async fn ensure_legacy_columns(pool: &Pool<Sqlite>) {
@@ -279,20 +325,10 @@ impl DataLake {
             "INTEGER DEFAULT 0",
         )
         .await;
-        Self::add_column_if_missing(
-            pool,
-            "generated_accounts",
-            "last_failure_reason",
-            "TEXT",
-        )
-        .await;
-        Self::add_column_if_missing(
-            pool,
-            "generated_accounts",
-            "proxy_rtt",
-            "INTEGER DEFAULT 0",
-        )
-        .await;
+        Self::add_column_if_missing(pool, "generated_accounts", "last_failure_reason", "TEXT")
+            .await;
+        Self::add_column_if_missing(pool, "generated_accounts", "proxy_rtt", "INTEGER DEFAULT 0")
+            .await;
         Self::add_column_if_missing(
             pool,
             "generated_accounts",
@@ -345,7 +381,7 @@ impl DataLake {
             .unwrap_or(false)
     }
 
-    /// 插入一条新解析的原始邮件
+    /// Insert an email and its webhook delivery jobs in one transaction.
     pub async fn record_email(
         &self,
         id: &str,
@@ -357,12 +393,14 @@ impl DataLake {
         extracted_code: Option<&str>,
         extracted_link: Option<&str>,
         extracted_text: Option<&str>,
+        webhook_payload: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let now = Utc::now().timestamp();
         let to_lower = to.trim().to_lowercase();
+        let mut transaction = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO emails (id, created_at, from_addr, to_addr, subject, body_text, body_html, extracted_code, extracted_link, extracted_text) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO emails (id, created_at, from_addr, to_addr, subject, body_text, body_html, extracted_code, extracted_link, extracted_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id)
         .bind(now)
@@ -374,12 +412,30 @@ impl DataLake {
         .bind(extracted_code)
         .bind(extracted_link)
         .bind(extracted_text)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
 
+        if let Some(payload) = webhook_payload {
+            sqlx::query(
+                "INSERT INTO webhook_outbox (
+                    id, webhook_url, payload, status, attempts,
+                    next_attempt_at, created_at, updated_at
+                 )
+                 SELECT lower(hex(randomblob(16))), url, ?, 'pending', 0, ?, ?, ?
+                 FROM webhooks
+                 WHERE is_active = 1
+                   AND (event_filter = '*' OR event_filter = 'EMAIL_INGEST_READY')",
+            )
+            .bind(payload)
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
         Ok(())
     }
-
     /// 获取最新的邮件列表（支持限制条数）
     pub async fn get_emails(
         &self,
@@ -768,6 +824,86 @@ impl DataLake {
             .collect())
     }
 
+    pub async fn recover_webhook_outbox(&self) -> Result<u64, sqlx::Error> {
+        let now = Utc::now().timestamp();
+        let result = sqlx::query(
+            "UPDATE webhook_outbox SET status = 'pending', updated_at = ?
+             WHERE status = 'delivering' AND updated_at <= ?",
+        )
+        .bind(now)
+        .bind(now - 60)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query("DELETE FROM webhook_outbox WHERE status = 'failed' AND updated_at < ?")
+            .bind(now - 30 * 24 * 60 * 60)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn lease_webhook_delivery(&self) -> Result<Option<WebhookOutboxRecord>, sqlx::Error> {
+        let now = Utc::now().timestamp();
+        sqlx::query_as::<_, WebhookOutboxRecord>(
+            "UPDATE webhook_outbox SET status = 'delivering', updated_at = ?
+             WHERE id = (
+                 SELECT id FROM webhook_outbox
+                 WHERE status = 'pending' AND next_attempt_at <= ?
+                 ORDER BY next_attempt_at, created_at LIMIT 1
+             )
+             RETURNING id, webhook_url, payload, attempts",
+        )
+        .bind(now)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    pub async fn complete_webhook_delivery(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM webhook_outbox WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn fail_webhook_delivery(
+        &self,
+        id: &str,
+        previous_attempts: i64,
+        error: &str,
+    ) -> Result<(), sqlx::Error> {
+        let attempts = previous_attempts + 1;
+        let status = if attempts >= 8 { "failed" } else { "pending" };
+        let delay_seconds = (1_i64 << attempts.min(8) as u32).min(300);
+        let shortened_error: String = error.chars().take(1_000).collect();
+        sqlx::query(
+            "UPDATE webhook_outbox
+             SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(status)
+        .bind(attempts)
+        .bind(Utc::now().timestamp() + delay_seconds)
+        .bind(shortened_error)
+        .bind(Utc::now().timestamp())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+    pub async fn recover_interrupted_workflow_runs(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE workflow_runs
+             SET status = 'interrupted',
+                 message = '服务重启前任务未完成，请重新执行',
+                 finished_at = ?
+             WHERE status = 'running'",
+        )
+        .bind(Utc::now().timestamp())
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
     /// 创建工作流执行记录
     pub async fn create_workflow_run(
         &self,
@@ -1070,7 +1206,7 @@ impl DataLake {
         .await;
 
         if let Err(ref e) = res {
-            eprintln!("🔴 [数据库错误] 无法插入生成的账号: {:?}", e);
+            eprintln!("🔴 [数据库错误] 无法插入生成的账号: {e:?}");
         }
         res?;
 
@@ -1147,7 +1283,7 @@ impl DataLake {
         sqlx::query(
             "UPDATE generated_accounts 
              SET proxy_rtt = ?, proxy_ip_type = ?, proxy_status = ?, proxy_last_checked_at = ? 
-             WHERE id = ?"
+             WHERE id = ?",
         )
         .bind(rtt)
         .bind(ip_type)
@@ -1378,9 +1514,8 @@ impl DataLake {
 
         let sql = format!(
             "UPDATE generated_accounts 
-             SET consecutive_failures = ?, last_failure_reason = ? {} 
-             WHERE id = ?",
-            status_clause
+             SET consecutive_failures = ?, last_failure_reason = ? {status_clause}
+             WHERE id = ?"
         );
 
         let result = sqlx::query(&sql)
@@ -1391,7 +1526,9 @@ impl DataLake {
             .await?;
 
         if let Some(ns) = new_status {
-            println!("🚨 [熔断器] 账号 {} 因连续遭遇 {} 次请求失败，已被自动熔断隔离并标记为 '{}'！", id, consecutive_failures, ns);
+            println!(
+                "🚨 [熔断器] 账号 {id} 因连续遭遇 {consecutive_failures} 次请求失败，已被自动熔断隔离并标记为 '{ns}'！"
+            );
         }
 
         Ok(result.rows_affected())
@@ -1407,7 +1544,7 @@ impl DataLake {
         let result = sqlx::query(
             "UPDATE generated_accounts 
              SET rate_limit_reset_at = ? 
-             WHERE id = ?"
+             WHERE id = ?",
         )
         .bind(reset_at)
         .bind(id)
@@ -1416,54 +1553,16 @@ impl DataLake {
         Ok(result.rows_affected())
     }
 
-    /// 更新账号在网关中的最后一次使用时间戳，并增加其今日/24h调用计数（写入至高性能内存缓冲区中）
-    pub async fn update_account_last_used(&self, id: &str) -> Result<u64, sqlx::Error> {
-        let now = Utc::now().timestamp();
-        {
-            let mut lock = self.write_buffer.lock().unwrap();
-            let entry = lock.entry(id.to_string()).or_insert((0, 0));
-            entry.0 = now;
-            entry.1 += 1;
-        }
-        Ok(1)
-    }
-
-    /// 将内存缓冲中的高频计数与使用时间戳批量、事务化地合并刷盘到 SQLite 数据库中
-    pub async fn flush_write_buffer(&self) -> Result<(), sqlx::Error> {
-        let buffer = {
-            let mut lock = self.write_buffer.lock().unwrap();
-            if lock.is_empty() {
-                return Ok(());
-            }
-            std::mem::take(&mut *lock)
-        };
-
-        println!("💾 [写入缓冲区] 正在将 {} 个账号的网关高频统计指标合并后刷入 SQLite 数据源...", buffer.len());
-
-        let mut tx = self.pool.begin().await?;
-        for (id, (last_used_at, count_inc)) in buffer {
-            sqlx::query(
-                "UPDATE generated_accounts 
-                 SET last_used_at = ?, request_count_24h = COALESCE(request_count_24h, 0) + ? 
-                 WHERE id = ?"
-            )
-            .bind(last_used_at)
-            .bind(count_inc)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-
-        Ok(())
-    }
-
     /// 修改指定账号的分组标签 (pool_tag)
-    pub async fn update_account_pool_tag(&self, id: &str, pool_tag: &str) -> Result<u64, sqlx::Error> {
+    pub async fn update_account_pool_tag(
+        &self,
+        id: &str,
+        pool_tag: &str,
+    ) -> Result<u64, sqlx::Error> {
         let result = sqlx::query(
             "UPDATE generated_accounts 
              SET pool_tag = ? 
-             WHERE id = ?"
+             WHERE id = ?",
         )
         .bind(pool_tag)
         .bind(id)
@@ -1472,38 +1571,44 @@ impl DataLake {
         Ok(result.rows_affected())
     }
 
-    /// 根据分组池标签拉取网关分发可用的账号列表（状态为 Registered/Success，当前未处于冷却期内，且排除了离线代理）
-    pub async fn list_active_accounts_for_routing(
+    /// Atomically lease one routable account so concurrent requests cannot select the same oldest row.
+    pub async fn lease_active_account_for_routing(
         &self,
         pool_tag: &str,
-    ) -> Result<Vec<GeneratedAccountRecord>, sqlx::Error> {
+    ) -> Result<Option<GeneratedAccountRecord>, sqlx::Error> {
         let now = Utc::now().timestamp();
         let sql = format!(
-            "SELECT {}
-             FROM generated_accounts
-             WHERE (status LIKE '%registered%' OR lower(status) LIKE '%success%')
-               AND (pool_tag = ? OR (? = 'default' AND pool_tag IS NULL))
-               AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at <= ?)
-               AND access_token IS NOT NULL AND access_token != ''
-               AND (proxy_status IS NULL OR proxy_status != 'offline')
-             ORDER BY 
-               (CASE WHEN proxy_status = 'active' THEN 0 WHEN proxy_status IS NULL THEN 1 ELSE 2 END) ASC,
-               (CASE WHEN proxy_ip_type = 'residential' THEN 0 ELSE 1 END) ASC,
-               proxy_rtt ASC,
-               last_used_at ASC,
-               created_at DESC",
+            "UPDATE generated_accounts
+             SET last_used_at = MAX(COALESCE(last_used_at, 0) + 1, ?),
+                 request_count_24h = COALESCE(request_count_24h, 0) + 1
+             WHERE id = (
+                 SELECT id
+                 FROM generated_accounts
+                 WHERE (status LIKE '%registered%' OR lower(status) LIKE '%success%')
+                   AND (pool_tag = ? OR (? = 'default' AND pool_tag IS NULL))
+                   AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at <= ?)
+                   AND access_token IS NOT NULL AND access_token != ''
+                   AND (proxy_status IS NULL OR proxy_status != 'offline')
+                 ORDER BY
+                   (CASE WHEN proxy_status = 'active' THEN 0 WHEN proxy_status IS NULL THEN 1 ELSE 2 END) ASC,
+                   (CASE WHEN proxy_ip_type = 'residential' THEN 0 ELSE 1 END) ASC,
+                   proxy_rtt ASC,
+                   last_used_at ASC,
+                   created_at DESC
+                 LIMIT 1
+             )
+             RETURNING {}",
             Self::GENERATED_ACCOUNT_COLUMNS
         );
 
-        let records = sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+        sqlx::query_as::<_, GeneratedAccountRecord>(&sql)
+            .bind(now)
             .bind(pool_tag)
             .bind(pool_tag)
             .bind(now)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(records)
+            .fetch_optional(&self.pool)
+            .await
     }
-
     /// 获取单个生成的账号产物
     pub async fn get_generated_account(
         &self,
@@ -1641,6 +1746,66 @@ impl DataLake {
         Ok(row.map(|value| value.get("value")))
     }
 
+    pub async fn delete_setting(&self, key: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM app_settings WHERE key = ?")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_admin_credentials(&self) -> Result<Option<AdminCredentials>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT key, value FROM app_settings WHERE key IN ('admin_username', 'admin_password_hash')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let values: HashMap<String, String> = rows
+            .into_iter()
+            .map(|row| (row.get("key"), row.get("value")))
+            .collect();
+        match (
+            values
+                .get("admin_username")
+                .filter(|value| !value.trim().is_empty()),
+            values
+                .get("admin_password_hash")
+                .filter(|value| !value.trim().is_empty()),
+        ) {
+            (Some(username), Some(password_hash)) => Ok(Some(AdminCredentials {
+                username: username.clone(),
+                password_hash: password_hash.clone(),
+            })),
+            _ => Ok(None),
+        }
+    }
+
+    pub async fn replace_admin_credentials(
+        &self,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<(), sqlx::Error> {
+        let now = Utc::now().timestamp();
+        let mut transaction = self.pool.begin().await?;
+        for (key, value) in [
+            ("admin_username", username),
+            ("admin_password_hash", password_hash),
+        ] {
+            sqlx::query(
+                "INSERT INTO app_settings (key, value, updated_at)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            )
+            .bind(key)
+            .bind(value)
+            .bind(now)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     /// 将 Webhook 地址设置为当前活跃地址，避免重复插入
     pub async fn upsert_webhook(&self, url: &str) -> Result<(), sqlx::Error> {
         use sqlx::Row;
@@ -1694,6 +1859,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_duplicate_workflow_steps_are_cleaned_before_unique_index() {
+        let (url, path) = temp_db_url("legacy_duplicate_steps");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .expect("create legacy database");
+        sqlx::query(
+            "CREATE TABLE workflow_run_steps (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy steps table");
+        for id in ["step-oldest", "step-duplicate"] {
+            sqlx::query(
+                "INSERT INTO workflow_run_steps
+                 (id, run_id, step_index, level, message, created_at)
+                 VALUES (?, 'run-1', 1, 'info', 'legacy', 1)",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("insert duplicate legacy step");
+        }
+        pool.close().await;
+
+        let lake = DataLake::new(&url).await;
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM workflow_run_steps WHERE run_id = 'run-1' AND step_index = 1",
+        )
+        .fetch_one(&lake.pool)
+        .await
+        .expect("count upgraded steps");
+        assert_eq!(remaining, 1);
+        drop(lake);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
     async fn archived_email_can_be_queried_from_page_endpoint() {
         let (lake, path) = new_test_lake("archived_page").await;
 
@@ -1705,6 +1916,7 @@ mod tests {
             "body",
             "",
             Some("123456"),
+            None,
             None,
             None,
         )
@@ -1724,6 +1936,95 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert!(page.items[0].is_archived);
 
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn email_and_webhook_outbox_share_a_transaction() {
+        let (lake, path) = new_test_lake("webhook_outbox").await;
+        lake.upsert_webhook("https://example.com/hook")
+            .await
+            .expect("create webhook");
+
+        lake.record_email(
+            "email-outbox-1",
+            "from@example.com",
+            "to@example.com",
+            "subject",
+            "body",
+            "",
+            None,
+            None,
+            None,
+            Some(r#"{"type":"EMAIL_INGEST_READY"}"#),
+        )
+        .await
+        .expect("record email and webhook job");
+
+        let delivery = lake
+            .lease_webhook_delivery()
+            .await
+            .expect("lease outbox")
+            .expect("outbox job");
+        assert_eq!(delivery.webhook_url, "https://example.com/hook");
+        assert_eq!(delivery.attempts, 0);
+
+        lake.fail_webhook_delivery(&delivery.id, delivery.attempts, "temporary")
+            .await
+            .expect("reschedule delivery");
+        assert!(
+            lake.lease_webhook_delivery()
+                .await
+                .expect("lease delayed")
+                .is_none()
+        );
+
+        sqlx::query(
+            "UPDATE webhook_outbox SET status = 'pending', next_attempt_at = 0 WHERE id = ?",
+        )
+        .bind(&delivery.id)
+        .execute(&lake.pool)
+        .await
+        .expect("make delivery due");
+        let retry = lake
+            .lease_webhook_delivery()
+            .await
+            .expect("lease retry")
+            .expect("retry job");
+        assert_eq!(retry.attempts, 1);
+        lake.complete_webhook_delivery(&retry.id)
+            .await
+            .expect("complete delivery");
+        assert!(
+            lake.lease_webhook_delivery()
+                .await
+                .expect("empty outbox")
+                .is_none()
+        );
+
+        drop(lake);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn running_workflows_are_marked_interrupted_on_recovery() {
+        let (lake, path) = new_test_lake("workflow_recovery").await;
+        lake.create_workflow_run("run-1", "workflow-1", "Workflow", "running", "started")
+            .await
+            .expect("create workflow run");
+        assert_eq!(
+            lake.recover_interrupted_workflow_runs()
+                .await
+                .expect("recover workflow runs"),
+            1
+        );
+        assert_eq!(
+            lake.get_workflow_run_status("run-1")
+                .await
+                .expect("read workflow status"),
+            "interrupted"
+        );
+        drop(lake);
         let _ = std::fs::remove_file(path);
     }
 }

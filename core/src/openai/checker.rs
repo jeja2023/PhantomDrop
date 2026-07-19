@@ -16,7 +16,7 @@ pub async fn check_account_status(
     let mut account = data_lake
         .get_generated_account(account_id)
         .await
-        .map_err(|e| format!("数据库读取失败: {}", e))?
+        .map_err(|e| format!("数据库读取失败: {e}"))?
         .ok_or_else(|| "账号不存在".to_string())?;
 
     let mut final_status = "Unknown".to_string();
@@ -32,7 +32,7 @@ pub async fn check_account_status(
             let mut headers = HeaderMap::new();
             headers.insert(
                 COOKIE,
-                HeaderValue::from_str(&format!("__Secure-next-auth.session-token={}", st)).unwrap(),
+                HeaderValue::from_str(&format!("__Secure-next-auth.session-token={st}")).unwrap(),
             );
 
             match client
@@ -48,29 +48,30 @@ pub async fn check_account_status(
 
                         // 自动换取并刷新 Access Token
                         let mut refresh_headers = headers.clone();
-                        refresh_headers.insert("accept", HeaderValue::from_static("application/json"));
-                        match client
+                        refresh_headers
+                            .insert("accept", HeaderValue::from_static("application/json"));
+                        if let Ok(session_resp) = client
                             .get("https://chatgpt.com/api/auth/session")
                             .headers(refresh_headers)
                             .send()
                             .await
                         {
-                            Ok(session_resp) => {
-                                if session_resp.status().is_success() {
-                                    if let Ok(json) = session_resp.json::<serde_json::Value>().await {
-                                        let new_at = json.get("accessToken").and_then(|v| v.as_str());
-                                        let new_rt = json.get("refreshToken").and_then(|v| v.as_str());
-                                        
-                                        if new_at.is_some() || new_rt.is_some() {
-                                            if let Some(at) = new_at {
-                                                account.access_token = Some(at.to_string());
-                                            }
-                                            if let Some(rt) = new_rt {
-                                                account.refresh_token = Some(rt.to_string());
-                                            }
-                                            
-                                            // 更新数据库中的 token
-                                            let _ = data_lake.update_account_tokens(
+                            if session_resp.status().is_success() {
+                                if let Ok(json) = session_resp.json::<serde_json::Value>().await {
+                                    let new_at = json.get("accessToken").and_then(|v| v.as_str());
+                                    let new_rt = json.get("refreshToken").and_then(|v| v.as_str());
+
+                                    if new_at.is_some() || new_rt.is_some() {
+                                        if let Some(at) = new_at {
+                                            account.access_token = Some(at.to_string());
+                                        }
+                                        if let Some(rt) = new_rt {
+                                            account.refresh_token = Some(rt.to_string());
+                                        }
+
+                                        // 更新数据库中的 token
+                                        let _ = data_lake
+                                            .update_account_tokens(
                                                 account_id,
                                                 account.access_token.as_deref(),
                                                 account.refresh_token.as_deref(),
@@ -84,15 +85,14 @@ pub async fn check_account_status(
                                                 account.plan_type.as_deref(),
                                                 account.expires_in,
                                                 account.token_version,
-                                                account.oauth_credentials_json.as_deref()
-                                            ).await;
-                                            
-                                            details.push("自动更新 Access Token 成功".to_string());
-                                        }
+                                                account.oauth_credentials_json.as_deref(),
+                                            )
+                                            .await;
+
+                                        details.push("自动更新 Access Token 成功".to_string());
                                     }
                                 }
                             }
-                            Err(_) => {}
                         }
                     } else if resp.status() == 401 {
                         final_status = "Expired".to_string();
@@ -106,7 +106,7 @@ pub async fn check_account_status(
                 }
                 Err(e) => {
                     details.push("Web 检查网络错误".to_string());
-                    eprintln!("🔴 [OpenAI Checker] Session check error: {}", e);
+                    eprintln!("🔴 [OpenAI Checker] Session check error: {e}");
                 }
             }
         }
@@ -125,7 +125,7 @@ pub async fn check_account_status(
                         let mut verify_headers = HeaderMap::new();
                         verify_headers.insert(
                             AUTHORIZATION,
-                            HeaderValue::from_str(&format!("Bearer {}", new_access)).unwrap(),
+                            HeaderValue::from_str(&format!("Bearer {new_access}")).unwrap(),
                         );
 
                         let verify_ok = client
@@ -146,46 +146,56 @@ pub async fn check_account_status(
                             }
 
                             // 从新 ID Token 中提取元数据
-                            let auth_info = account.id_token.as_deref()
+                            let auth_info = account
+                                .id_token
+                                .as_deref()
                                 .map(|idt| crate::openai::oauth::extract_auth_info_from_jwt(idt));
-                            let chatgpt_account_id = auth_info.as_ref()
+                            let chatgpt_account_id = auth_info
+                                .as_ref()
                                 .and_then(|i| i.chatgpt_account_id.clone())
                                 .or_else(|| account.chatgpt_account_id.clone());
-                            let chatgpt_user_id = auth_info.as_ref()
+                            let chatgpt_user_id = auth_info
+                                .as_ref()
                                 .and_then(|i| i.chatgpt_user_id.clone())
                                 .or_else(|| account.chatgpt_user_id.clone());
-                            let organization_id = auth_info.as_ref()
+                            let organization_id = auth_info
+                                .as_ref()
                                 .and_then(|i| i.organization_id.clone())
                                 .or_else(|| account.organization_id.clone());
-                            let plan_type = auth_info.as_ref()
+                            let plan_type = auth_info
+                                .as_ref()
                                 .and_then(|i| i.plan_type.clone())
                                 .or_else(|| account.plan_type.clone());
 
-                            let _ = data_lake.update_account_tokens(
-                                account_id,
-                                account.access_token.as_deref(),
-                                account.refresh_token.as_deref(),
-                                account.session_token.as_deref(),
-                                account.device_id.as_deref(),
-                                account.workspace_id.as_deref(),
-                                account.id_token.as_deref(),
-                                chatgpt_account_id.as_deref(),
-                                chatgpt_user_id.as_deref(),
-                                organization_id.as_deref(),
-                                plan_type.as_deref(),
-                                account.expires_in,
-                                account.token_version,
-                                account.oauth_credentials_json.as_deref(),
-                            ).await;
+                            let _ = data_lake
+                                .update_account_tokens(
+                                    account_id,
+                                    account.access_token.as_deref(),
+                                    account.refresh_token.as_deref(),
+                                    account.session_token.as_deref(),
+                                    account.device_id.as_deref(),
+                                    account.workspace_id.as_deref(),
+                                    account.id_token.as_deref(),
+                                    chatgpt_account_id.as_deref(),
+                                    chatgpt_user_id.as_deref(),
+                                    organization_id.as_deref(),
+                                    plan_type.as_deref(),
+                                    account.expires_in,
+                                    account.token_version,
+                                    account.oauth_credentials_json.as_deref(),
+                                )
+                                .await;
 
                             final_status = "Active (RT 续期)".to_string();
                             details.push("Refresh Token 续期成功，已更新 Access Token".to_string());
                         } else {
-                            details.push("Refresh Token 续期后验证失败，Token 可能已被吊销".to_string());
+                            details.push(
+                                "Refresh Token 续期后验证失败，Token 可能已被吊销".to_string(),
+                            );
                         }
                     }
                     Err(e) => {
-                        details.push(format!("Refresh Token 续期失败: {}", e));
+                        details.push(format!("Refresh Token 续期失败: {e}"));
                     }
                 }
             }
@@ -193,16 +203,14 @@ pub async fn check_account_status(
     }
 
     // 3. 如果 Web 校验没有成功确认状态，尝试使用 Access Token (针对 API)
-    if final_status != "Active"
-        && final_status != "Active (RT 续期)"
-        && final_status != "Banned"
+    if final_status != "Active" && final_status != "Active (RT 续期)" && final_status != "Banned"
     {
         if let Some(ref at) = account.access_token {
             if !at.trim().is_empty() {
                 let mut headers = HeaderMap::new();
                 headers.insert(
                     AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Bearer {}", at)).unwrap(),
+                    HeaderValue::from_str(&format!("Bearer {at}")).unwrap(),
                 );
 
                 match client
@@ -227,7 +235,7 @@ pub async fn check_account_status(
                     }
                     Err(e) => {
                         details.push("API 检查网络错误".to_string());
-                        eprintln!("🔴 [OpenAI Checker] API check error: {}", e);
+                        eprintln!("🔴 [OpenAI Checker] API check error: {e}");
                     }
                 }
             }
@@ -280,7 +288,7 @@ async fn refresh_access_token_via_rt(
         .header("origin", "https://chatgpt.com")
         .send()
         .await
-        .map_err(|e| format!("RT 续期请求网络错误: {}", e))?;
+        .map_err(|e| format!("RT 续期请求网络错误: {e}"))?;
 
     if !response.status().is_success() {
         return Err(format!("RT 续期被拒绝: {}", response.status()));
@@ -289,7 +297,7 @@ async fn refresh_access_token_via_rt(
     let data: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| format!("RT 续期响应解析失败: {}", e))?;
+        .map_err(|e| format!("RT 续期响应解析失败: {e}"))?;
 
     let access_token = data
         .get("access_token")

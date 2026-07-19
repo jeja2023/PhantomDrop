@@ -53,4 +53,5 @@ pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) 
 pub const CHROME_MAJOR_VERSION: &str = "136";
 
 /// sec-ch-ua 头部值 (匹配 Chrome 136)
-pub const SEC_CH_UA: &str = "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not-A.Brand\";v=\"99\"";
+pub const SEC_CH_UA: &str =
+    "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not-A.Brand\";v=\"99\"";

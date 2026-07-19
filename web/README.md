@@ -1,73 +1,29 @@
-# React + TypeScript + Vite
+# PhantomDrop Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+`web/` 是 PhantomDrop `V0.0.33` 的 React 19 + TypeScript + Vite 管理界面。
 
-Currently, two official plugins are available:
+## 开发
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```powershell
+npm ci
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+默认地址为 `http://127.0.0.1:5173`。开发服务器通过 Vite 代理连接本地 Hub；Hub 首次启动需要设置 `ADMIN_USERNAME` 和至少 12 个字符的 `ADMIN_PASSWORD`。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 登录与会话
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- 登录请求发送管理员用户名和密码到 `/auth/login`。
+- 成功后仅使用后端签发的 `HttpOnly`、`SameSite=Strict` Cookie。
+- 前端不在 `localStorage`、`sessionStorage` 或 JavaScript 状态中保存长期认证密钥。
+- `HUB_SECRET` 不属于 Web 登录流程，只用于 Worker 调用 Hub `/ingest`。
+
+## 质量检查
+
+```powershell
+npm run lint
+npm run build
+npm audit --omit=dev --audit-level=high
 ```
+
+生产构建输出到 `dist/`，由 Rust Hub 或 Docker 单镜像托管。

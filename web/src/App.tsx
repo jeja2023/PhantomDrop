@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCw, Command, Activity, RadioTower } from 'lucide-react'
+import { RefreshCw, Command, UserRound, Activity, RadioTower } from 'lucide-react'
 import Sidebar from './ui/Sidebar'
 import Cmd from './cmd/Cmd'
 import './App.css'
 import DashboardView from './views/DashboardView'
-import InboxCenterView from './views/InboxCenterView'
-import AutomationHubView from './views/AutomationHubView'
-import SystemSettingsView from './views/SystemSettingsView'
+const InboxCenterView = lazy(() => import('./views/InboxCenterView'))
+const AutomationHubView = lazy(() => import('./views/AutomationHubView'))
+const SystemSettingsView = lazy(() => import('./views/SystemSettingsView'))
 import { createApiEventSource, fetchJson } from './lib/api'
 import type {
   AppLog,
@@ -77,7 +77,10 @@ function App() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [authUsername, setAuthUsername] = useState('admin')
   const [authPassword, setAuthPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [isAuthenticating, setIsAuthenticating] = useState(false)
   
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -89,17 +92,31 @@ function App() {
     }
   }, [])
 
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const token = authPassword.trim()
-    if (!token) return
-    localStorage.setItem('phantom_auth_token', token)
-    const secure = window.location.protocol === 'https:' ? '; Secure' : ''
-    document.cookie = `phantom_auth_token=${encodeURIComponent(token)}; path=/; max-age=31536000; SameSite=Lax${secure}`
-    setIsAuthModalOpen(false)
-    window.location.reload()
+    const username = authUsername.trim()
+    if (!username || !authPassword) return
+    setIsAuthenticating(true)
+    setAuthError('')
+    try {
+      const response = await fetch('/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password: authPassword }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null
+        setAuthError(payload?.message || '登录失败，请检查用户名和密码')
+        return
+      }
+      setAuthPassword('')
+      setIsAuthModalOpen(false)
+      window.location.reload()
+    } finally {
+      setIsAuthenticating(false)
+    }
   }
-
   const [logs, setLogs] = useState<AppLog[]>([
     {
       id: `ui-${Date.now()}`,
@@ -361,7 +378,7 @@ function App() {
         </header>
 
         <div className={`relative z-10 flex-grow px-8 pt-1 pb-8 scroll-smooth ${isPageScrollable ? 'overflow-y-auto' : 'overflow-hidden'}`}>
-          <div className={`mx-auto max-w-[1600px] ${isPageScrollable ? 'min-h-full' : 'h-full min-h-0'}`}>{renderView()}</div>
+          <div className={`mx-auto max-w-[1600px] ${isPageScrollable ? 'min-h-full' : 'h-full min-h-0'}`}><Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading...</div>}>{renderView()}</Suspense></div>
         </div>
 
         <Cmd isOpen={isCmdOpen} onClose={() => setIsCmdOpen(false)} />
@@ -372,28 +389,40 @@ function App() {
           <div className="w-[360px] rounded-2xl border border-slate-200 bg-white p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
             <div className="flex flex-col items-center text-center">
               <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-                <Command size={24} />
+                <UserRound size={24} />
               </div>
-              <h2 className="text-xl font-bold text-slate-900">系统认证</h2>
+              <h2 className="text-xl font-bold text-slate-900">管理员登录</h2>
               <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                该节点已启用安全保护，请输入您的认证密钥 (auth_secret) 以继续。
+                使用管理员用户名和密码进入控制台。
               </p>
-              
-              <form onSubmit={handleAuthSubmit} className="mt-6 w-full">
+
+              <form onSubmit={handleAuthSubmit} className="mt-6 w-full space-y-3">
                 <input
-                  type="password"
-                  placeholder="请输入密钥"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  type="text"
+                  name="username"
+                  autoComplete="username"
+                  placeholder="用户名"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   autoFocus
                 />
-                
+                <input
+                  type="password"
+                  name="password"
+                  autoComplete="current-password"
+                  placeholder="密码"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+                {authError ? <p className="text-left text-xs text-rose-600">{authError}</p> : null}
                 <button
                   type="submit"
-                  className="mt-4 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white transition-all hover:bg-blue-700 active:scale-[0.98]"
+                  disabled={isAuthenticating || !authUsername.trim() || !authPassword}
+                  className="w-full rounded-lg bg-blue-600 py-3 text-sm font-bold text-white transition-all hover:bg-blue-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  确认登录
+                  {isAuthenticating ? '正在登录...' : '登录'}
                 </button>
               </form>
             </div>

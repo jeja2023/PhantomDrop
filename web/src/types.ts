@@ -66,7 +66,7 @@ export interface TunnelStatus {
 export interface SettingsPayload {
   webhook_url?: string | null
   update_rate?: number | null
-  auth_secret?: string | null
+  admin_username?: string | null
   decode_depth?: string | null
   public_hub_url?: string | null
   account_domain?: string | null
@@ -82,7 +82,6 @@ export interface SettingsPayload {
   sub2api_url?: string | null
   sub2api_key?: string | null
 }
-
 export interface CloudflareAutomationStatus {
   running: boolean
   current_step?: string | null
@@ -185,25 +184,10 @@ export interface GeneratedAccountRecord {
   id: string
   run_id: string
   address: string
-  password: string
   status: string
   created_at: number
-  access_token?: string | null
-  refresh_token?: string | null
-  session_token?: string | null
-  id_token?: string | null
-  device_id?: string | null
-  workspace_id?: string | null
-  chatgpt_account_id?: string | null
-  chatgpt_user_id?: string | null
-  organization_id?: string | null
-  plan_type?: string | null
-  expires_in?: number | null
-  token_version?: number | null
-  oauth_credentials_json?: string | null
   upload_status?: string | null
   account_type?: string | null
-  proxy_url?: string | null
   pool_tag?: string | null
   last_used_at?: number | null
   rate_limit_reset_at?: number | null
@@ -215,7 +199,6 @@ export interface GeneratedAccountRecord {
   proxy_status?: string | null
   proxy_last_checked_at?: number | null
 }
-
 export interface EmailPageResponse {
   items: EmailRecordApi[]
   total: number

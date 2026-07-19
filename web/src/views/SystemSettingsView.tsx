@@ -12,6 +12,7 @@ import {
   Power,
   Server,
   ChevronDown,
+  UserRound,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { fetchJson, postJson } from '../lib/api'
@@ -73,9 +74,12 @@ export default function SystemSettingsView() {
   const [webhookUrl, setWebhookUrl] = useState('')
   const [accountDomain, setAccountDomain] = useState('phantom.local')
   const [updateRate, setUpdateRate] = useState(1000)
-  const [authSecret, setAuthSecret] = useState('')
+  const [adminUsername, setAdminUsername] = useState('admin')
+  const [currentAdminPassword, setCurrentAdminPassword] = useState('')
+  const [newAdminPassword, setNewAdminPassword] = useState('')
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('')
+  const [isUpdatingAdmin, setIsUpdatingAdmin] = useState(false)
   const [decodeDepth, setDecodeDepth] = useState('深度扫描')
-  const [showSecret, setShowSecret] = useState(false)
   const [cloudflareDefaultMode, setCloudflareDefaultMode] = useState<CloudflareMode>('public_domain')
   const [cloudflarePublicUrl, setCloudflarePublicUrl] = useState('')
   const [cloudflareRouteLocalPart, setCloudflareRouteLocalPart] = useState('inbox')
@@ -113,7 +117,7 @@ export default function SystemSettingsView() {
         setWebhookUrl(settings.webhook_url || '')
         setAccountDomain(settings.account_domain || 'phantom.local')
         setUpdateRate(Math.max(1000, settings.update_rate || 1000))
-        setAuthSecret(settings.auth_secret || '')
+        setAdminUsername(settings.admin_username || 'admin')
         setDecodeDepth(settings.decode_depth || '深度扫描')
         setCloudflareDefaultMode(settings.cloudflare_default_mode || 'public_domain')
         setCloudflarePublicUrl(settings.cloudflare_public_url || '')
@@ -180,7 +184,6 @@ export default function SystemSettingsView() {
       webhook_url: webhookUrl || null,
       account_domain: accountDomain || null,
       update_rate: updateRate,
-      auth_secret: authSecret || null,
       decode_depth: decodeDepth,
       cloudflare_default_mode: cloudflareDefaultMode,
       cloudflare_public_url: cloudflarePublicUrl || null,
@@ -204,6 +207,53 @@ export default function SystemSettingsView() {
         },
       }),
     )
+  }
+
+  const handleUpdateAdminCredentials = async () => {
+    const username = adminUsername.trim()
+    if (username.length < 3 || username.length > 64) {
+      showToast({ title: '用户名格式不正确', desc: '用户名长度必须为 3 到 64 个字符。', tone: 'error' })
+      return
+    }
+    if (!currentAdminPassword) {
+      showToast({ title: '请输入当前密码', tone: 'error' })
+      return
+    }
+    if (newAdminPassword && newAdminPassword.length < 12) {
+      showToast({ title: '新密码过短', desc: '管理员密码至少需要 12 个字符。', tone: 'error' })
+      return
+    }
+    if (newAdminPassword !== confirmAdminPassword) {
+      showToast({ title: '两次输入的新密码不一致', tone: 'error' })
+      return
+    }
+
+    setIsUpdatingAdmin(true)
+    try {
+      await postJson<{ status: string; username: string }, {
+        current_password: string
+        username: string
+        new_password?: string
+      }>('/api/admin/credentials', {
+        current_password: currentAdminPassword,
+        username,
+        new_password: newAdminPassword || undefined,
+      })
+      setCurrentAdminPassword('')
+      setNewAdminPassword('')
+      setConfirmAdminPassword('')
+      showToast({ title: '管理员凭据已更新', desc: '请使用新凭据重新登录。' })
+      await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
+      window.dispatchEvent(new CustomEvent('phantom-unauthorized'))
+    } catch (error) {
+      showToast({
+        title: '管理员凭据更新失败',
+        desc: error instanceof Error ? error.message : '请检查当前密码。',
+        tone: 'error',
+      })
+    } finally {
+      setIsUpdatingAdmin(false)
+    }
   }
 
   const handleSave = async () => {
@@ -595,8 +645,84 @@ export default function SystemSettingsView() {
 
         {/* 右栏 */}
         <div className="min-w-0 space-y-4">
-          {/* 网络与安全设置 */}
-          <SettingsSectionCard icon={<Globe size={14} />} title="网络与安全设置" defaultExpanded={false}>
+          <SettingsSectionCard icon={<UserRound size={14} />} title="账户与登录">
+            <SettingsRow
+              title="管理员用户名"
+              hint="控制台登录账户"
+              control={
+                <input
+                  aria-label="管理员用户名"
+                  autoComplete="username"
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  disabled={isLoading || isUpdatingAdmin}
+                  placeholder="admin"
+                  className="phantom-input w-full"
+                />
+              }
+            />
+            <SettingsRow
+              title="当前密码"
+              hint="修改登录凭据时校验"
+              control={
+                <input
+                  aria-label="当前管理员密码"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentAdminPassword}
+                  onChange={(e) => setCurrentAdminPassword(e.target.value)}
+                  disabled={isLoading || isUpdatingAdmin}
+                  placeholder="请输入当前密码"
+                  className="phantom-input w-full"
+                />
+              }
+            />
+            <SettingsRow
+              title="新密码"
+              hint="留空则只修改用户名"
+              control={
+                <input
+                  aria-label="新管理员密码"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newAdminPassword}
+                  onChange={(e) => setNewAdminPassword(e.target.value)}
+                  disabled={isLoading || isUpdatingAdmin}
+                  placeholder="至少 12 个字符"
+                  className="phantom-input w-full"
+                />
+              }
+            />
+            <SettingsRow
+              title="确认新密码"
+              hint="再次输入新密码"
+              control={
+                <div className="flex gap-2">
+                  <input
+                    aria-label="确认新管理员密码"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmAdminPassword}
+                    onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                    disabled={isLoading || isUpdatingAdmin}
+                    placeholder="再次输入新密码"
+                    className="phantom-input min-w-0 flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleUpdateAdminCredentials}
+                    disabled={isLoading || isUpdatingAdmin}
+                    className="phantom-btn phantom-btn--secondary h-8 shrink-0 px-3"
+                  >
+                    {isUpdatingAdmin ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+                    <span className="text-[10px] font-bold">更新</span>
+                  </button>
+                </div>
+              }
+            />
+          </SettingsSectionCard>
+          {/* 网络与运行设置 */}
+          <SettingsSectionCard icon={<Globe size={14} />} title="网络与运行设置" defaultExpanded={false}>
             <SettingsRow
               title="推送地址"
               hint="边缘节点回传入口"
@@ -644,33 +770,6 @@ export default function SystemSettingsView() {
                     className="flex-grow appearance-none h-1 bg-slate-200 rounded-full cursor-pointer accent-blue-600"
                   />
                   <span className="text-[10px] font-black font-mono text-blue-600 w-12 text-right">{updateRate}ms</span>
-                </div>
-              }
-            />
-            <SettingsRow
-              title="节点认证密钥"
-              hint="边缘节点请求鉴权"
-              control={
-                <div className="relative">
-                  <input
-                    aria-label="节点认证密钥"
-                    title="节点认证密钥"
-                    type={showSecret ? 'text' : 'password'}
-                    value={authSecret}
-                    onChange={(e) => setAuthSecret(e.target.value)}
-                    disabled={isLoading}
-                    placeholder="请输入认证密钥"
-                    className="phantom-input w-full pr-10"
-                  />
-                  <button
-                    type="button"
-                    aria-label={showSecret ? '隐藏节点认证密钥' : '显示节点认证密钥'}
-                    title={showSecret ? '隐藏节点认证密钥' : '显示节点认证密钥'}
-                    onClick={() => setShowSecret(!showSecret)}
-                    className="absolute right-0 top-0 bottom-0 px-3 flex items-center justify-center text-slate-400 hover:text-blue-500 transition-colors"
-                  >
-                    <Lock size={14} className={showSecret ? 'text-blue-500' : ''} />
-                  </button>
                 </div>
               }
             />

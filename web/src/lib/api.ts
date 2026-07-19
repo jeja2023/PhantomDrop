@@ -20,14 +20,8 @@ export async function parseApiError(response: Response): Promise<string> {
 }
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('phantom_auth_token')
-  
   const headers = new Headers(init?.headers)
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-    headers.set('X-Auth-Token', token)
-  }
-  const credentials = init?.credentials ?? (token ? 'include' : 'same-origin')
+  const credentials = init?.credentials ?? 'include'
 
   const response = await fetch(buildApiUrl(path), {
     ...init,
@@ -36,7 +30,6 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
   })
 
   if (response.status === 401) {
-    localStorage.removeItem('phantom_auth_token')
     window.dispatchEvent(new CustomEvent('phantom-unauthorized'))
     throw new Error('未授权，请重新登录')
   }

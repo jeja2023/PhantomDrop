@@ -1,6 +1,6 @@
 {
   "name": "network",
-  "version": "0.0.18",
+  "version": "0.0.33",
   "description": "幻影中台边缘拦截节点",
   "main": "src/index.ts",
   "scripts": {
@@ -12,6 +12,6 @@
   },
   "devDependencies": {
     "typescript": "^5.0.0",
-    "wrangler": "^4.90.0"
+    "wrangler": "^4.112.0"
   }
 }

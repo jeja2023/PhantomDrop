@@ -31,7 +31,7 @@ impl RegistrationManager {
             .create_generated_account(run_id, address, password, status, account_type, None)
             .await
             .map(|_| ())
-            .map_err(|e| format!("账号持久化失败: {:?}", e))
+            .map_err(|e| format!("账号持久化失败: {e:?}"))
     }
 
     /// 标记注册任务的中间状态

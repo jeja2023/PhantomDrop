@@ -12,7 +12,6 @@ impl ImpersonateProvider {
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(30))
             .pool_idle_timeout(Duration::from_secs(90))
-            .danger_accept_invalid_certs(true)
             .cookie_store(true);
 
         if let Some(proxy) = proxy_url.filter(|u| !u.trim().is_empty()) {
@@ -31,9 +30,7 @@ impl ImpersonateProvider {
         );
         headers.insert(
             "sec-ch-ua",
-            crate::openai::constants::SEC_CH_UA
-                .parse()
-                .unwrap(),
+            crate::openai::constants::SEC_CH_UA.parse().unwrap(),
         );
         headers.insert("sec-ch-ua-mobile", "?0".parse().unwrap());
         headers.insert("sec-ch-ua-platform", "\"Windows\"".parse().unwrap());

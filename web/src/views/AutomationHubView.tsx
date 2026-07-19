@@ -89,16 +89,15 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   const [runTotal, setRunTotal] = useState(0)
   const [runPage, setRunPage] = useState(1)
   const [runPageSize, setRunPageSize] = useState(10) // 压缩为每页10条
-  const [_runStatusFilter, _setRunStatusFilter] = useState('')
-  const [_runWorkflowFilter, _setRunWorkflowFilter] = useState('')
-  const [_runWorkflowMatch, _setRunWorkflowMatch] = useState<'fuzzy' | 'exact'>('fuzzy')
+  const [_runStatusFilter] = useState('')
+  const [_runWorkflowFilter] = useState('')
+  const [_runWorkflowMatch] = useState<'fuzzy' | 'exact'>('fuzzy')
   
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [steps, setSteps] = useState<WorkflowStepRecord[]>([])
   const [accounts, setAccounts] = useState<GeneratedAccountRecord[]>([])
   const [isStepsLoading, setIsStepsLoading] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [_copiedOutput, _setCopiedOutput] = useState(false)
   const [activeMonitorTab, setActiveMonitorTab] = useState<'steps' | 'outputs'>('steps')
   const [selectedAccount, setSelectedAccount] = useState<GeneratedAccountRecord | null>(null)
   const [oauthFolded, setOauthFolded] = useState(true)
@@ -113,7 +112,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   const renderMessageWithScreenshot = useCallback((message: string, runId: string) => {
     const redacted = redactMessage(message)
     // 联合正则表达式，支持传统的 screenshot_ 标识以及新版的 [点击预览](/debug/snap_xxx) 格式
-    const regex = /screenshot_([a-zA-Z0-9_\-\.]+)|\[点击预览\]\(\/debug\/([^)]+)\)/g
+    const regex = /screenshot_([a-zA-Z0-9_.-]+)|\[点击预览\]\(\/debug\/([^)]+)\)/g
     const parts: React.ReactNode[] = []
     let lastIndex = 0
     let match
@@ -160,14 +159,14 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   }, [setPreviewUrl])
 
   // 1. 加载所有工作流
-  const loadWorkflows = async () => {
+  const loadWorkflows = useCallback(async () => {
     try {
       const data = await fetchJson<WorkflowDefinition[]>('/api/workflows')
       setWorkflows(data)
     } catch (error) {
       console.error('Failed to load workflows:', error)
     }
-  }
+  }, [])
 
   // 2. 加载 Runs 运行历史（共享监控大盘）
   const loadRuns = useCallback(async (
@@ -222,7 +221,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   useEffect(() => {
     void loadWorkflows()
     void loadRuns(1, 10, false)
-  }, [])
+  }, [loadRuns, loadWorkflows])
 
   // 轮询 Runs 列表状态
   useEffect(() => {
@@ -537,7 +536,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
                           </span>
                         </div>
                         <div className="text-[8px] font-mono text-slate-400 font-bold leading-none select-all truncate">
-                          API_KEY: {acc.session_token || acc.access_token || '---'}
+                          {acc.account_type || 'registered account'}
                         </div>
                       </div>
                     ))
@@ -597,7 +596,6 @@ function RegistrationSubPanel({
   workflows,
   onLoadWorkflows,
   onTriggerRun,
-  refreshIntervalMs: _refreshIntervalMs,
 }: RegistrationSubPanelProps) {
   const showToast = useToast()
 
@@ -1264,19 +1262,10 @@ function WorkflowParamModal({
   onSave,
   isSaving,
 }: WorkflowParamModalProps) {
-  const [draftTitle, setDraftTitle] = useState('')
-  const [draftSummary, setDraftSummary] = useState('')
-  const [draftBatchSize, setDraftBatchSize] = useState(1)
-  const [draftAccountDomain, setDraftAccountDomain] = useState('')
-
-  useEffect(() => {
-    if (isOpen && workflow) {
-      setDraftTitle(workflow.title)
-      setDraftSummary(workflow.summary)
-      setDraftBatchSize(workflow.parameters?.batch_size ?? 1)
-      setDraftAccountDomain(workflow.parameters?.account_domain ?? '')
-    }
-  }, [isOpen, workflow])
+  const [draftTitle, setDraftTitle] = useState(workflow.title)
+  const [draftSummary, setDraftSummary] = useState(workflow.summary)
+  const [draftBatchSize, setDraftBatchSize] = useState(workflow.parameters?.batch_size ?? 1)
+  const [draftAccountDomain, setDraftAccountDomain] = useState(workflow.parameters?.account_domain ?? '')
 
   if (!isOpen) return null
 

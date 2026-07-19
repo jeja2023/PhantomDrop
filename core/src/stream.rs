@@ -44,14 +44,19 @@ pub async fn sse_handler(
     let stream = stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
             Ok(payload) => {
-                let event = Event::default()
-                    .event(payload.event_type)
-                    .data(serde_json::to_string(&payload.data).unwrap());
+                let data =
+                    serde_json::to_string(&payload.data).unwrap_or_else(|_| "null".to_string());
+                let event = Event::default().event(payload.event_type).data(data);
                 Some((Ok(event), rx))
             }
-            Err(_) => None,
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                let event = Event::default()
+                    .event("resync")
+                    .data(format!(r#"{{"skipped":{skipped}}}"#));
+                Some((Ok(event), rx))
+            }
+            Err(broadcast::error::RecvError::Closed) => None,
         }
     });
-
     Sse::new(stream).keep_alive(KeepAlive::default().interval(Duration::from_secs(15)))
 }

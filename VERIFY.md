@@ -1,31 +1,76 @@
 # 本地验证指南
 
-在普通 PowerShell 终端中运行以下命令，验证后端、前端和 Worker 的基础质量门禁。
+在项目根目录执行以下 `V0.0.33` 质量门禁。
 
 ## Rust 后端
 
 ```powershell
-cd D:\project\PhantomDrop\core
-cargo test --target-dir target-local
-cargo test openai::oauth --target-dir target-local -- --nocapture
+cd core
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+cargo audit
 ```
-
-如果遇到 `拒绝访问 (os error 5)`，通常是当前执行环境无法写入 Cargo target 目录。请换到普通用户终端，或清理被占用的 target 目录后重试。
 
 ## Web 前端
 
 ```powershell
-cd D:\project\PhantomDrop\web
+cd web
+npm ci
+npm run lint
 npm run build
+npm audit --omit=dev --audit-level=high
 ```
-
-如果 Vite/Tailwind 原生模块报 `spawn EPERM`，通常是沙箱阻止了 Node 子进程或原生模块加载。请在普通 PowerShell 终端中运行。
 
 ## Cloudflare Worker
 
 ```powershell
-cd D:\project\PhantomDrop\network
+cd network
+npm ci
 npm run typecheck
+npm audit --omit=dev --audit-level=high
 ```
 
-`npm run dry-run` 会调用 Wrangler，可能与 Cloudflare 通信并传输打包元数据；只在明确允许外联验证时运行。
+`npm run dry-run` 会调用 Wrangler，并可能向 Cloudflare 传输打包元数据，只在允许外联时执行。
+
+## PowerShell 自动化
+
+```powershell
+$tokens = $null
+$errors = $null
+[void][Management.Automation.Language.Parser]::ParseFile(
+  (Resolve-Path '.\setup-cloudflare-mail.ps1'),
+  [ref]$tokens,
+  [ref]$errors
+)
+if ($errors.Count) { throw ($errors -join [Environment]::NewLine) }
+```
+
+对 `initialize-cloudflare-automation.ps1` 重复同样检查。中文脚本保留 UTF-8 BOM，以兼容 Windows PowerShell 5。
+
+## 认证冒烟测试
+
+使用一次性数据库启动服务，验证管理认证与机器认证相互隔离：
+
+```powershell
+$env:ADMIN_USERNAME = 'verify-admin'
+$env:ADMIN_PASSWORD = 'verify-password-1234'
+$env:HUB_SECRET = 'verify-machine-secret-5678'
+$env:PHANTOM_DB_URL = 'sqlite://../artifacts/auth-smoke.sqlite3?mode=rwc'
+$env:PORT = '9011'
+$env:WEB_DIST = '..\web\dist'
+cargo run --manifest-path .\core\Cargo.toml
+```
+
+另一个终端检查：未登录管理 API 返回 `401`；错误密码返回 `401`；正确用户名/密码设置 Cookie 后返回 `200`；直接使用 `HUB_SECRET` 登录仍返回 `401`；`/ingest` 仅接受正确的 `X-Hub-Secret`。删除 `HUB_SECRET` 后重启，`/health` 仍为 `200`，`/ingest` 返回 `503`。
+
+## Docker
+
+```powershell
+$env:ADMIN_USERNAME = 'verify-admin'
+$env:ADMIN_PASSWORD = 'verify-password-1234'
+docker compose config --quiet
+docker build --tag phantom-drop:0.0.33 .
+```
+
+`HUB_SECRET` 在 Docker 验证中是可选项。只有需要验证 Worker 邮件接入时才设置。

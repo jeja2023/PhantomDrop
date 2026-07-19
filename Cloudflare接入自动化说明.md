@@ -1,5 +1,12 @@
 # Cloudflare 接入自动化说明
 
+## 认证边界（V0.0.33）
+
+- 管理控制台使用独立的管理员用户名和密码，Cloudflare 自动化不读取管理登录凭据。
+- `HUB_SECRET` 只用于 Email Worker 以 `X-Hub-Secret` 调用 Hub `/ingest`。
+- 不启用 Worker 邮件接入时，Hub 可以不配置 `HUB_SECRET`；此时 `/ingest` 返回 `503`。
+- 启用 Worker 时，在 Hub 进程环境设置强随机 `HUB_SECRET`，脚本会通过 `wrangler secret put HUB_SECRET` 同步到 Cloudflare Secret Store。
+- `HUB_SECRET` 不写入 `wrangler.toml` 或 `.automation/cloudflare-config.json`，也不能用于登录管理端。
 ## 目标
 
 将 `Cloudflare Email Routing -> Email Worker -> PhantomDrop /ingest` 的接入流程收敛成一个统一脚本：
@@ -11,9 +18,9 @@
 执行入口：
 
 - 首次授权初始化：
-  [initialize-cloudflare-automation.ps1](d:/project/PhantomDrop/initialize-cloudflare-automation.ps1)
+  [initialize-cloudflare-automation.ps1](initialize-cloudflare-automation.ps1)
 - 日常自动执行：
-  [setup-cloudflare-mail.ps1](d:/project/PhantomDrop/setup-cloudflare-mail.ps1)
+  [setup-cloudflare-mail.ps1](setup-cloudflare-mail.ps1)
 
 ## 统一流程
 
@@ -23,7 +30,7 @@
 2. 规范化公网地址
 3. 检查公网 `/health`
 4. 如本地后端可达，回填本地 `public_hub_url` 和隧道登记
-5. 更新 [wrangler.toml](d:/project/PhantomDrop/network/wrangler.toml)
+5. 更新 [wrangler.toml](network/wrangler.toml)
 6. 自动部署 Worker
 7. 自动调用 Worker `health` 和 `relay-test`
 8. 如具备 Cloudflare API 凭据，自动创建或更新 Email Routing 规则
@@ -42,8 +49,8 @@
 
 逻辑：
 
-1. 检查本地 `http://127.0.0.1:4000/health`
-2. 自动启动 `cloudflared tunnel --url http://127.0.0.1:4000 --protocol http2 --edge-ip-version 4`
+1. 检查本地 `http://127.0.0.1:9010/health`
+2. 自动启动 `cloudflared tunnel --url http://127.0.0.1:9010 --protocol http2 --edge-ip-version 4`
 3. 从日志中提取 `https://*.trycloudflare.com`
 4. 用这个地址继续后续所有步骤
 
@@ -63,7 +70,7 @@
 
 输入示例：
 
-- `http://123.45.67.89:4000`
+- `http://123.45.67.89:9010`
 - `https://123.45.67.89`
 
 逻辑：
@@ -151,7 +158,7 @@
 
 执行后会把配置写入：
 
-- [cloudflare-config.json](d:/project/PhantomDrop/.automation/cloudflare-config.json)
+- [cloudflare-config.json](.automation/cloudflare-config.json)
 
 之后主脚本会自动读取，不再要求你重复输入这些值。
 
@@ -167,7 +174,6 @@
 
 - 默认模式
 - 默认公网地址
-- Hub Secret
 - Route Local Part
 - Zone Domain
 - Cloudflare API Token
@@ -188,7 +194,7 @@
 ### 公网服务器，无域名
 
 ```powershell
-.\setup-cloudflare-mail.ps1 -Mode public_ip -PublicUrl "http://123.45.67.89:4000"
+.\setup-cloudflare-mail.ps1 -Mode public_ip -PublicUrl "http://123.45.67.89:9010"
 ```
 
 ### 公网服务器，有域名
@@ -222,13 +228,13 @@ $env:CLOUDFLARE_ZONE_DOMAIN = "example.com"
    - `GET /health`
    - `POST /relay-test`
 
-Worker 侧诊断接口由 [network/src/index.ts](d:/project/PhantomDrop/network/src/index.ts) 提供。
+Worker 侧诊断接口由 [network/src/index.ts](network/src/index.ts) 提供。
 
 ## 输出结果
 
 脚本会把最后一次执行摘要写入：
 
-- [cloudflare-mail-last-run.json](d:/project/PhantomDrop/.automation/cloudflare-mail-last-run.json)
+- [cloudflare-mail-last-run.json](.automation/cloudflare-mail-last-run.json)
 
 其中包含：
 

@@ -1,9 +1,16 @@
 use crate::db::DataLake;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 /// 启动代理质量心跳检测后台循环
 pub fn start_proxy_heartbeat_loop(data_lake: Arc<DataLake>) {
     tokio::spawn(async move {
+        let concurrency = std::env::var("MAX_CONCURRENT_PROXY_CHECKS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(8);
+        let slots = Arc::new(Semaphore::new(concurrency));
         println!("🚀 [代理心跳] 代理质量与 RTT 心跳检测器已启动，每 5 分钟轮询一次...");
         loop {
             // 每 5 分钟执行一次心跳检测
@@ -13,7 +20,7 @@ pub fn start_proxy_heartbeat_loop(data_lake: Arc<DataLake>) {
             let accounts = match data_lake.list_all_accounts_with_proxies().await {
                 Ok(accs) => accs,
                 Err(e) => {
-                    eprintln!("🔴 [代理心跳] 无法读取代理账号列表: {:?}", e);
+                    eprintln!("🔴 [代理心跳] 无法读取代理账号列表: {e:?}");
                     continue;
                 }
             };
@@ -26,32 +33,55 @@ pub fn start_proxy_heartbeat_loop(data_lake: Arc<DataLake>) {
 
                 let data_lake_clone = data_lake.clone();
                 let account_id = account.id.clone();
+                let permit = Arc::clone(&slots).acquire_owned().await;
+                let Ok(permit) = permit else {
+                    break;
+                };
 
                 // 异步多线程并行检测，不阻塞主轮询循环
                 tokio::spawn(async move {
+                    let _permit = permit;
                     let start = std::time::Instant::now();
-                    let client = crate::openai::impersonator::ImpersonateProvider::create_chrome_client(Some(&proxy_url));
+                    let client =
+                        crate::openai::impersonator::ImpersonateProvider::create_chrome_client(
+                            Some(&proxy_url),
+                        );
 
                     let check_fut = crate::openai::sentinel::check_ip_quality(&client);
-                    match tokio::time::timeout(tokio::time::Duration::from_secs(10), check_fut).await {
+                    match tokio::time::timeout(tokio::time::Duration::from_secs(10), check_fut)
+                        .await
+                    {
                         Ok(Ok(info)) => {
                             let rtt = start.elapsed().as_millis() as i64;
-                            let ip_type = if info.is_datacenter { "datacenter" } else { "residential" };
-                            let _ = data_lake_clone.update_proxy_quality(&account_id, rtt, ip_type, "active").await;
+                            let ip_type = if info.is_datacenter {
+                                "datacenter"
+                            } else {
+                                "residential"
+                            };
+                            let _ = data_lake_clone
+                                .update_proxy_quality(&account_id, rtt, ip_type, "active")
+                                .await;
                             println!(
-                                "✅ [代理心跳] 账号 {} 检测成功 | 出口信息已隐藏 | 延迟: {}ms | 类型: {}",
-                                account_id, rtt, ip_type
+                                "✅ [代理心跳] 账号 {account_id} 检测成功 | 出口信息已隐藏 | 延迟: {rtt}ms | 类型: {ip_type}"
                             );
                         }
                         Ok(Err(e)) => {
                             // 检测失败，标记为离线
-                            let _ = data_lake_clone.update_proxy_quality(&account_id, 9999, "unknown", "offline").await;
-                            eprintln!("⚠️ [代理心跳] 账号 {} 检测失败 (已标为离线) | 错误: {}", account_id, e);
+                            let _ = data_lake_clone
+                                .update_proxy_quality(&account_id, 9999, "unknown", "offline")
+                                .await;
+                            eprintln!(
+                                "⚠️ [代理心跳] 账号 {account_id} 检测失败 (已标为离线) | 错误: {e}"
+                            );
                         }
                         Err(_) => {
                             // 超时，标记为离线
-                            let _ = data_lake_clone.update_proxy_quality(&account_id, 9999, "unknown", "offline").await;
-                            eprintln!("⚠️ [代理心跳] 账号 {} 检测超时 (10秒超时，已标为离线)", account_id);
+                            let _ = data_lake_clone
+                                .update_proxy_quality(&account_id, 9999, "unknown", "offline")
+                                .await;
+                            eprintln!(
+                                "⚠️ [代理心跳] 账号 {account_id} 检测超时 (10秒超时，已标为离线)"
+                            );
                         }
                     }
                 });

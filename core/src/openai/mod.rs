@@ -6,11 +6,11 @@ pub mod checker;
  * 以及两阶段注册状态机
  */
 pub mod constants;
+pub mod gateway;
 pub mod impersonator;
 pub mod oauth;
+pub mod proxy_checker;
 pub mod register;
 pub mod sentinel;
 pub mod sms;
 pub mod uploader;
-pub mod gateway;
-pub mod proxy_checker;

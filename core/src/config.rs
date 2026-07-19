@@ -1,12 +1,12 @@
 use std::env;
 use std::net::SocketAddr;
 
-use axum::http::HeaderValue;
+use axum::http::{HeaderValue, Method, header};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 #[derive(Clone)]
 pub struct AppConfig {
     pub bind_addr: SocketAddr,
-    #[allow(dead_code)]
     pub cors_origins: Option<Vec<HeaderValue>>,
     pub debug_assets_enabled: bool,
 }
@@ -56,8 +56,18 @@ impl AppConfig {
         })
     }
 
-    pub fn cors_layer(&self) -> tower_http::cors::CorsLayer {
-        tower_http::cors::CorsLayer::permissive()
+    pub fn cors_layer(&self) -> CorsLayer {
+        match &self.cors_origins {
+            Some(origins) => CorsLayer::new()
+                .allow_origin(AllowOrigin::list(origins.clone()))
+                .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                .allow_credentials(true),
+            None => CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        }
     }
 }
 
@@ -76,4 +86,21 @@ fn is_production_environment(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "prod" | "production"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn configured_origins_are_preserved() {
+        let original = std::env::var("CORS_ORIGINS").ok();
+        unsafe { std::env::set_var("CORS_ORIGINS", "https://console.example.com") };
+        let config = AppConfig::from_env().expect("config");
+        assert_eq!(config.cors_origins.as_ref().map(Vec::len), Some(1));
+        match original {
+            Some(value) => unsafe { std::env::set_var("CORS_ORIGINS", value) },
+            None => unsafe { std::env::remove_var("CORS_ORIGINS") },
+        }
+    }
 }

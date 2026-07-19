@@ -1,88 +1,79 @@
-# 幻影中枢
+# PhantomDrop 幻影中枢
 
-幻影中枢是一个以邮件接收、验证码提取、实时事件流和自动化工作流为核心的本地中枢项目。
+PhantomDrop 是一个以邮件接收、验证码提取、实时事件流和自动化工作流为核心的本地中枢。当前版本为 `V0.0.33`。
 
 ## 目录结构
 
-- `core/`：Rust 后端与内建控制台，提供接口、实时事件流、工作流执行与数据存储。
-- `web/`：前端界面，用于查看邮件、日志、内网穿透状态、自动化工作流和系统设置。
-- `network/`：边缘邮件转发节点，用于把外部邮件事件转发到中枢。
-- `tools/`：项目辅助工具。
+- `core/`：Rust 后端、SQLite 数据层和内建控制台。
+- `web/`：React 管理界面。
+- `network/`：Cloudflare 邮件转发 Worker。
+- `tools/`：发布与辅助工具。
 
-## 核心能力
+## 认证模型
 
-- 实时接收邮件并提取验证码、链接和正文信息。
-- 提供工作流定义、执行记录、步骤轨迹与任务产物查询。
-- 提供内网穿透登记页，允许登记公网地址供外部节点接入。
-- 提供系统设置页，集中维护密钥、回调地址、域名和自动化配置。
-- **单镜像交付**：前后端整合打包，后端原生托管前端 SPA，一键部署。
+管理端与机器通信使用两套完全独立的凭据：
 
-## 快速启动 (Docker/生产模式)
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD`：仅用于首次初始化管理员账户。密码经 Argon2id 加盐哈希后写入 SQLite，浏览器登录后使用 `HttpOnly`、`SameSite=Strict` Cookie；管理 API 不接受原始密码、Bearer 密钥或 `X-Auth-Token`。
+- `HUB_SECRET`：仅用于 Cloudflare Worker 调用 Hub 的 `/ingest`，不能登录管理端，也不会由管理设置 API 返回或写入自动化 JSON。
 
-推荐使用 Docker 进行一键部署，镜像中已内置完整的自动化执行环境。
+`HUB_SECRET` 不是运行核心控制台的必需项。不使用 Cloudflare Email Worker 时可以留空，此时 `/ingest` 返回 `503`，其他功能正常运行。启用 Worker 邮件接入时，Hub 和 Worker 必须配置相同的强随机 `HUB_SECRET`。
 
-1. **准备环境**：
-   复制并配置环境变量：`cp .env.example .env`
-2. **启动项目**：
-   ```bash
-   docker-compose up -d
-   ```
-3. **访问地址**：
-   `http://localhost:4000`
+## Docker 部署
 
-## 快速启动 (本地开发模式)
+1. 从 `.env.example` 创建 `.env`。
+2. 首次启动填写 `ADMIN_USERNAME` 和至少 12 个字符的 `ADMIN_PASSWORD`。
+3. 仅在启用 Worker 邮件接入时填写强随机 `HUB_SECRET`。
+4. 执行 `docker compose up -d --build`。
+5. 打开 `http://localhost:9010`，使用管理员用户名和密码登录。
 
-### 启动全栈环境
+管理员凭据初始化成功后保存在持久化 SQLite 数据库中。后续可在“系统设置与维护 -> 账户与登录”修改用户名或密码；修改后旧会话立即失效。从 `V0.0.31` 及更早版本升级且数据库尚无管理员时，第一次启动 `V0.0.33` 必须提供 `ADMIN_PASSWORD`；已在 `V0.0.32` 完成管理员初始化的数据库无需再次提供。旧 `auth_secret` 会在机器密钥校验通过后删除，且不会迁移为管理员密码。
 
-在项目根目录执行以下 PowerShell 脚本，将同时启动前端 Vite 开发服务器和后端 Rust 服务：
+容器以非 root 用户运行，SQLite 与自动化状态分别保存在 `data`、`automation` 命名卷。HTTPS 反向代理部署时设置 `COOKIE_SECURE=true`；本地 HTTP 访问保持 `false`。
+
+## 从旧版本升级生产环境
+
+可以原地升级到 `V0.0.33`，但必须使用现有 `data` 和 `automation` 命名卷，且先完成备份和认证迁移：
+
+1. 停止旧容器，避免备份时 SQLite WAL 仍在写入：`docker compose stop phantom-drop`。
+2. 备份数据卷：`docker run --rm -v phantomdrop_data:/source:ro -v ${PWD}:/backup alpine sh -c "cd /source && tar czf /backup/phantomdrop-data-before-v0.0.33.tgz ."`。卷名以 `docker volume ls` 的实际结果为准。
+3. 若旧数据库尚无管理员，在生产 `.env` 设置新的 `ADMIN_USERNAME` 与至少 12 个字符的 `ADMIN_PASSWORD`；已完成管理员初始化则保留数据库凭据，无需再次注入。
+4. 如果旧部署启用了 Worker，把旧数据库 `auth_secret` 的同一值设置为 `HUB_SECRET`。首次升级若缺失或不一致，服务会拒绝启动且保留旧值，避免 Worker 静默断开。
+5. 更新代码后执行 `docker compose up -d --build`，再检查 `docker compose logs --tail=200 phantom-drop` 和 `/health`。
+6. 使用管理员用户名/密码登录，确认邮件、工作流和账号数据正常。管理员创建成功后，后续改密在“账户与登录”完成。
+7. 需要轮换机器密钥时，再设置新的 `HUB_SECRET` 并执行 Cloudflare 自动化，将同一值同步到 Worker Secret Store。
+
+启动时会自动执行 SQLx 迁移。旧库若有重复的工作流步骤，升级预处理会保留每组最早记录后再创建唯一索引。不要用新的空卷替换现有 `data` 卷，否则看起来会像数据丢失。
+
+## 关键配置
+
+- `ADMIN_USERNAME`：首次初始化用户名，默认 `admin`。
+- `ADMIN_PASSWORD`：首次初始化密码，至少 12 个字符；已有管理员记录时不用于覆盖数据库凭据。
+- `HUB_SECRET`：可选的 Worker -> Hub 机器通信密钥。
+- `CORS_ORIGINS`：允许携带认证 Cookie 的来源白名单，生产环境不得使用 `*`。
+- `PHANTOM_GATEWAY_KEYS`：OpenAI 网关密钥到账号池的映射，格式为 `key=pool,key2=pool2`。
+- `MAX_CONCURRENT_WORKFLOWS`：工作流并发上限，默认 `2`。
+- `MAX_CONCURRENT_PROXY_CHECKS`：代理检测并发上限，默认 `8`。
+- `ENABLE_DEBUG_ASSETS`：调试截图开关，生产环境保持 `false`。
+
+Cloudflare Worker 的密钥使用 `npx wrangler secret put HUB_SECRET` 注入，不要写入 `wrangler.toml`。自动化脚本从 Hub 进程环境继承 `HUB_SECRET`，并同步到 Cloudflare Secret Store。
+
+## 本地开发
+
+日常开发使用持久化数据库 `core/phantom_core.db`，不是 `.codex-tmp` 中的一次性预览库。首次启动空库时设置管理员初始化变量；成功创建管理员后，用户名和 Argon2id 密码哈希保存在该数据库中，后续启动无需继续提供初始化变量。需要隔离测试时才使用 `.codex-tmp` 或 `artifacts` 下的临时数据库。
 
 ```powershell
-.\启动开发环境.ps1
-```
-
-默认地址：
-- 前端控制台：`http://127.0.0.1:5173`
-- 后端 API 基址：`http://127.0.0.1:4000`
-
-### 独立启动后端
-
-```bash
+# 后端
+$env:ADMIN_USERNAME = 'admin'
+$env:ADMIN_PASSWORD = 'change-this-local-password'
 cd core
-cargo run --release
+cargo run
+
+# 前端（另一个终端）
+cd web
+npm ci
+npm run dev
 ```
 
-## 部署说明
+如果 `core/phantom_core.db` 已完成初始化，可先执行 `Remove-Item Env:ADMIN_USERNAME, Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue` 再启动；环境变量不会覆盖已有管理员。开发库与生产命名卷是两套独立数据源，生产升级必须复用并备份原有 `data` 卷。
 
-### 环境变量配置
-
-请参考 `.env.example` 进行配置：
-
-- `auth_secret`: API 接口令牌，请在 Web 控制台“全局设置”中配置。
-- `HUB_SECRET`: 可选兜底环境变量；Docker 生产环境通常不需要配置。
-- `PHANTOM_DB_URL`: SQLite 数据库连接字符串（容器内建议保持默认）。
-- `CLOUDFLARE_API_TOKEN`: 用于驱动自动化脚本的 Cloudflare 令牌。
-- `WEB_DIST`: (可选) 前端静态产物目录。
-
-生产环境请设置 `APP_ENV=production`，并在 Web 控制台“全局设置”中配置接口令牌。Cloudflare Worker 侧不要把 `HUB_SECRET` 写入 `wrangler.toml`，请使用 `npx wrangler secret put HUB_SECRET` 注入同一个令牌。
-Worker 的 `/health` 会检查 `PHANTOM_HUB_URL` 和 `HUB_SECRET` 是否可用；`npm run dry-run` 会调用 Wrangler 并可能与 Cloudflare 通信。
-
-### 数据持久化
-
-Docker 部署时，请务必挂载以下两个目录以保证数据不丢失：
-- `./data`: 存储 SQLite 数据库。
-- `./.automation`: 存储自动化任务状态和日志。
-
-## 开发约定
-
-- 代码注释、界面文案和说明文档统一使用简体中文。
-- 改动界面文案时，不修改接口路径、环境变量键名和外部协议字段。
-- 提交前清理无关调试输出。
-- 编码统一使用 UTF-8，避免中文乱码。
-
-## 质量验证
-
-本地验证命令见 `VERIFY.md`。仓库已提供 GitHub Actions 工作流，覆盖 Rust 后端测试、Web 生产构建和 Worker 类型检查。
-
-## 专题文档
-
-- `docs/OAuth认证提取与导出说明.md`：记录 OpenAI OAuth 凭证提取、入库、兜底合并和批量导出的完整链路。
+默认前端地址为 `http://127.0.0.1:5173`，后端与单镜像入口为 `http://127.0.0.1:9010`。完整质量门禁和认证冒烟测试见 `VERIFY.md`，详细发布内容见 `更新日志.md`。

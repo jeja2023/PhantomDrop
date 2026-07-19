@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   emails: [],
   selectedEmailId: null,
   emailDetail: null,
@@ -1009,7 +1009,6 @@ function renderRunDetails() {
 function fillSettings(settings) {
   document.querySelector("#webhookUrl").value = settings.webhook_url || "";
   document.querySelector("#updateRate").value = settings.update_rate || 2000;
-  document.querySelector("#authSecret").value = settings.auth_secret || "";
   document.querySelector("#decodeDepth").value = settings.decode_depth || "深度扫描 / FULL_DEEP_SCAN";
   document.querySelector("#publicUrl").value = settings.public_hub_url || "";
   document.querySelector("#accountDomain").value = settings.account_domain || "";
@@ -1323,7 +1322,6 @@ settingsForm.addEventListener("submit", async (event) => {
   const payload = {
     webhook_url: document.querySelector("#webhookUrl").value.trim() || null,
     update_rate: Number(document.querySelector("#updateRate").value) || 2000,
-    auth_secret: document.querySelector("#authSecret").value.trim() || null,
     decode_depth: document.querySelector("#decodeDepth").value,
     public_hub_url: document.querySelector("#publicUrl").value.trim() || null,
     account_domain: document.querySelector("#accountDomain").value.trim() || null,

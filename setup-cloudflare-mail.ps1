@@ -1,8 +1,8 @@
-param(
+﻿param(
     [ValidateSet("auto", "local_trycloudflare", "public_ip", "public_domain")]
     [string]$Mode = "auto",
     [string]$PublicUrl,
-    [string]$HubSecret = "local_dev_secret",
+    [string]$HubSecret = $env:HUB_SECRET,
     [string]$RouteLocalPart = "inbox",
     [string]$ZoneDomain = $env:CLOUDFLARE_ZONE_DOMAIN,
     [string]$CloudflareApiToken = $env:CLOUDFLARE_API_TOKEN,
@@ -86,23 +86,6 @@ function Test-LocalBackend {
         return $true
     } catch {
         return $false
-    }
-}
-
-function Get-BackendAutomationConfig {
-    if (-not (Test-LocalBackend)) {
-        return @{}
-    }
-
-    try {
-        $settings = Invoke-RestMethod -Uri "http://127.0.0.1:9010/api/settings" -TimeoutSec 10
-        $config = @{}
-        foreach ($property in $settings.PSObject.Properties) {
-            $config[$property.Name] = $property.Value
-        }
-        return $config
-    } catch {
-        return @{}
     }
 }
 
@@ -203,37 +186,6 @@ function Test-HealthEndpoint([string]$BaseUrl, [string]$Label) {
     return $response
 }
 
-function Save-BackendRegistration([string]$BaseUrl) {
-    if (-not (Test-LocalBackend)) {
-        Write-Warn "Local backend is not running. Skipping local console registration."
-        return
-    }
-
-    Write-Step "Saving public URL into local PhantomDrop settings"
-    $settingsBody = @{
-        public_hub_url = $BaseUrl
-    } | ConvertTo-Json -Depth 5
-
-    $null = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:9010/api/settings/save" `
-        -Method Post `
-        -ContentType "application/json; charset=utf-8" `
-        -Body $settingsBody
-
-    $tunnelBody = @{
-        port = 9010
-        public_url = $BaseUrl
-    } | ConvertTo-Json -Depth 5
-
-    $null = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:9010/api/tunnel/start" `
-        -Method Post `
-        -ContentType "application/json; charset=utf-8" `
-        -Body $tunnelBody
-
-    Write-Ok "Local settings and tunnel registration updated."
-}
-
 function Update-WranglerToml([string]$BaseUrl, [string]$Secret) {
     Write-Step "Updating network/wrangler.toml"
     $content = Get-Content $wranglerTomlPath -Raw
@@ -299,10 +251,10 @@ function Invoke-WranglerDeploy([string]$ApiToken) {
 
 function Set-WorkerSecret([string]$Secret, [string]$ApiToken) {
     if ([string]::IsNullOrWhiteSpace($Secret)) {
-        throw "Hub Secret is empty. Configure the interface token in Global Settings before deploying Worker."
+        throw "HUB_SECRET is empty. Configure it in the Hub process environment before deploying Worker."
     }
     if ($Secret -eq "local_dev_secret") {
-        throw "Hub Secret is still using the development default. Please configure a production interface token first."
+        throw "HUB_SECRET still uses the development default. Configure a strong random machine secret first."
     }
 
     Write-Step "Syncing HUB_SECRET to Cloudflare Worker secret store"
@@ -567,12 +519,14 @@ Write-Host "Mode      : $Mode"
 Write-Host "========================================================"
 
 $automationConfig = Import-AutomationConfig
-$backendAutomationConfig = Get-BackendAutomationConfig
+if ($automationConfig.Remove("hub_secret")) {
+    Save-AutomationConfig -Config $automationConfig
+}
 
 $effectiveHubSecret = if ($PSBoundParameters.ContainsKey("HubSecret")) {
     $HubSecret
 } else {
-    Select-Value @($backendAutomationConfig['auth_secret'], $automationConfig['hub_secret'], $env:HUB_SECRET, $HubSecret)
+    Select-Value @($env:HUB_SECRET, $HubSecret)
 }
 
 if ($null -ne $effectiveHubSecret) {
@@ -587,14 +541,14 @@ if (-not [string]::IsNullOrWhiteSpace($effectiveHubSecret)) {
 $effectiveRouteLocalPart = if ($PSBoundParameters.ContainsKey("RouteLocalPart")) {
     $RouteLocalPart
 } else {
-    Select-Value @($backendAutomationConfig['cloudflare_route_local_part'], $automationConfig['route_local_part'], $RouteLocalPart, "inbox")
+    Select-Value @($automationConfig['route_local_part'], $RouteLocalPart, "inbox")
 }
-$effectiveZoneDomain = Select-Value @($ZoneDomain, $backendAutomationConfig['cloudflare_zone_domain'], $automationConfig['zone_domain'])
-$effectiveCloudflareApiToken = Select-Value @($CloudflareApiToken, $backendAutomationConfig['cloudflare_api_token'], $automationConfig['cloudflare_api_token'])
-$effectiveCloudflareZoneId = Select-Value @($CloudflareZoneId, $backendAutomationConfig['cloudflare_zone_id'], $automationConfig['cloudflare_zone_id'])
-$effectiveCloudflareAccountId = Select-Value @($CloudflareAccountId, $backendAutomationConfig['cloudflare_account_id'], $automationConfig['cloudflare_account_id'])
-$configuredDefaultMode = Select-Value @($backendAutomationConfig['cloudflare_default_mode'], $automationConfig['default_mode'])
-$configuredDefaultPublicUrl = Select-Value @($backendAutomationConfig['cloudflare_public_url'], $automationConfig['default_public_url'])
+$effectiveZoneDomain = Select-Value @($ZoneDomain, $automationConfig['zone_domain'])
+$effectiveCloudflareApiToken = Select-Value @($CloudflareApiToken, $automationConfig['cloudflare_api_token'])
+$effectiveCloudflareZoneId = Select-Value @($CloudflareZoneId, $automationConfig['cloudflare_zone_id'])
+$effectiveCloudflareAccountId = Select-Value @($CloudflareAccountId, $automationConfig['cloudflare_account_id'])
+$configuredDefaultMode = Select-Value @($automationConfig['default_mode'])
+$configuredDefaultPublicUrl = Select-Value @($automationConfig['default_public_url'])
 
 if ($Mode -eq "auto" -and -not [string]::IsNullOrWhiteSpace($configuredDefaultMode)) {
     $Mode = [string]$configuredDefaultMode
@@ -620,7 +574,6 @@ if ([string]::IsNullOrWhiteSpace($normalizedPublicUrl)) {
 }
 
 $null = Test-HealthEndpoint -BaseUrl $normalizedPublicUrl -Label "Public hub"
-Save-BackendRegistration -BaseUrl $normalizedPublicUrl
 Update-WranglerToml -BaseUrl $normalizedPublicUrl -Secret $effectiveHubSecret
 
 $deployResult = $null
@@ -667,9 +620,7 @@ $automationConfig.default_mode = $resolvedMode
 if ($resolvedMode -ne "local_trycloudflare") {
     $automationConfig.default_public_url = $normalizedPublicUrl
 }
-if (-not [string]::IsNullOrWhiteSpace($effectiveHubSecret)) {
-    $automationConfig.hub_secret = $effectiveHubSecret
-}
+
 if (-not [string]::IsNullOrWhiteSpace($effectiveRouteLocalPart)) {
     $automationConfig.route_local_part = $effectiveRouteLocalPart
 }

@@ -32,7 +32,7 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
   }
 
   private handleOpenConsole = () => {
-    window.open('http://127.0.0.1:4000/', '_blank', 'noopener,noreferrer')
+    window.open('http://127.0.0.1:9010/', '_blank', 'noopener,noreferrer')
   }
 
   render() {

@@ -59,8 +59,7 @@ pub fn redact_log_message(message: &str) -> String {
     }
 
     // 处理代理 URL 脱敏：生产控制台不展示代理主机、端口、用户名或密码。
-    if let Ok(re) = regex::Regex::new(r"(?i)\b(?:https?|socks4a?|socks5h?)://[^\s，,|]+")
-    {
+    if let Ok(re) = regex::Regex::new(r"(?i)\b(?:https?|socks4a?|socks5h?)://[^\s，,|]+") {
         output = re
             .replace_all(&output, |caps: &regex::Captures| {
                 let value = caps.get(0).map(|m| m.as_str()).unwrap_or_default();
