@@ -21,6 +21,10 @@ static KEYWORD_ALNUM_CODE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 static FALLBACK_CODE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b([0-9]{4,8})\b").expect("验证码兜底正则初始化失败"));
 
+static XAI_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b([A-Z0-9]{3})-([A-Z0-9]{3})\b").expect("xAI 验证码正则初始化失败")
+});
+
 // OpenAI 专用：精准匹配独立的 6 位数字验证码
 #[allow(dead_code)]
 static OPENAI_OTP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -224,6 +228,31 @@ impl NeuralParser {
                     })
             })
     }
+
+    /// xAI/Grok 邮件优先从主题提取 ABC-123 格式，再回退正文。
+    pub fn extract_xai_otp(subject: &str, text: &str, html: &str) -> Option<String> {
+        let normalized_html = Self::html_to_text(html);
+        [subject, text, normalized_html.as_str()]
+            .into_iter()
+            .find_map(|source| {
+                XAI_OTP_REGEX.captures_iter(source).find_map(|captures| {
+                    let first = captures.get(1)?.as_str();
+                    let second = captures.get(2)?.as_str();
+                    let code = format!("{first}{second}").to_ascii_uppercase();
+                    code.chars()
+                        .any(|character| character.is_ascii_digit())
+                        .then_some(code)
+                })
+            })
+    }
+
+    pub fn is_xai_sender(from: &str) -> bool {
+        let lower = from.to_ascii_lowercase();
+        lower.contains("@x.ai")
+            || lower.contains(".x.ai")
+            || lower.contains("spacexai")
+            || lower.contains("@grok.com")
+    }
 }
 
 impl ParseDepth {
@@ -339,5 +368,32 @@ mod tests {
             NeuralParser::extract_openai_otp("reference id 9876543210", ""),
             None
         );
+    }
+
+    #[test]
+    fn extracts_xai_subject_code_before_body_noise() {
+        assert_eq!(
+            NeuralParser::extract_xai_otp(
+                "SpaceXAI confirmation code: WKT-B4B",
+                "Ignore CSS marker PER100 and old code OLD-111.",
+                ""
+            )
+            .as_deref(),
+            Some("WKTB4B")
+        );
+    }
+
+    #[test]
+    fn extracts_xai_code_from_body_and_detects_sender() {
+        assert_eq!(
+            NeuralParser::extract_xai_otp(
+                "Your Grok confirmation code",
+                "Use ABC-123 to continue.",
+                ""
+            )
+            .as_deref(),
+            Some("ABC123")
+        );
+        assert!(NeuralParser::is_xai_sender("no-reply@accounts.x.ai"));
     }
 }

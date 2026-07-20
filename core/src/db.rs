@@ -1639,20 +1639,31 @@ impl DataLake {
 
         let email_lower = email.trim().to_lowercase();
 
-        let row = sqlx::query(
+        let rows = sqlx::query(
             "SELECT extracted_code FROM emails
              WHERE to_addr = ? AND extracted_code IS NOT NULL AND extracted_code != ''
-               AND extracted_code GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]'
                AND created_at >= ?
              ORDER BY created_at DESC
-             LIMIT 1",
+             LIMIT 10",
         )
         .bind(&email_lower)
         .bind(since_ts)
-        .fetch_optional(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
 
-        Ok(row.map(|r| r.get("extracted_code")))
+        Ok(rows.into_iter().find_map(|row| {
+            let raw = row.get::<String, _>("extracted_code");
+            let normalized = raw
+                .chars()
+                .filter(|character| character.is_ascii_alphanumeric())
+                .collect::<String>()
+                .to_ascii_uppercase();
+            (normalized.len() == 6
+                && normalized
+                    .chars()
+                    .any(|character| character.is_ascii_digit()))
+            .then_some(normalized)
+        }))
     }
 
     /// 内部链接轮询：根据收件地址查询最近的验证链接

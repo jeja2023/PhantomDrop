@@ -16,6 +16,7 @@ import {
   Activity,
   FolderSync,
   ShieldCheck,
+  Bot,
   ExternalLink,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -81,7 +82,7 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   const showToast = useToast()
   
   // 顶层 Tab
-  const [activeTab, setActiveTab] = useState<'register' | 'workflows'>('register')
+  const [activeTab, setActiveTab] = useState<'openai' | 'grok' | 'workflows'>('openai')
 
   // 工作区状态
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([])
@@ -284,17 +285,29 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
   return (
     <div className="page-shell relative animate-in fade-in duration-700 flex flex-col h-full min-h-0 overflow-hidden pb-0.5">
       {/* 顶部航母级分类大 Tab 栏 */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 mb-1.5 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2 mb-1.5 shrink-0">
         <button
-          onClick={() => setActiveTab('register')}
+          onClick={() => setActiveTab('openai')}
           className={`flex items-center gap-2.5 px-5 py-2 rounded-2xl text-xs font-black tracking-widest uppercase transition-all duration-300 ${
-            activeTab === 'register'
+            activeTab === 'openai'
               ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 border-transparent'
               : 'bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200/50'
           }`}
         >
           <Zap size={14} />
-          ⚡ 极速注册中心 (OpenAI Register)
+          OpenAI 注册中心
+        </button>
+
+        <button
+          onClick={() => setActiveTab('grok')}
+          className={`flex items-center gap-2.5 px-5 py-2 rounded-2xl text-xs font-black tracking-widest uppercase transition-all duration-300 ${
+            activeTab === 'grok'
+              ? 'bg-sky-600 text-white shadow-lg shadow-sky-500/20 border-transparent'
+              : 'bg-slate-100 hover:bg-slate-200 text-slate-500 border border-slate-200/50'
+          }`}
+        >
+          <Bot size={14} />
+          Grok 注册中心
         </button>
 
         <button
@@ -306,18 +319,23 @@ export default function AutomationHubView({ refreshIntervalMs }: { refreshInterv
           }`}
         >
           <FolderSync size={14} />
-          🔧 自动化工作流设计师 (Workflow Designer)
+          自动化工作流设计师
         </button>
       </div>
 
       {/* 工作表单与配置 */}
       <div className="mb-1.5 shrink-0">
-        {activeTab === 'register' ? (
+        {activeTab === 'openai' ? (
           <RegistrationSubPanel
             workflows={workflows}
             onLoadWorkflows={loadWorkflows}
             onTriggerRun={triggerWorkflowRun}
-            refreshIntervalMs={refreshIntervalMs}
+          />
+        ) : activeTab === 'grok' ? (
+          <GrokRegistrationSubPanel
+            workflows={workflows}
+            onLoadWorkflows={loadWorkflows}
+            onTriggerRun={triggerWorkflowRun}
           />
         ) : (
           <WorkflowDesignerSubPanel
@@ -587,9 +605,8 @@ function totalPages(total: number, size: number) {
 // ==========================================
 interface RegistrationSubPanelProps {
   workflows: WorkflowDefinition[]
-  onLoadWorkflows: () => void
-  onTriggerRun: (id: string) => void
-  refreshIntervalMs: number
+  onLoadWorkflows: () => Promise<void>
+  onTriggerRun: (id: string) => Promise<void>
 }
 
 function RegistrationSubPanel({
@@ -796,7 +813,7 @@ function RegistrationSubPanel({
       })
 
       // 3. 异步触发工作流运行，拉起有头浏览器！
-      onTriggerRun(browserWorkflow.id)
+      await onTriggerRun(browserWorkflow.id)
       
       showToast({
         title: '仿真浏览器已成功唤起！',
@@ -857,7 +874,7 @@ function RegistrationSubPanel({
     try {
       const saved = await handleSaveConfig()
       if (saved) {
-        onTriggerRun(targetWorkflowId)
+        await onTriggerRun(targetWorkflowId)
       }
     } finally {
       setRunningId(null)
@@ -874,7 +891,7 @@ function RegistrationSubPanel({
         <div className="flex items-center gap-1.5 shrink-0">
           <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping" />
           <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">
-            执行模式 (PLATFORM KINDS)
+            OpenAI 执行模式
           </h3>
         </div>
 
@@ -1194,7 +1211,7 @@ function RegistrationSubPanel({
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-500 uppercase">账号等级</label>
+            <label className="text-[10px] font-bold text-slate-500 uppercase">账号类型</label>
             <select
               value={accountType}
               onChange={(e) => setAccountType(e.target.value)}
@@ -1207,7 +1224,7 @@ function RegistrationSubPanel({
           </div>
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-500 uppercase">
-              浏览器无头模式 (HEADLESS)
+              浏览器无头模式
             </label>
             <select
               value={activePlatform === 'openai' ? 'true' : String(headless)}
@@ -1245,13 +1262,237 @@ function RegistrationSubPanel({
 }
 
 // ==========================================
-// 4. 自动化工作流设计师参数编辑弹窗组件 (Portal Modal)
+// 4. Grok 独立注册 SubPanel
+// ==========================================
+function GrokRegistrationSubPanel({
+  workflows,
+  onLoadWorkflows,
+  onTriggerRun,
+}: RegistrationSubPanelProps) {
+  const showToast = useToast()
+  const targetWorkflowId = 'grok_register_default'
+  const currentDef = workflows.find((workflow) => workflow.id === targetWorkflowId) ?? null
+
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [concurrency, setConcurrency] = useState(1)
+  const [batchSize, setBatchSize] = useState(1)
+  const [headless, setHeadless] = useState(true)
+  const [captchaKey, setCaptchaKey] = useState('')
+  const [solverUrl, setSolverUrl] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [isRunning, setIsRunning] = useState(false)
+  const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
+
+  useEffect(() => {
+    if (!currentDef?.parameters) return
+    setProxyUrl(currentDef.parameters.proxy_url || '')
+    setConcurrency(currentDef.parameters.concurrency || 1)
+    setBatchSize(currentDef.parameters.batch_size || 1)
+    setHeadless(currentDef.parameters.headless !== false)
+    setCaptchaKey(currentDef.parameters.captcha_key || '')
+    setSolverUrl(currentDef.parameters.turnstile_solver_url || '')
+  }, [currentDef])
+
+  const handleSaveConfig = async (): Promise<boolean> => {
+    if (!currentDef) {
+      showToast({
+        title: 'Grok 工作流不可用',
+        desc: '未找到内建 Grok 注册模板，请重新加载工作流。',
+        tone: 'error',
+      })
+      return false
+    }
+
+    setIsSaving(true)
+    try {
+      const parameters: WorkflowDefinition['parameters'] = {
+        ...currentDef.parameters,
+        batch_size: Math.min(50, Math.max(1, Math.floor(Number(batchSize) || 1))),
+        concurrency: Math.min(10, Math.max(1, Math.floor(Number(concurrency) || 1))),
+        proxy_url: proxyUrl.trim() || undefined,
+        account_type: 'grok_free',
+        headless,
+        captcha_key: captchaKey.trim() || undefined,
+        turnstile_solver_url: solverUrl.trim() || undefined,
+        registration_timeout_secs: currentDef.parameters.registration_timeout_secs || 180,
+        full_name: undefined,
+        age: undefined,
+      }
+
+      await postJson<{ status: string }, WorkflowSavePayload>('/api/workflows/save', {
+        id: currentDef.id,
+        kind: currentDef.kind,
+        title: currentDef.title,
+        summary: currentDef.summary,
+        status: 'ready',
+        parameters_json: JSON.stringify(parameters),
+      })
+
+      showToast({ title: 'Grok 配置已同步', desc: '注册参数已保存到 Grok 工作流。' })
+      emitLog(`已保存 Grok 工作流参数: ${currentDef.id}`, 'success')
+      void onLoadWorkflows()
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '保存失败'
+      showToast({ title: 'Grok 配置保存失败', desc: message, tone: 'error' })
+      return false
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleTrigger = async () => {
+    setIsRunning(true)
+    try {
+      if (await handleSaveConfig()) {
+        await onTriggerRun(targetWorkflowId)
+      }
+    } finally {
+      setIsRunning(false)
+    }
+  }
+
+  const inputStyle =
+    'w-full h-8 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:bg-white focus:border-sky-500 focus:ring-4 focus:ring-sky-100 transition-all duration-300 shadow-inner'
+
+  return (
+    <div className="glass-panel rounded-3xl p-3 border border-slate-200 bg-white shadow-sm flex flex-col gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-2 mb-1 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="flex h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
+          <h3 className="text-[10px] font-black uppercase text-slate-700 tracking-wider">
+            Grok 注册配置
+          </h3>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsProxyModalOpen(true)}
+            className={`flex items-center gap-1.5 px-3 py-1 h-7 rounded-lg text-[9px] font-black tracking-wider transition-all duration-300 border cursor-pointer shrink-0 ${
+              proxyUrl
+                ? 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'
+                : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 hover:text-slate-800'
+            }`}
+            title={proxyUrl ? `已配置代理: ${maskProxyUrl(proxyUrl)}` : '未配置代理'}
+          >
+            <Globe size={11} className={proxyUrl ? 'text-sky-500 animate-pulse' : 'text-slate-400'} />
+            {proxyUrl ? '代理已就绪' : '配置代理'}
+          </button>
+
+          <div className="hidden sm:block w-px h-5 bg-slate-200 mx-1 shrink-0" />
+          <button
+            type="button"
+            onClick={() => void handleSaveConfig()}
+            disabled={isSaving || !currentDef}
+            className="h-7 px-3.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-800 disabled:opacity-45 transition-all font-black text-[9px] cursor-pointer shrink-0 inline-flex items-center gap-1.5"
+          >
+            {isSaving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+            {isSaving ? '保存中...' : '同步配置'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleTrigger()}
+            disabled={isRunning || isSaving || !currentDef}
+            className="bg-sky-600 hover:bg-sky-700 disabled:opacity-45 text-white font-black shadow-sm h-7 px-4 rounded-xl flex items-center justify-center gap-1.5 text-[10px] transition-all active:scale-[0.98] cursor-pointer shrink-0"
+          >
+            {isRunning ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+            启动 Grok 注册
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500">并发线程数</label>
+          <input
+            type="number"
+            min="1"
+            max="10"
+            value={concurrency}
+            onChange={(event) => setConcurrency(Math.min(10, Math.max(1, Number(event.target.value))))}
+            className={inputStyle}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500">单批次生成数</label>
+          <input
+            type="number"
+            min="1"
+            max="50"
+            value={batchSize}
+            onChange={(event) => setBatchSize(Math.min(50, Math.max(1, Number(event.target.value))))}
+            className={inputStyle}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500">账号类型</label>
+          <select
+            value="grok_free"
+            disabled
+            aria-label="Grok 账号类型"
+            className="w-full h-8 bg-slate-100 border border-slate-200 rounded-xl px-3 text-xs font-bold text-slate-600 outline-none cursor-not-allowed"
+          >
+            <option value="grok_free">Grok 免费版</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500">人机验证浏览器模式</label>
+          <select
+            value={String(headless)}
+            onChange={(event) => setHeadless(event.target.value === 'true')}
+            className="w-full h-8 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:bg-white focus:border-sky-500 transition-all shadow-inner"
+          >
+            <option value="true">后台静默运行（推荐）</option>
+            <option value="false">显示浏览器窗口</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500">YesCaptcha 服务密钥</label>
+          <input
+            type="password"
+            autoComplete="off"
+            aria-label="YesCaptcha 服务密钥"
+            placeholder="请输入服务密钥"
+            value={captchaKey}
+            onChange={(event) => setCaptchaKey(event.target.value)}
+            className={inputStyle}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-slate-500">人机验证解题服务地址</label>
+          <input
+            type="url"
+            aria-label="人机验证解题服务地址"
+            placeholder="例如：http://host.docker.internal:5072"
+            value={solverUrl}
+            onChange={(event) => setSolverUrl(event.target.value)}
+            className={inputStyle}
+          />
+        </div>
+      </div>
+
+      <ProxyModal
+        isOpen={isProxyModalOpen}
+        value={proxyUrl}
+        onChange={(value: string) => {
+          setProxyUrl(value)
+          setIsProxyModalOpen(false)
+        }}
+        onClose={() => setIsProxyModalOpen(false)}
+      />
+    </div>
+  )
+}
+
+// ==========================================
+// 5. 自动化工作流设计师参数编辑弹窗组件 (Portal Modal)
 // ==========================================
 interface WorkflowParamModalProps {
   isOpen: boolean
   onClose: () => void
   workflow: WorkflowDefinition
-  onSave: (title: string, summary: string, batchSize: number, accountDomain: string) => Promise<void>
+  onSave: (title: string, summary: string, parameters: WorkflowDefinition['parameters']) => Promise<void>
   isSaving: boolean
 }
 
@@ -1266,11 +1507,36 @@ function WorkflowParamModal({
   const [draftSummary, setDraftSummary] = useState(workflow.summary)
   const [draftBatchSize, setDraftBatchSize] = useState(workflow.parameters?.batch_size ?? 1)
   const [draftAccountDomain, setDraftAccountDomain] = useState(workflow.parameters?.account_domain ?? '')
+  const [draftConcurrency, setDraftConcurrency] = useState(workflow.parameters?.concurrency ?? 1)
+  const [draftProxyUrl, setDraftProxyUrl] = useState(workflow.parameters?.proxy_url ?? '')
+  const [draftCaptchaKey, setDraftCaptchaKey] = useState(workflow.parameters?.captcha_key ?? '')
+  const [draftSolverUrl, setDraftSolverUrl] = useState(workflow.parameters?.turnstile_solver_url ?? '')
+  const [draftHeadless, setDraftHeadless] = useState(workflow.parameters?.headless !== false)
+  const [draftTimeout, setDraftTimeout] = useState(workflow.parameters?.registration_timeout_secs ?? 180)
+  const isGrok = workflow.kind === 'grok_register'
 
   if (!isOpen) return null
 
   const handleSaveClick = () => {
-    void onSave(draftTitle, draftSummary, draftBatchSize, draftAccountDomain)
+    const parameters: WorkflowDefinition['parameters'] = {
+      ...workflow.parameters,
+      batch_size: Math.max(1, Math.floor(Number(draftBatchSize) || 1)),
+      account_domain: draftAccountDomain.trim() || undefined,
+    }
+    if (isGrok) {
+      parameters.batch_size = Math.min(50, parameters.batch_size || 1)
+      parameters.concurrency = Math.min(10, Math.max(1, Math.floor(Number(draftConcurrency) || 1)))
+      parameters.proxy_url = draftProxyUrl.trim() || undefined
+      parameters.captcha_key = draftCaptchaKey.trim() || undefined
+      parameters.turnstile_solver_url = draftSolverUrl.trim() || undefined
+      parameters.headless = draftHeadless
+      parameters.registration_timeout_secs = Math.min(
+        600,
+        Math.max(60, Math.floor(Number(draftTimeout) || 180)),
+      )
+      parameters.account_type = 'grok_free'
+    }
+    void onSave(draftTitle, draftSummary, parameters)
   }
 
   const focusGlowInputStyle =
@@ -1289,7 +1555,7 @@ function WorkflowParamModal({
           initial={{ scale: 0.95, opacity: 0, y: 15 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
           exit={{ scale: 0.95, opacity: 0, y: 15 }}
-          className="relative max-w-md w-full bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200"
+          className="relative max-w-2xl w-full bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200"
           onClick={(e) => e.stopPropagation()}
         >
           {/* 头部 (Header) */}
@@ -1300,11 +1566,14 @@ function WorkflowParamModal({
               </div>
               <div>
                 <h3 className="text-sm font-black text-slate-950">工作流参数编辑</h3>
-                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Param Editor</p>
+                <p className="text-[10px] text-slate-500 font-bold">{isGrok ? 'Grok 专属参数配置' : '通用工作流参数配置'}</p>
               </div>
             </div>
             <button
               onClick={onClose}
+              type="button"
+              aria-label="关闭参数编辑器"
+              title="关闭参数编辑器"
               className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-all"
             >
               <X size={18} />
@@ -1312,7 +1581,7 @@ function WorkflowParamModal({
           </div>
 
           {/* 表单区域 (Form) */}
-          <div className="p-6 space-y-4 max-h-[65vh] overflow-y-auto custom-scrollbar">
+          <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto custom-scrollbar">
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-slate-500 uppercase">工作流标题</label>
               <input
@@ -1334,35 +1603,111 @@ function WorkflowParamModal({
             </div>
 
             {/* 核心调度参数配置 */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-3.5">
-              <span className="text-[9px] font-black text-purple-600 tracking-wider uppercase border-b border-slate-100 pb-1.5 block">
-                核心调度变量 (SCHEDULER VARS)
+            <div className="border-t border-slate-100 pt-4 space-y-3.5">
+              <span className="text-[9px] font-black text-purple-600 tracking-wider block">
+                核心调度变量
               </span>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[11px] font-bold">
-                  <span className="text-slate-500">单批次处理容量 (batch_size)</span>
+                  <span className="text-slate-500">单批次处理数量</span>
                   <input
                     type="number"
                     min="1"
                     value={draftBatchSize}
-                    onChange={(e) => setDraftBatchSize(Math.max(1, Number(e.target.value)))}
+                    max={isGrok ? 50 : 500}
+                    onChange={(e) => setDraftBatchSize(Math.min(isGrok ? 50 : 500, Math.max(1, Number(e.target.value))))}
                     className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-right text-xs outline-none focus:border-purple-500"
                   />
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] font-bold">
-                  <span className="text-slate-500">自愈账号所属分组域</span>
+                  <span className="text-slate-500">{isGrok ? '收信域名（留空使用系统设置）' : '账号所属域名'}</span>
                   <input
                     type="text"
-                    placeholder="openai.local"
+                    placeholder={isGrok ? 'mail.example.com' : 'example.com'}
                     value={draftAccountDomain}
                     onChange={(e) => setDraftAccountDomain(e.target.value)}
-                    className="w-28 bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-right text-xs outline-none focus:border-purple-500"
+                    className="w-48 max-w-[55%] bg-slate-50 border border-slate-200 rounded-lg px-2 py-0.5 text-right text-xs outline-none focus:border-purple-500"
                   />
                 </div>
               </div>
             </div>
+
+            {isGrok && (
+              <div className="border-t border-slate-100 pt-4 space-y-3.5">
+                <span className="text-[9px] font-black text-sky-700 tracking-wider block">
+                  Grok 注册参数
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500">并发线程数</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={draftConcurrency}
+                      onChange={(e) => setDraftConcurrency(Math.min(10, Math.max(1, Number(e.target.value))))}
+                      className={focusGlowInputStyle}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500">单账号超时时间（秒）</label>
+                    <input
+                      type="number"
+                      min="60"
+                      max="600"
+                      value={draftTimeout}
+                      onChange={(e) => setDraftTimeout(Math.min(600, Math.max(60, Number(e.target.value))))}
+                      className={focusGlowInputStyle}
+                    />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-500">注册代理地址</label>
+                    <input
+                      type="text"
+                      placeholder="http://127.0.0.1:7890"
+                      value={draftProxyUrl}
+                      onChange={(e) => setDraftProxyUrl(e.target.value)}
+                      className={focusGlowInputStyle}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500">人机验证浏览器模式</label>
+                    <select
+                      value={String(draftHeadless)}
+                      onChange={(e) => setDraftHeadless(e.target.value === 'true')}
+                      className={focusGlowInputStyle}
+                    >
+                      <option value="true">后台静默运行（推荐）</option>
+                      <option value="false">显示浏览器窗口</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500">YesCaptcha 服务密钥</label>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder="未配置时使用其他验证方式"
+                      value={draftCaptchaKey}
+                      onChange={(e) => setDraftCaptchaKey(e.target.value)}
+                      className={focusGlowInputStyle}
+                    />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-500">人机验证解题服务地址</label>
+                    <input
+                      type="url"
+                      placeholder="http://host.docker.internal:5072"
+                      value={draftSolverUrl}
+                      onChange={(e) => setDraftSolverUrl(e.target.value)}
+                      className={focusGlowInputStyle}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 底部按钮 (Footer) */}
@@ -1390,11 +1735,11 @@ function WorkflowParamModal({
 }
 
 // ==========================================
-// 5. 自动化工作流设计师 SubPanel 子面板
+// 6. 自动化工作流设计师 SubPanel 子面板
 // ==========================================
 interface WorkflowDesignerSubPanelProps {
   workflows: WorkflowDefinition[]
-  onLoadWorkflows: () => void
+  onLoadWorkflows: () => Promise<void>
   onTriggerRun: (id: string) => void
 }
 
@@ -1413,6 +1758,7 @@ function WorkflowDesignerSubPanel({
     onConfirm: () => void
   } | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [cloningId, setCloningId] = useState<string | null>(null)
 
   const editingWorkflow = workflows.find((w) => w.id === editingWorkflowId) ?? null
 
@@ -1428,6 +1774,12 @@ function WorkflowDesignerSubPanel({
       border: 'border-teal-100 hover:border-teal-300',
       text: 'text-teal-700',
       badge: 'border-teal-100 bg-teal-50 text-teal-600',
+    },
+    grok_register: {
+      bg: 'bg-sky-50/30 hover:bg-sky-50/50',
+      border: 'border-sky-100 hover:border-sky-300',
+      text: 'text-sky-700',
+      badge: 'border-sky-100 bg-sky-50 text-sky-700',
     },
     account_generate: {
       bg: 'bg-blue-50/30 hover:bg-blue-50/50',
@@ -1462,6 +1814,7 @@ function WorkflowDesignerSubPanel({
     data_cleanup: '数据净化清洗',
     status_report: '状态巡检报告',
     environment_check: '环境校验预警',
+    grok_register: 'Grok 注册任务',
   }
 
   // 新建空工作流
@@ -1504,23 +1857,17 @@ function WorkflowDesignerSubPanel({
     def: WorkflowDefinition,
     newTitle: string,
     newSummary: string,
-    newBatchSize: number,
-    newAccountDomain: string,
+    newParameters: WorkflowDefinition['parameters'],
   ) => {
     setSavingId(id)
     try {
-      const mergedParams = {
-        ...def.parameters,
-        batch_size: newBatchSize,
-        account_domain: newAccountDomain,
-      }
       await postJson<{ status: string }, WorkflowSavePayload>('/api/workflows/save', {
         id: def.id,
         kind: def.kind,
         title: newTitle,
         summary: newSummary,
         status: def.status,
-        parameters_json: JSON.stringify(mergedParams),
+        parameters_json: JSON.stringify(newParameters),
       })
       showToast({ title: '保存成功', desc: `工作流 ${newTitle} 已写入配置库。` })
       emitLog(`保存工作流设计: ${newTitle}`, 'success')
@@ -1531,6 +1878,41 @@ function WorkflowDesignerSubPanel({
       showToast({ title: '保存失败', desc: msg })
     } finally {
       setSavingId(null)
+    }
+  }
+
+  const handleCloneGrokWorkflow = async (source: WorkflowDefinition) => {
+    const cloneId = `grok_register_${Date.now()}`
+    const cloneTitle = `${source.title} - 自定义副本`
+    setCloningId(source.id)
+    try {
+      await postJson<{ status: string }, WorkflowSavePayload>('/api/workflows/save', {
+        id: cloneId,
+        kind: 'grok_register',
+        title: cloneTitle,
+        summary: source.summary,
+        status: 'ready',
+        parameters_json: JSON.stringify({
+          ...source.parameters,
+          account_type: 'grok_free',
+        }),
+      })
+      await onLoadWorkflows()
+      setEditingWorkflowId(cloneId)
+      showToast({
+        title: 'Grok 工作流已复制',
+        desc: '自定义副本已创建，可独立编排和调度。',
+      })
+      emitLog(`复制 Grok 工作流: ${source.id} -> ${cloneId}`, 'success')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '复制失败'
+      showToast({
+        title: '复制 Grok 工作流失败',
+        desc: message,
+        tone: 'error',
+      })
+    } finally {
+      setCloningId(null)
     }
   }
 
@@ -1599,7 +1981,7 @@ function WorkflowDesignerSubPanel({
 
                 {workflow.builtin && (
                   <span className="text-[7px] font-mono font-bold text-slate-400 bg-slate-100 px-1 py-0.5 rounded-md tracking-wider uppercase select-none">
-                    BUILTIN_SYS
+                    系统内建
                   </span>
                 )}
               </div>
@@ -1622,8 +2004,20 @@ function WorkflowDesignerSubPanel({
                     onClick={() => setEditingWorkflowId(workflow.id)}
                     className="phantom-btn phantom-btn--secondary phantom-btn--sm h-6 min-h-6 px-2 text-[8px]"
                   >
-                    编辑参数
+                    {workflow.kind === 'grok_register' ? '编排参数' : '编辑参数'}
                   </button>
+                  {workflow.kind === 'grok_register' && (
+                    <button
+                      type="button"
+                      onClick={() => void handleCloneGrokWorkflow(workflow)}
+                      disabled={cloningId === workflow.id}
+                      className="p-1 rounded-lg text-sky-600 hover:bg-sky-50 hover:text-sky-800 disabled:opacity-45 transition-colors"
+                      aria-label="复制为自定义 Grok 工作流"
+                      title="复制为自定义 Grok 工作流"
+                    >
+                      {cloningId === workflow.id ? <Loader2 size={11} className="animate-spin" /> : <Copy size={11} />}
+                    </button>
+                  )}
                   {!workflow.builtin && (
                     <button
                       onClick={() => void handleDelete(workflow.id, workflow.title)}
@@ -1652,11 +2046,10 @@ function WorkflowDesignerSubPanel({
       {editingWorkflow && (
         <WorkflowParamModal
           isOpen={!!editingWorkflow}
+          key={editingWorkflow.id}
           onClose={() => setEditingWorkflowId(null)}
           workflow={editingWorkflow}
-          onSave={(t, s, b, d) =>
-            handleSave(editingWorkflow.id, editingWorkflow, t, s, b, d)
-          }
+          onSave={(title, summary, parameters) => handleSave(editingWorkflow.id, editingWorkflow, title, summary, parameters)}
           isSaving={savingId === editingWorkflow.id}
         />
       )}

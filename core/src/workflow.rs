@@ -1,6 +1,7 @@
 use crate::db::{DataLake, WorkflowDefinitionRecord};
 use crate::stream::{StreamHub, StreamPayload};
 use chrono::Utc;
+use futures_util::StreamExt;
 use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -42,6 +43,8 @@ pub enum WorkflowKind {
     OpenAIRegister,
     #[serde(rename = "openai_register_browser")]
     OpenAIRegisterBrowser,
+    #[serde(rename = "grok_register")]
+    GrokRegister,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -73,6 +76,10 @@ pub struct WorkflowParameters {
     pub account_type: Option<String>,
     /// 浏览器专用：是否开启无头模式
     pub headless: Option<bool>,
+    /// Grok 注册专用：本地 Turnstile Solver 地址
+    pub turnstile_solver_url: Option<String>,
+    /// Grok 注册专用：单账号执行超时秒数
+    pub registration_timeout_secs: Option<u64>,
     /// 混合模式专用：OAuth 重构授权链接
     pub oauth_authorize_url: Option<String>,
     /// 混合模式专用：OAuth code_verifier
@@ -173,6 +180,19 @@ impl WorkflowEngine {
                 builtin: true,
                 parameters: WorkflowParameters::default(),
             },
+            WorkflowDefinition {
+                id: "grok_register_default".to_string(),
+                kind: WorkflowKind::GrokRegister,
+                title: "Grok 自动化注册".to_string(),
+                summary: "自动完成 xAI 邮箱验证、Turnstile 与 Grok SSO 提取".to_string(),
+                status: "ready".to_string(),
+                builtin: true,
+                parameters: WorkflowParameters {
+                    account_type: Some("grok_free".to_string()),
+                    registration_timeout_secs: Some(180),
+                    ..WorkflowParameters::default()
+                },
+            },
         ]
     }
 
@@ -184,6 +204,7 @@ impl WorkflowEngine {
             "环境变量",
             "openai_register_default",
             "openai_browser_register",
+            "grok_register_default",
         ]
     }
 
@@ -466,6 +487,32 @@ impl WorkflowEngine {
                         }
                     }
                 }
+                WorkflowKind::GrokRegister => {
+                    match Self::grok_register_flow(
+                        &hub,
+                        &dl,
+                        &mut context,
+                        &definition_for_task.parameters,
+                    )
+                    .await
+                    {
+                        Ok(message) => {
+                            let _ = dl
+                                .finish_workflow_run(&run_id_for_task, "success", &message)
+                                .await;
+                        }
+                        Err(message) if message == "cancelled" => {
+                            Self::log_step(&hub, &dl, &mut context, "info", "工作流已终止执行")
+                                .await;
+                        }
+                        Err(message) => {
+                            Self::log_step(&hub, &dl, &mut context, "error", &message).await;
+                            let _ = dl
+                                .finish_workflow_run(&run_id_for_task, "error", &message)
+                                .await;
+                        }
+                    }
+                }
             }
         });
 
@@ -625,6 +672,27 @@ impl WorkflowEngine {
                 if !(1..=168).contains(&report_window_hours) {
                     return Err(
                         "负载报告参数无效 / report_window_hours 必须在 1..=168 之间".to_string()
+                    );
+                }
+                Ok(())
+            }
+            WorkflowKind::GrokRegister => {
+                let batch_size = definition.parameters.batch_size.unwrap_or(1);
+                let concurrency = definition.parameters.concurrency.unwrap_or(1);
+                let timeout = definition
+                    .parameters
+                    .registration_timeout_secs
+                    .unwrap_or(180);
+                if !(1..=50).contains(&batch_size) {
+                    return Err("Grok 注册参数无效 / batch_size 必须在 1..=50 之间".to_string());
+                }
+                if !(1..=10).contains(&concurrency) {
+                    return Err("Grok 注册参数无效 / concurrency 必须在 1..=10 之间".to_string());
+                }
+                if !(60..=600).contains(&timeout) {
+                    return Err(
+                        "Grok 注册参数无效 / registration_timeout_secs 必须在 60..=600 之间"
+                            .to_string(),
                     );
                 }
                 Ok(())
@@ -1221,6 +1289,255 @@ impl WorkflowEngine {
         }
     }
 
+    async fn grok_register_flow(
+        hub: &Arc<StreamHub>,
+        dl: &Arc<DataLake>,
+        context: &mut WorkflowRunContext,
+        parameters: &WorkflowParameters,
+    ) -> Result<String, String> {
+        let batch_size = parameters.batch_size.unwrap_or(1).clamp(1, 50);
+        let concurrency = parameters
+            .concurrency
+            .unwrap_or(1)
+            .clamp(1, 10)
+            .min(batch_size);
+        let configured_domain = dl.get_setting("account_domain").await.ok().flatten();
+        let domain = parameters
+            .account_domain
+            .clone()
+            .or(configured_domain)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Grok 注册前必须配置可收信的 account_domain".to_string())?;
+        if !domain.contains('.') || domain.ends_with(".local") {
+            return Err(
+                "Grok 注册需要公网可收信域名；请先在系统设置中配置 account_domain 与邮件路由"
+                    .to_string(),
+            );
+        }
+
+        let timeout_secs = parameters.registration_timeout_secs.unwrap_or(180);
+        let solver_mode = if parameters
+            .captcha_key
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            "YesCaptcha"
+        } else if parameters
+            .turnstile_solver_url
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            "Local Solver"
+        } else {
+            "Chromium fallback"
+        };
+        Self::log_step(
+            hub,
+            dl,
+            context,
+            "info",
+            &format!(
+                "正在初始化 Grok 注册批次 | 数量: {batch_size} | 并发: {concurrency} | Turnstile: {solver_mode}"
+            ),
+        )
+        .await;
+
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String)>();
+        let mut jobs = Vec::with_capacity(batch_size);
+        for index in 0..batch_size {
+            let local_len = rand::thread_rng().gen_range(10..=14);
+            let local_part: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(local_len)
+                .map(|value| char::from(value).to_ascii_lowercase())
+                .collect();
+            let email = format!("{local_part}@{domain}");
+            let password = crate::grok::register::generate_password();
+            let tx = event_tx.clone();
+            let prefix = format!("[{}/{}] {}", index + 1, batch_size, email);
+            let callback: crate::grok::register::StepCallback = Arc::new(move |level, message| {
+                let _ = tx.send((level.to_string(), format!("{prefix} | {message}")));
+            });
+            jobs.push(crate::grok::register::GrokRegisterContext {
+                email,
+                password,
+                proxy_url: parameters.proxy_url.clone(),
+                captcha_key: parameters.captcha_key.clone(),
+                turnstile_solver_url: parameters.turnstile_solver_url.clone(),
+                headless: parameters.headless.unwrap_or(true),
+                timeout_secs,
+                run_id: context.run_id.clone(),
+                step_callback: Some(callback),
+            });
+        }
+        drop(event_tx);
+
+        let dl_for_jobs = Arc::clone(dl);
+        let tasks = futures_util::stream::iter(jobs.into_iter().enumerate().map(
+            move |(index, register_context)| {
+                let dl = Arc::clone(&dl_for_jobs);
+                async move {
+                    let email = register_context.email.clone();
+                    let result =
+                        crate::grok::register::execute_registration(&dl, &register_context).await;
+                    (index, email, result)
+                }
+            },
+        ))
+        .buffer_unordered(concurrency);
+        futures_util::pin_mut!(tasks);
+
+        let mut success_count = 0usize;
+        let mut fail_count = 0usize;
+        let mut cancelled = false;
+
+        loop {
+            tokio::select! {
+                event = event_rx.recv() => {
+                    if let Some((level, message)) = event {
+                        Self::log_step(hub, dl, context, &level, &message).await;
+                    }
+                }
+                result = tasks.next() => {
+                    let Some((index, email, result)) = result else {
+                        while let Ok((level, message)) = event_rx.try_recv() {
+                            Self::log_step(hub, dl, context, &level, &message).await;
+                        }
+                        break;
+                    };
+                    match result {
+                        Ok(result) => {
+                            match dl
+                                .create_generated_account(
+                                    &context.run_id,
+                                    &result.email,
+                                    &result.password,
+                                    "grok_registered",
+                                    parameters.account_type.as_deref().or(Some("grok_free")),
+                                    parameters.proxy_url.as_deref(),
+                                )
+                                .await
+                            {
+                                Ok(account_id) => {
+                                    if let Err(error) = dl
+                                        .update_account_tokens(
+                                            &account_id,
+                                            None,
+                                            None,
+                                            Some(&result.sso),
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            Some("grok_free"),
+                                            None,
+                                            Some(1),
+                                            None,
+                                        )
+                                        .await
+                                    {
+                                        fail_count += 1;
+                                        Self::log_step(
+                                            hub,
+                                            dl,
+                                            context,
+                                            "error",
+                                            &format!(
+                                                "[{}/{}] {} | SSO 凭证入库失败: {error}",
+                                                index + 1,
+                                                batch_size,
+                                                email
+                                            ),
+                                        )
+                                        .await;
+                                        continue;
+                                    }
+                                    success_count += 1;
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "success",
+                                        &format!(
+                                            "[{}/{}] {} | Grok 账号与 SSO 已入库",
+                                            index + 1,
+                                            batch_size,
+                                            email
+                                        ),
+                                    )
+                                    .await;
+                                }
+                                Err(error) => {
+                                    fail_count += 1;
+                                    Self::log_step(
+                                        hub,
+                                        dl,
+                                        context,
+                                        "error",
+                                        &format!(
+                                            "[{}/{}] {} | 账号入库失败: {error}",
+                                            index + 1,
+                                            batch_size,
+                                            email
+                                        ),
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        Err(error) if error == "cancelled" => {
+                            cancelled = true;
+                        }
+                        Err(error) => {
+                            fail_count += 1;
+                            Self::log_step(
+                                hub,
+                                dl,
+                                context,
+                                "error",
+                                &format!(
+                                    "[{}/{}] {} | Grok 注册失败: {error}",
+                                    index + 1,
+                                    batch_size,
+                                    email
+                                ),
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+
+        if cancelled {
+            return Err("cancelled".to_string());
+        }
+
+        let summary = format!(
+            "Grok 自动注册批次完成 | 成功: {success_count} | 失败: {fail_count} | 总计: {batch_size}"
+        );
+        Self::log_step(
+            hub,
+            dl,
+            context,
+            if success_count > 0 {
+                "success"
+            } else {
+                "error"
+            },
+            &summary,
+        )
+        .await;
+        if success_count > 0 {
+            Ok(summary)
+        } else {
+            Err(summary)
+        }
+    }
+
     async fn openai_browser_register_flow(
         hub: &Arc<StreamHub>,
         dl: &Arc<DataLake>,
@@ -1690,6 +2007,7 @@ impl WorkflowKind {
             WorkflowKind::EnvironmentCheck => "environment_check",
             WorkflowKind::OpenAIRegister => "openai_register",
             WorkflowKind::OpenAIRegisterBrowser => "openai_register_browser",
+            WorkflowKind::GrokRegister => "grok_register",
         }
     }
 
@@ -1700,6 +2018,7 @@ impl WorkflowKind {
             "environment_check" => WorkflowKind::EnvironmentCheck,
             "openai_register" => WorkflowKind::OpenAIRegister,
             "openai_register_browser" => WorkflowKind::OpenAIRegisterBrowser,
+            "grok_register" => WorkflowKind::GrokRegister,
             _ => WorkflowKind::AccountGenerate,
         }
     }
@@ -1712,6 +2031,7 @@ impl WorkflowKind {
             "environment_check" => Ok(WorkflowKind::EnvironmentCheck),
             "openai_register" => Ok(WorkflowKind::OpenAIRegister),
             "openai_register_browser" => Ok(WorkflowKind::OpenAIRegisterBrowser),
+            "grok_register" => Ok(WorkflowKind::GrokRegister),
             _ => Err(format!("不支持的工作流类型: {value}")),
         }
     }

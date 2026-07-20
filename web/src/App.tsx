@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { RefreshCw, Command, UserRound, Activity, RadioTower } from 'lucide-react'
+import { RefreshCw, Command, UserRound, Activity, RadioTower, Eye, EyeOff } from 'lucide-react'
 import Sidebar from './ui/Sidebar'
 import Cmd from './cmd/Cmd'
 import './App.css'
@@ -80,11 +80,13 @@ function App() {
   const [authUsername, setAuthUsername] = useState('admin')
   const [authPassword, setAuthPassword] = useState('')
   const [authError, setAuthError] = useState('')
+  const [showAuthPassword, setShowAuthPassword] = useState(false)
   const [isAuthenticating, setIsAuthenticating] = useState(false)
   
   useEffect(() => {
     const handleUnauthorized = () => {
       setIsAuthModalOpen(true)
+      setShowAuthPassword(false)
     }
     window.addEventListener('phantom-unauthorized', handleUnauthorized)
     return () => {
@@ -112,6 +114,7 @@ function App() {
       }
       setAuthPassword('')
       setIsAuthModalOpen(false)
+      setShowAuthPassword(false)
       window.location.reload()
     } finally {
       setIsAuthenticating(false)
@@ -407,15 +410,26 @@ function App() {
                   className="w-full rounded-lg border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   autoFocus
                 />
-                <input
-                  type="password"
-                  name="password"
-                  autoComplete="current-password"
-                  placeholder="密码"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-4 py-3 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
+                <div className="relative">
+                  <input
+                    type={showAuthPassword ? 'text' : 'password'}
+                    name="password"
+                    autoComplete="current-password"
+                    placeholder="密码"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 py-3 pl-4 pr-12 text-sm outline-none transition-all focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAuthPassword((visible) => !visible)}
+                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-400 transition-colors hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+                    aria-label={showAuthPassword ? '隐藏密码' : '显示密码'}
+                    title={showAuthPassword ? '隐藏密码' : '显示密码'}
+                  >
+                    {showAuthPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                  </button>
+                </div>
                 {authError ? <p className="text-left text-xs text-rose-600">{authError}</p> : null}
                 <button
                   type="submit"

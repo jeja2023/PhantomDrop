@@ -1,6 +1,6 @@
 # PhantomDrop Web
 
-`web/` 是 PhantomDrop `V0.0.33` 的 React 19 + TypeScript + Vite 管理界面。
+`web/` 是 PhantomDrop `V0.0.34` 的 React 19 + TypeScript + Vite 管理界面。
 
 ## 开发
 
@@ -27,3 +27,5 @@ npm audit --omit=dev --audit-level=high
 ```
 
 生产构建输出到 `dist/`，由 Rust Hub 或 Docker 单镜像托管。
+
+自动化中心将 OpenAI 注册、Grok 注册和工作流设计拆分为独立一级入口；Grok 页面负责即时运行，工作流设计师提供 Grok 专属参数编辑和自定义模板复制。详细说明见 [`../docs/Grok自动注册说明.md`](../docs/Grok自动注册说明.md)。

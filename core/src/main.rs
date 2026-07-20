@@ -12,6 +12,7 @@ mod cloudflare_automation;
 mod config;
 mod db;
 mod exporter;
+mod grok;
 mod openai;
 mod parser;
 mod register;

@@ -307,6 +307,16 @@ pub fn routes(data_lake: Arc<DataLake>, stream_hub: Arc<StreamHub>) -> Router<Ar
                     if NeuralParser::is_openai_sender(&from) {
                         parsed.code = NeuralParser::extract_openai_otp(text, html);
                     }
+                    let subject_lower = subject.to_ascii_lowercase();
+                    if NeuralParser::is_xai_sender(&from)
+                        || ["spacexai", "xai", "grok"]
+                            .iter()
+                            .any(|marker| subject_lower.contains(marker))
+                    {
+                        if let Some(code) = NeuralParser::extract_xai_otp(&subject, text, html) {
+                            parsed.code = Some(code);
+                        }
+                    }
 
                     let webhook_payload = serde_json::json!({
                         "id": id,
