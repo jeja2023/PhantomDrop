@@ -26,8 +26,9 @@ services:
       - MAX_CONCURRENT_WORKFLOWS=${MAX_CONCURRENT_WORKFLOWS:-2}
       - MAX_CONCURRENT_PROXY_CHECKS=${MAX_CONCURRENT_PROXY_CHECKS:-8}
     volumes:
-      - data:/app/data
-      - automation:/app/.automation
+      # Keep persistent state beside the deployment so rebuilding cannot silently attach a new empty volume.
+      - ${PHANTOM_DATA_PATH:-./data}:/app/data
+      - ${PHANTOM_AUTOMATION_PATH:-./.automation}:/app/.automation
     ports:
       - "9010:9010"
     extra_hosts:
@@ -37,7 +38,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  data:
-  automation:
