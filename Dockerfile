@@ -55,6 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
     git \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. 安装 PowerShell (pwsh) 及 Chromium
@@ -103,6 +104,7 @@ COPY --from=web-builder /build/web/dist /app/web
 # 7. 复制自动化脚本和必要工具
 COPY ./setup-cloudflare-mail.ps1 /app/
 COPY ./initialize-cloudflare-automation.ps1 /app/
+COPY ./docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY --from=network-builder /build/network /app/network
 COPY ./tools /app/tools
 
@@ -117,7 +119,7 @@ ENV WRITE_CODEX_AUTH_FILE=false
 ENV ADMIN_USERNAME=admin
 ENV PHANTOM_GATEWAY_KEYS=
 LABEL org.opencontainers.image.title="PhantomDrop" \
-      org.opencontainers.image.version="0.0.36"
+      org.opencontainers.image.version="0.0.37"
 # 确保在容器内通过 pwsh 运行
 ENV SHELL=/usr/bin/pwsh
 
@@ -126,8 +128,12 @@ EXPOSE 9010
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:9010/health || exit 1
 
 # 建立数据持久化目录
-RUN useradd --system --uid 10001 --create-home phantom && mkdir -p /app/data /app/.automation && chown -R phantom:phantom /app
-USER phantom
+RUN useradd --system --uid 10001 --create-home phantom \
+    && mkdir -p /app/data /app/.automation /tmp/.X11-unix \
+    && chmod 1777 /tmp/.X11-unix \
+    && chown -R phantom:phantom /app \
+    && chmod 755 /usr/local/bin/docker-entrypoint.sh
 
-# 启动 (使用 xvfb-run 虚拟显示环境)
+# 修正 bind mount 权限后，以 phantom 用户启动虚拟显示和后端
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "/app/phantom-core"]

@@ -1,6 +1,6 @@
 # Cloudflare 接入自动化说明
 
-## 认证边界（V0.0.36）
+## 认证边界（V0.0.37）
 
 - 管理控制台使用独立的管理员用户名和密码，Cloudflare 自动化不读取管理登录凭据。
 - `HUB_SECRET` 只用于 Email Worker 以 `X-Hub-Secret` 调用 Hub `/ingest`。

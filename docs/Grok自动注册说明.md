@@ -1,6 +1,6 @@
 # Grok 自动注册说明
 
-本文适用于 PhantomDrop `V0.0.36`，说明内建 `grok_register_default` 工作流的启用条件、配置边界和运行结果。注册协议参考 MIT 许可项目 [HSJ-BanFan/grok-register-web](https://github.com/HSJ-BanFan/grok-register-web)，并按 PhantomDrop 的邮件中枢、工作流和账号资产模型完成集成。
+本文适用于 PhantomDrop `V0.0.37`，说明内建 `grok_register_default` 工作流的启用条件、配置边界和运行结果。注册协议参考 MIT 许可项目 [HSJ-BanFan/grok-register-web](https://github.com/HSJ-BanFan/grok-register-web)，并按 PhantomDrop 的邮件中枢、工作流和账号资产模型完成集成。
 
 ## 启用条件
 
