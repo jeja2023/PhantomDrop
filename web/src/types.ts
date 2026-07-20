@@ -113,6 +113,20 @@ export interface WorkflowDefinition {
   parameters: WorkflowParameters
 }
 
+export interface GrokReadinessCheck {
+  id: string
+  status: 'pass' | 'warn' | 'fail'
+  message: string
+}
+
+export interface GrokReadinessReport {
+  ready: boolean
+  domain?: string | null
+  domain_source?: string | null
+  solver_mode: 'yescaptcha' | 'local_solver' | 'chromium_fallback'
+  checks: GrokReadinessCheck[]
+}
+
 export interface WorkflowParameters {
   batch_size?: number
   account_domain?: string

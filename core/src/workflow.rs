@@ -88,6 +88,103 @@ pub struct WorkflowParameters {
     pub oauth_platform: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+pub struct GrokReadinessCheck {
+    pub id: &'static str,
+    pub status: &'static str,
+    pub message: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct GrokReadinessReport {
+    pub ready: bool,
+    pub domain: Option<String>,
+    pub domain_source: Option<&'static str>,
+    pub solver_mode: &'static str,
+    pub checks: Vec<GrokReadinessCheck>,
+}
+
+struct ResolvedAccountDomain {
+    value: String,
+    source: &'static str,
+}
+
+fn trimmed_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalized_domain(value: Option<&str>) -> Option<String> {
+    trimmed_value(value).map(|value| value.trim_end_matches('.').to_ascii_lowercase())
+}
+
+fn select_registration_domain(
+    workflow_domain: Option<&str>,
+    account_domain: Option<&str>,
+    cloudflare_zone_domain: Option<&str>,
+) -> Option<ResolvedAccountDomain> {
+    [
+        (workflow_domain, "workflow"),
+        (account_domain, "account_domain"),
+        (cloudflare_zone_domain, "cloudflare_zone_domain"),
+    ]
+    .into_iter()
+    .find_map(|(candidate, source)| {
+        normalized_domain(candidate).map(|value| ResolvedAccountDomain { value, source })
+    })
+}
+
+fn validate_public_mail_domain(domain: &str) -> Result<(), String> {
+    if domain.len() > 253
+        || domain.parse::<std::net::IpAddr>().is_ok()
+        || domain.contains(['/', '\\', '@', ':'])
+        || domain.chars().any(char::is_whitespace)
+    {
+        return Err("account_domain 必须是域名，不能包含协议、端口、路径或邮箱前缀".to_string());
+    }
+
+    let labels = domain.split('.').collect::<Vec<_>>();
+    if labels.len() < 2 || domain == "localhost" || domain.ends_with(".local") {
+        return Err(
+            "account_domain 必须是公网可收信域名，不能使用 localhost 或 .local".to_string(),
+        );
+    }
+    if labels.iter().any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    }) {
+        return Err("account_domain 格式不正确".to_string());
+    }
+    Ok(())
+}
+
+async fn resolve_registration_domain(
+    dl: &Arc<DataLake>,
+    parameters: &WorkflowParameters,
+) -> Result<ResolvedAccountDomain, String> {
+    let account_domain = dl.get_setting("account_domain").await.ok().flatten();
+    let cloudflare_zone_domain = dl
+        .get_setting("cloudflare_zone_domain")
+        .await
+        .ok()
+        .flatten();
+    let resolved = select_registration_domain(
+        parameters.account_domain.as_deref(),
+        account_domain.as_deref(),
+        cloudflare_zone_domain.as_deref(),
+    )
+    .ok_or_else(|| "注册前必须配置可收信的 account_domain 或 cloudflare_zone_domain".to_string())?;
+    validate_public_mail_domain(&resolved.value)?;
+    Ok(resolved)
+}
+
 struct WorkflowRunContext {
     run_id: String,
     workflow_id: String,
@@ -247,6 +344,174 @@ impl WorkflowEngine {
                 records.into_iter().map(Self::from_record).collect()
             }
             _ => Self::builtin_definitions(),
+        }
+    }
+
+    pub async fn grok_readiness(&self) -> GrokReadinessReport {
+        let parameters = self
+            .resolve_definition("grok_register_default")
+            .await
+            .map(|definition| definition.parameters)
+            .unwrap_or_default();
+        let mut checks = Vec::new();
+
+        let resolved_domain = resolve_registration_domain(&self.dl, &parameters).await;
+        match &resolved_domain {
+            Ok(resolved) => checks.push(GrokReadinessCheck {
+                id: "mail_domain",
+                status: "pass",
+                message: format!(
+                    "收信域名 {} 已就绪（来源：{}）",
+                    resolved.value, resolved.source
+                ),
+            }),
+            Err(error) => checks.push(GrokReadinessCheck {
+                id: "mail_domain",
+                status: "fail",
+                message: error.clone(),
+            }),
+        }
+
+        let hub_secret_ready = env::var("HUB_SECRET")
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty());
+        checks.push(GrokReadinessCheck {
+            id: "hub_secret",
+            status: if hub_secret_ready { "pass" } else { "fail" },
+            message: if hub_secret_ready {
+                "Hub 邮件接入密钥已配置".to_string()
+            } else {
+                "Hub 未配置 HUB_SECRET，Cloudflare Worker 无法注入验证邮件".to_string()
+            },
+        });
+
+        let cloudflare_public_url = self
+            .dl
+            .get_setting("cloudflare_public_url")
+            .await
+            .ok()
+            .flatten();
+        let public_hub_url = self.dl.get_setting("public_hub_url").await.ok().flatten();
+        let public_url = trimmed_value(cloudflare_public_url.as_deref())
+            .or_else(|| trimmed_value(public_hub_url.as_deref()));
+        let public_url_ready = public_url.as_deref().is_some_and(|value| {
+            reqwest::Url::parse(value).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+            })
+        });
+        checks.push(GrokReadinessCheck {
+            id: "public_hub",
+            status: if public_url_ready { "pass" } else { "warn" },
+            message: if public_url_ready {
+                "Hub 公网入口已配置".to_string()
+            } else {
+                "未发现有效的 Hub 公网入口，请确认 Worker 的 PHANTOM_HUB_URL".to_string()
+            },
+        });
+
+        if let Ok(resolved) = &resolved_domain {
+            let zone_domain = self
+                .dl
+                .get_setting("cloudflare_zone_domain")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|value| normalized_domain(Some(&value)));
+            let routed_by_zone = zone_domain.as_deref().is_some_and(|zone| {
+                resolved.value == zone || resolved.value.ends_with(&format!(".{zone}"))
+            });
+            checks.push(GrokReadinessCheck {
+                id: "cloudflare_zone",
+                status: if routed_by_zone { "pass" } else { "warn" },
+                message: if routed_by_zone {
+                    "收信域名与 Cloudflare 托管区域匹配".to_string()
+                } else {
+                    "收信域名与 cloudflare_zone_domain 不匹配，请确认 Catch-all 路由".to_string()
+                },
+            });
+
+            let recent_mail = self
+                .dl
+                .get_emails(1, Some(&format!("@{}", resolved.value)), None)
+                .await
+                .ok()
+                .and_then(|mut emails| emails.pop());
+            let recent_mail_ready = recent_mail
+                .as_ref()
+                .is_some_and(|email| email.created_at >= Utc::now().timestamp() - 30 * 86_400);
+            checks.push(GrokReadinessCheck {
+                id: "mail_history",
+                status: if recent_mail_ready { "pass" } else { "warn" },
+                message: if recent_mail_ready {
+                    "最近 30 天已有该域名邮件成功入库".to_string()
+                } else {
+                    "最近 30 天没有该域名的入库记录，建议先执行邮件中继测试".to_string()
+                },
+            });
+        }
+
+        if let Some(proxy_url) = trimmed_value(parameters.proxy_url.as_deref()) {
+            let valid = reqwest::Proxy::all(&proxy_url).is_ok();
+            checks.push(GrokReadinessCheck {
+                id: "proxy",
+                status: if valid { "pass" } else { "fail" },
+                message: if valid {
+                    "Grok 出口代理格式有效".to_string()
+                } else {
+                    "Grok 代理地址无效".to_string()
+                },
+            });
+        } else {
+            checks.push(GrokReadinessCheck {
+                id: "proxy",
+                status: "warn",
+                message: "未配置 Grok 出口代理，受限网络环境可能被 xAI 拒绝".to_string(),
+            });
+        }
+
+        let solver_mode = if trimmed_value(parameters.captcha_key.as_deref()).is_some() {
+            checks.push(GrokReadinessCheck {
+                id: "turnstile",
+                status: "pass",
+                message: "Turnstile 将优先使用 YesCaptcha".to_string(),
+            });
+            "yescaptcha"
+        } else if let Some(solver_url) = trimmed_value(parameters.turnstile_solver_url.as_deref()) {
+            let valid = crate::grok::register::validate_solver_url(&solver_url).is_ok();
+            checks.push(GrokReadinessCheck {
+                id: "turnstile",
+                status: if valid { "pass" } else { "fail" },
+                message: if valid {
+                    "Turnstile 本地 Solver 地址有效".to_string()
+                } else {
+                    "Turnstile 本地 Solver 地址无效".to_string()
+                },
+            });
+            "local_solver"
+        } else {
+            let chrome_ready = headless_chrome::browser::default_executable().is_ok();
+            checks.push(GrokReadinessCheck {
+                id: "turnstile",
+                status: if chrome_ready { "warn" } else { "fail" },
+                message: if chrome_ready {
+                    "未配置外部 Solver，将使用 Chromium 回退，成功率取决于运行环境".to_string()
+                } else {
+                    "未配置外部 Solver，且运行环境中未检测到 Chrome/Chromium".to_string()
+                },
+            });
+            "chromium_fallback"
+        };
+
+        let ready = checks.iter().all(|check| check.status != "fail");
+        GrokReadinessReport {
+            ready,
+            domain: resolved_domain
+                .as_ref()
+                .ok()
+                .map(|domain| domain.value.clone()),
+            domain_source: resolved_domain.as_ref().ok().map(|domain| domain.source),
+            solver_mode,
+            checks,
         }
     }
 
@@ -694,6 +959,20 @@ impl WorkflowEngine {
                         "Grok 注册参数无效 / registration_timeout_secs 必须在 60..=600 之间"
                             .to_string(),
                     );
+                }
+                if let Some(domain) = trimmed_value(definition.parameters.account_domain.as_deref())
+                {
+                    let domain = normalized_domain(Some(&domain)).unwrap_or_default();
+                    validate_public_mail_domain(&domain)?;
+                }
+                if let Some(proxy_url) = trimmed_value(definition.parameters.proxy_url.as_deref()) {
+                    reqwest::Proxy::all(&proxy_url)
+                        .map_err(|error| format!("Grok 代理地址无效: {error}"))?;
+                }
+                if let Some(solver_url) =
+                    trimmed_value(definition.parameters.turnstile_solver_url.as_deref())
+                {
+                    crate::grok::register::validate_solver_url(&solver_url)?;
                 }
                 Ok(())
             }
@@ -1301,17 +1580,14 @@ impl WorkflowEngine {
             .unwrap_or(1)
             .clamp(1, 10)
             .min(batch_size);
-        let configured_domain = dl.get_setting("account_domain").await.ok().flatten();
-        let domain = parameters
-            .account_domain
-            .clone()
-            .or(configured_domain)
-            .map(|value| value.trim().to_ascii_lowercase())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "Grok 注册前必须配置可收信的 account_domain".to_string())?;
-        if !domain.contains('.') || domain.ends_with(".local") {
+        let resolved_domain = resolve_registration_domain(dl, parameters).await?;
+        let domain = resolved_domain.value;
+        if env::var("HUB_SECRET")
+            .ok()
+            .is_none_or(|value| value.trim().is_empty())
+        {
             return Err(
-                "Grok 注册需要公网可收信域名；请先在系统设置中配置 account_domain 与邮件路由"
+                "Grok 注册前必须配置 HUB_SECRET，否则 Cloudflare Worker 无法注入验证邮件"
                     .to_string(),
             );
         }
@@ -1338,7 +1614,8 @@ impl WorkflowEngine {
             context,
             "info",
             &format!(
-                "正在初始化 Grok 注册批次 | 数量: {batch_size} | 并发: {concurrency} | Turnstile: {solver_mode}"
+                "正在初始化 Grok 注册批次 | 数量: {batch_size} | 并发: {concurrency} | 域名: {domain} | 来源: {} | Turnstile: {solver_mode}",
+                resolved_domain.source
             ),
         )
         .await;
@@ -2039,7 +2316,61 @@ impl WorkflowKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkflowDefinition, WorkflowEngine};
+    use super::{
+        WorkflowDefinition, WorkflowEngine, select_registration_domain, validate_public_mail_domain,
+    };
+
+    #[test]
+    fn registration_domain_skips_blank_workflow_override() {
+        let resolved = select_registration_domain(Some("  "), Some("Mail.Example.COM."), None)
+            .expect("system account domain should be selected");
+
+        assert_eq!(resolved.value, "mail.example.com");
+        assert_eq!(resolved.source, "account_domain");
+    }
+
+    #[test]
+    fn registration_domain_falls_back_to_cloudflare_zone() {
+        let resolved = select_registration_domain(None, None, Some("example.com"))
+            .expect("Cloudflare zone domain should be selected");
+
+        assert_eq!(resolved.value, "example.com");
+        assert_eq!(resolved.source, "cloudflare_zone_domain");
+    }
+
+    #[test]
+    fn public_mail_domain_validation_rejects_non_mail_targets() {
+        assert!(validate_public_mail_domain("example.com").is_ok());
+        assert!(validate_public_mail_domain("mail.example.com").is_ok());
+        assert!(validate_public_mail_domain("phantom.local").is_err());
+        assert!(validate_public_mail_domain("https://example.com").is_err());
+        assert!(validate_public_mail_domain("inbox@example.com").is_err());
+        assert!(validate_public_mail_domain("127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn grok_definition_validation_rejects_invalid_network_inputs() {
+        let mut definition = WorkflowDefinition {
+            id: "grok_register_default".to_string(),
+            kind: super::WorkflowKind::GrokRegister,
+            title: "Grok".to_string(),
+            summary: String::new(),
+            status: "ready".to_string(),
+            builtin: true,
+            parameters: super::WorkflowParameters::default(),
+        };
+
+        definition.parameters.account_domain = Some("https://example.com".to_string());
+        assert!(WorkflowEngine::validate_parameters(&definition).is_err());
+
+        definition.parameters.account_domain = Some("example.com".to_string());
+        definition.parameters.proxy_url = Some("not a proxy".to_string());
+        assert!(WorkflowEngine::validate_parameters(&definition).is_err());
+
+        definition.parameters.proxy_url = None;
+        definition.parameters.turnstile_solver_url = Some("file:///tmp/solver".to_string());
+        assert!(WorkflowEngine::validate_parameters(&definition).is_err());
+    }
 
     #[test]
     fn finds_definition_only_by_exact_id() {

@@ -1,12 +1,14 @@
 # Cloudflare 接入自动化说明
 
-## 认证边界（V0.0.34）
+## 认证边界（V0.0.35）
 
 - 管理控制台使用独立的管理员用户名和密码，Cloudflare 自动化不读取管理登录凭据。
 - `HUB_SECRET` 只用于 Email Worker 以 `X-Hub-Secret` 调用 Hub `/ingest`。
 - 不启用 Worker 邮件接入时，Hub 可以不配置 `HUB_SECRET`；此时 `/ingest` 返回 `503`。
 - 启用 Worker 时，在 Hub 进程环境设置强随机 `HUB_SECRET`，脚本会通过 `wrangler secret put HUB_SECRET` 同步到 Cloudflare Secret Store。
 - `HUB_SECRET` 不写入 `wrangler.toml` 或 `.automation/cloudflare-config.json`，也不能用于登录管理端。
+
+Grok 注册使用与 OpenAI 相同的收信域名解析顺序：工作流 `account_domain`、系统 `account_domain`、`cloudflare_zone_domain`。因此完成 Cloudflare 自动化并保存 Zone 后，Grok 可以直接复用该域名；启动前仍会检查 `HUB_SECRET`、公网入口、Zone 匹配和近期邮件入库状态。
 ## 目标
 
 将 `Cloudflare Email Routing -> Email Worker -> PhantomDrop /ingest` 的接入流程收敛成一个统一脚本：

@@ -19,6 +19,10 @@ export default defineConfig({
         target: backendTarget,
         changeOrigin: true,
       },
+      '/auth': {
+        target: backendTarget,
+        changeOrigin: true,
+      },
       '/stream': {
         target: backendTarget,
         changeOrigin: true,

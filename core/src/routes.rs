@@ -797,6 +797,13 @@ pub fn build_router(ctx: RouterContext) -> Router {
                 }
             }
         }))
+        .route("/api/workflows/grok/readiness", get({
+            let engine = Arc::clone(&workflow_engine);
+            move || {
+                let engine = engine.clone();
+                async move { Json(engine.grok_readiness().await) }
+            }
+        }))
         .route("/api/workflows/save", post({
             let dl = Arc::clone(&data_lake);
             move |Json(payload): Json<WorkflowDefinitionPayload>| {

@@ -18,6 +18,9 @@ import {
   ShieldCheck,
   Bot,
   ExternalLink,
+  AlertTriangle,
+  CheckCircle2,
+  RefreshCw,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
@@ -25,6 +28,7 @@ import { buildApiUrl, deleteJson, fetchJson, postJson } from '../lib/api'
 import { maskProxyUrl, redactMessage } from '../lib/utils'
 import type {
   GeneratedAccountRecord,
+  GrokReadinessReport,
   WorkflowDefinition,
   WorkflowRunPageResponse,
   WorkflowRunRecord,
@@ -1282,6 +1286,24 @@ function GrokRegistrationSubPanel({
   const [isSaving, setIsSaving] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
   const [isProxyModalOpen, setIsProxyModalOpen] = useState(false)
+  const [readiness, setReadiness] = useState<GrokReadinessReport | null>(null)
+  const [isCheckingReadiness, setIsCheckingReadiness] = useState(false)
+
+  const loadReadiness = useCallback(async (): Promise<GrokReadinessReport | null> => {
+    setIsCheckingReadiness(true)
+    try {
+      const report = await fetchJson<GrokReadinessReport>('/api/workflows/grok/readiness')
+      setReadiness(report)
+      return report
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '就绪检查失败'
+      emitLog(`Grok 就绪检查失败: ${message}`, 'warn')
+      setReadiness(null)
+      return null
+    } finally {
+      setIsCheckingReadiness(false)
+    }
+  }, [])
 
   useEffect(() => {
     if (!currentDef?.parameters) return
@@ -1291,16 +1313,17 @@ function GrokRegistrationSubPanel({
     setHeadless(currentDef.parameters.headless !== false)
     setCaptchaKey(currentDef.parameters.captcha_key || '')
     setSolverUrl(currentDef.parameters.turnstile_solver_url || '')
-  }, [currentDef])
+    void loadReadiness()
+  }, [currentDef, loadReadiness])
 
-  const handleSaveConfig = async (): Promise<boolean> => {
+  const handleSaveConfig = async (): Promise<GrokReadinessReport | null> => {
     if (!currentDef) {
       showToast({
         title: 'Grok 工作流不可用',
         desc: '未找到内建 Grok 注册模板，请重新加载工作流。',
         tone: 'error',
       })
-      return false
+      return null
     }
 
     setIsSaving(true)
@@ -1331,11 +1354,11 @@ function GrokRegistrationSubPanel({
       showToast({ title: 'Grok 配置已同步', desc: '注册参数已保存到 Grok 工作流。' })
       emitLog(`已保存 Grok 工作流参数: ${currentDef.id}`, 'success')
       void onLoadWorkflows()
-      return true
+      return await loadReadiness()
     } catch (error) {
       const message = error instanceof Error ? error.message : '保存失败'
       showToast({ title: 'Grok 配置保存失败', desc: message, tone: 'error' })
-      return false
+      return null
     } finally {
       setIsSaving(false)
     }
@@ -1344,9 +1367,25 @@ function GrokRegistrationSubPanel({
   const handleTrigger = async () => {
     setIsRunning(true)
     try {
-      if (await handleSaveConfig()) {
-        await onTriggerRun(targetWorkflowId)
+      const report = await handleSaveConfig()
+      if (!report) {
+        showToast({
+          title: '无法确认 Grok 就绪状态',
+          desc: '配置可能已保存，但启动前检查没有完成，请刷新后重试。',
+          tone: 'error',
+        })
+        return
       }
+      if (!report.ready) {
+        const failure = report.checks.find((check) => check.status === 'fail')
+        showToast({
+          title: 'Grok 注册尚未就绪',
+          desc: failure?.message || '请先处理就绪检查中的错误。',
+          tone: 'error',
+        })
+        return
+      }
+      await onTriggerRun(targetWorkflowId)
     } finally {
       setIsRunning(false)
     }
@@ -1402,6 +1441,54 @@ function GrokRegistrationSubPanel({
         </div>
       </div>
 
+      <div className="border-b border-slate-100 pb-3">
+        <div className="mb-2 flex min-h-7 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2 text-[10px] font-black text-slate-700">
+            {isCheckingReadiness ? (
+              <Loader2 size={13} className="shrink-0 animate-spin text-sky-500" />
+            ) : readiness?.ready ? (
+              <ShieldCheck size={13} className="shrink-0 text-emerald-600" />
+            ) : (
+              <AlertTriangle size={13} className="shrink-0 text-amber-600" />
+            )}
+            <span className="truncate">
+              {isCheckingReadiness
+                ? '正在检查运行条件'
+                : readiness?.ready
+                  ? `注册链路已就绪${readiness.domain ? ` · ${readiness.domain}` : ''}`
+                  : '注册链路存在待处理项'}
+            </span>
+          </div>
+          <button
+            type="button"
+            aria-label="刷新 Grok 就绪状态"
+            title="刷新 Grok 就绪状态"
+            onClick={() => void loadReadiness()}
+            disabled={isCheckingReadiness}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 disabled:opacity-40"
+          >
+            <RefreshCw size={13} />
+          </button>
+        </div>
+        {readiness && (
+          <div className="grid gap-x-4 gap-y-1.5 md:grid-cols-2 xl:grid-cols-3">
+            {readiness.checks.map((check) => (
+              <div key={check.id} className="flex min-w-0 items-start gap-1.5 text-[10px] leading-4 text-slate-600">
+                {check.status === 'pass' ? (
+                  <CheckCircle2 size={11} className="mt-0.5 shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertTriangle
+                    size={11}
+                    className={`mt-0.5 shrink-0 ${check.status === 'fail' ? 'text-red-600' : 'text-amber-600'}`}
+                  />
+                )}
+                <span>{check.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
         <div className="space-y-1">
           <label className="text-[10px] font-bold text-slate-500">并发线程数</label>
@@ -1443,7 +1530,7 @@ function GrokRegistrationSubPanel({
             onChange={(event) => setHeadless(event.target.value === 'true')}
             className="w-full h-8 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:bg-white focus:border-sky-500 transition-all shadow-inner"
           >
-            <option value="true">后台静默运行（推荐）</option>
+            <option value="true">后台静默运行</option>
             <option value="false">显示浏览器窗口</option>
           </select>
         </div>

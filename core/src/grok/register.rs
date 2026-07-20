@@ -75,7 +75,23 @@ pub async fn execute_registration(
     log(context, "info", "正在初始化 Grok/xAI 注册协议会话");
 
     let session = build_session(context)?;
-    let parameters = discover_signup_parameters(&session.client).await?;
+    let parameters = match discover_signup_parameters(&session.client).await {
+        Ok(parameters) => parameters,
+        Err(protocol_error) => {
+            log(
+                context,
+                "warn",
+                &format!("协议方式发现注册参数失败，正在尝试 Chromium 回退: {protocol_error}"),
+            );
+            discover_signup_parameters_browser(context)
+                .await
+                .map_err(|browser_error| {
+                    format!(
+                        "xAI 注册参数发现失败；协议错误: {protocol_error}；Chromium 错误: {browser_error}"
+                    )
+                })?
+        }
+    };
     log(context, "success", "已发现 xAI 动态注册参数");
 
     check_cancelled(dl, &context.run_id).await?;
@@ -218,6 +234,99 @@ async fn discover_signup_parameters(client: &Client) -> Result<SignupParameters,
     })
 }
 
+async fn discover_signup_parameters_browser(
+    context: &GrokRegisterContext,
+) -> Result<SignupParameters, String> {
+    let proxy = context.proxy_url.clone().unwrap_or_default();
+    let headless = context.headless;
+    let timeout_secs = context.timeout_secs.clamp(45, 180);
+
+    tokio::task::spawn_blocking(move || {
+        let mut args = vec![
+            "--disable-blink-features=AutomationControlled".to_string(),
+            "--disable-dev-shm-usage".to_string(),
+            "--disable-infobars".to_string(),
+            "--window-position=0,0".to_string(),
+            "--window-size=1280,900".to_string(),
+            format!("--user-agent={DEFAULT_USER_AGENT}"),
+        ];
+        if !proxy.trim().is_empty() {
+            let parsed = Url::parse(proxy.trim())
+                .map_err(|error| format!("浏览器代理地址无效: {error}"))?;
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                return Err(
+                    "Chromium 参数发现回退不支持带认证代理，请更换无认证代理".to_string(),
+                );
+            }
+            args.push(format!("--proxy-server={}", proxy.trim()));
+        }
+
+        let options = LaunchOptions::default_builder()
+            .headless(headless)
+            .window_size(Some((1280, 900)))
+            .idle_browser_timeout(Duration::from_secs(timeout_secs + 30))
+            .args(args.iter().map(|value| OsStr::new(value)).collect())
+            .build()
+            .map_err(|error| format!("Chromium 参数无效: {error}"))?;
+        let browser = Browser::new(options)
+            .map_err(|error| format!("无法启动 Chromium 参数发现回退: {error}"))?;
+        let tab = browser
+            .new_tab()
+            .map_err(|error| format!("无法创建 Chromium 参数发现页面: {error}"))?;
+        tab.navigate_to(SIGNUP_URL)
+            .map_err(|error| format!("Chromium 无法打开 xAI 注册页: {error}"))?;
+        tab.wait_until_navigated()
+            .map_err(|error| format!("Chromium 等待 xAI 注册页失败: {error}"))?;
+
+        let collected = tab
+            .evaluate(
+                r#"(async () => {
+                    const chunks = [String(document.documentElement?.outerHTML || '').slice(0, 2_000_000)];
+                    const urls = [...document.scripts]
+                        .map(script => script.src)
+                        .filter(Boolean)
+                        .filter(value => {
+                            try {
+                                const url = new URL(value, location.href);
+                                return url.origin === location.origin && url.pathname.includes('/_next/static/');
+                            } catch (_) { return false; }
+                        })
+                        .slice(0, 48);
+                    for (const url of urls) {
+                        try {
+                            const response = await fetch(url, { credentials: 'include' });
+                            if (response.ok) chunks.push((await response.text()).slice(0, 2_000_000));
+                        } catch (_) {}
+                    }
+                    return chunks.join('\n').slice(0, 16_000_000);
+                })()"#,
+                true,
+            )
+            .map_err(|error| format!("Chromium 读取 xAI 动态资源失败: {error}"))?
+            .value
+            .and_then(|value| value.as_str().map(str::to_string))
+            .ok_or_else(|| "Chromium 未返回可解析的 xAI 页面内容".to_string())?;
+
+        let site_key = find_site_key(&collected);
+        let action_id = find_action_id(&collected);
+        let site_key_found = site_key.is_some();
+        let action_id_found = action_id.is_some();
+        if let (Some(site_key), Some(action_id)) = (site_key, action_id) {
+            return Ok(SignupParameters {
+                site_key,
+                action_id,
+            });
+        }
+        reject_blocked_response(200, &collected, "Chromium 注册页参数发现")?;
+        Err(format!(
+            "Chromium 注册页缺少动态参数（site_key={}, action_id={}），页面协议可能已更新",
+            site_key_found, action_id_found
+        ))
+    })
+    .await
+    .map_err(|error| format!("Chromium 参数发现任务异常: {error}"))?
+}
+
 fn find_site_key(source: &str) -> Option<String> {
     SITE_KEY_REGEX
         .captures(source)
@@ -338,6 +447,7 @@ async fn wait_for_email_code(
 }
 
 async fn solve_turnstile(context: &GrokRegisterContext, site_key: &str) -> Result<String, String> {
+    let mut failures = Vec::new();
     if let Some(key) = context
         .captcha_key
         .as_deref()
@@ -345,7 +455,17 @@ async fn solve_turnstile(context: &GrokRegisterContext, site_key: &str) -> Resul
         .filter(|value| !value.is_empty())
     {
         log(context, "info", "正在通过 YesCaptcha 处理 Turnstile");
-        return solve_turnstile_yescaptcha(context, site_key, key).await;
+        match solve_turnstile_yescaptcha(context, site_key, key).await {
+            Ok(token) => return Ok(token),
+            Err(error) => {
+                log(
+                    context,
+                    "warn",
+                    &format!("YesCaptcha 失败，正在尝试下一种方式: {error}"),
+                );
+                failures.push(format!("YesCaptcha: {error}"));
+            }
+        }
     }
 
     if let Some(solver_url) = context
@@ -355,7 +475,17 @@ async fn solve_turnstile(context: &GrokRegisterContext, site_key: &str) -> Resul
         .filter(|value| !value.is_empty())
     {
         log(context, "info", "正在通过本地 Solver 处理 Turnstile");
-        return solve_turnstile_local(context, site_key, solver_url).await;
+        match solve_turnstile_local(context, site_key, solver_url).await {
+            Ok(token) => return Ok(token),
+            Err(error) => {
+                log(
+                    context,
+                    "warn",
+                    &format!("本地 Solver 失败，正在尝试 Chromium 回退: {error}"),
+                );
+                failures.push(format!("本地 Solver: {error}"));
+            }
+        }
     }
 
     log(
@@ -363,7 +493,17 @@ async fn solve_turnstile(context: &GrokRegisterContext, site_key: &str) -> Resul
         "info",
         "未配置外部 Solver，正在使用 Chromium Turnstile 回退",
     );
-    solve_turnstile_browser(context, site_key).await
+    match solve_turnstile_browser(context, site_key).await {
+        Ok(token) => Ok(token),
+        Err(error) if failures.is_empty() => Err(error),
+        Err(error) => {
+            failures.push(format!("Chromium: {error}"));
+            Err(format!(
+                "所有 Turnstile 处理方式均失败：{}",
+                failures.join("；")
+            ))
+        }
+    }
 }
 
 async fn solve_turnstile_yescaptcha(
@@ -589,7 +729,7 @@ fn value_as_id(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn validate_solver_url(value: &str) -> Result<Url, String> {
+pub(crate) fn validate_solver_url(value: &str) -> Result<Url, String> {
     let mut url = Url::parse(value).map_err(|error| format!("本地 Solver URL 无效: {error}"))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err("本地 Solver URL 仅支持带主机名的 http/https 地址".to_string());

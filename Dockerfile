@@ -117,7 +117,7 @@ ENV WRITE_CODEX_AUTH_FILE=false
 ENV ADMIN_USERNAME=admin
 ENV PHANTOM_GATEWAY_KEYS=
 LABEL org.opencontainers.image.title="PhantomDrop" \
-      org.opencontainers.image.version="0.0.34"
+      org.opencontainers.image.version="0.0.35"
 # 确保在容器内通过 pwsh 运行
 ENV SHELL=/usr/bin/pwsh
 

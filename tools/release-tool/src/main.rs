@@ -85,7 +85,8 @@ fn run() -> Result<(), String> {
     let root = find_project_root()?;
     let config = ReleaseConfig {
         root,
-        date: env::var("RELEASE_DATE").unwrap_or_else(|_| "2026-04-08".to_string()),
+        date: env::var("RELEASE_DATE")
+            .unwrap_or_else(|_| chrono::Local::now().format("%Y-%m-%d").to_string()),
     };
 
     let current = read_current_version(&config.root)?;
@@ -229,15 +230,29 @@ fn update_core_cargo_lock(
     let path = config.root.join("core").join("Cargo.lock");
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("读取 {} 失败: {error}", path.display()))?;
-    let marker = format!("name = \"core\"\nversion = \"{}\"", current.plain());
-    let replacement = format!("name = \"core\"\nversion = \"{}\"", target.plain());
-
-    if !content.contains(&marker) {
-        return Ok(());
-    }
-
-    let updated = content.replacen(&marker, &replacement, 1);
+    let updated = replace_core_lock_version(&content, current, target).ok_or_else(|| {
+        format!(
+            "未在 {} 中找到 core {} 包版本",
+            path.display(),
+            current.plain()
+        )
+    })?;
     fs::write(&path, updated).map_err(|error| format!("写入 {} 失败: {error}", path.display()))
+}
+
+fn replace_core_lock_version(content: &str, current: &Version, target: &Version) -> Option<String> {
+    let lf_marker = format!("name = \"core\"\nversion = \"{}\"", current.plain());
+    let lf_replacement = format!("name = \"core\"\nversion = \"{}\"", target.plain());
+    let crlf_marker = lf_marker.replace('\n', "\r\n");
+    let crlf_replacement = lf_replacement.replace('\n', "\r\n");
+
+    if content.contains(&lf_marker) {
+        Some(content.replacen(&lf_marker, &lf_replacement, 1))
+    } else if content.contains(&crlf_marker) {
+        Some(content.replacen(&crlf_marker, &crlf_replacement, 1))
+    } else {
+        None
+    }
 }
 
 fn update_package_json(path: PathBuf, current: &Version, target: &Version) -> Result<(), String> {
@@ -350,4 +365,40 @@ fn replace_in_file(path: &Path, from: &str, to: &str) -> Result<(), String> {
 
     let updated = content.replacen(from, to, 1);
     fs::write(path, updated).map_err(|error| format!("写入 {} 失败: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(value: &str) -> Version {
+        Version::parse(value).expect("test version should be valid")
+    }
+
+    #[test]
+    fn replaces_core_lock_version_with_lf_line_endings() {
+        let content = "[[package]]\nname = \"core\"\nversion = \"0.0.34\"\n";
+        let updated =
+            replace_core_lock_version(content, &version("0.0.34"), &version("0.0.35")).unwrap();
+
+        assert!(updated.contains("name = \"core\"\nversion = \"0.0.35\""));
+    }
+
+    #[test]
+    fn replaces_core_lock_version_with_crlf_line_endings() {
+        let content = "[[package]]\r\nname = \"core\"\r\nversion = \"0.0.34\"\r\n";
+        let updated =
+            replace_core_lock_version(content, &version("0.0.34"), &version("0.0.35")).unwrap();
+
+        assert!(updated.contains("name = \"core\"\r\nversion = \"0.0.35\""));
+    }
+
+    #[test]
+    fn rejects_missing_core_lock_version() {
+        let content = "[[package]]\nname = \"other\"\nversion = \"0.0.34\"\n";
+
+        assert!(
+            replace_core_lock_version(content, &version("0.0.34"), &version("0.0.35")).is_none()
+        );
+    }
 }

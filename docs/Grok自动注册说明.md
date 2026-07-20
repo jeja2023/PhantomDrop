@@ -1,18 +1,19 @@
 # Grok 自动注册说明
 
-本文适用于 PhantomDrop `V0.0.34`，说明内建 `grok_register_default` 工作流的启用条件、配置边界和运行结果。注册协议参考 MIT 许可项目 [HSJ-BanFan/grok-register-web](https://github.com/HSJ-BanFan/grok-register-web)，并按 PhantomDrop 的邮件中枢、工作流和账号资产模型完成集成。
+本文适用于 PhantomDrop `V0.0.35`，说明内建 `grok_register_default` 工作流的启用条件、配置边界和运行结果。注册协议参考 MIT 许可项目 [HSJ-BanFan/grok-register-web](https://github.com/HSJ-BanFan/grok-register-web)，并按 PhantomDrop 的邮件中枢、工作流和账号资产模型完成集成。
 
 ## 启用条件
 
-1. 在系统设置中配置公网可收信的 `account_domain`。`.local` 等本地域名会被拒绝。
+1. 在系统设置中配置公网可收信的 `account_domain`；未配置时可回退到 `cloudflare_zone_domain`。`.local`、IP 地址和带协议的 URL 会被拒绝。
 2. 确认 Cloudflare Email Routing 已把该域名的邮件转发到 Hub，且目标随机邮箱无需预先创建。
-3. 确认 Hub 到 xAI、所选 Solver 和代理出口的网络连通性。
-4. 使用 Chromium 回退时，运行环境需要可启动 Chrome/Chromium；无头模式无法人工介入挑战。
+3. Hub 进程必须配置与 Worker 一致的 `HUB_SECRET`，否则任务会在访问 xAI 前停止。
+4. 确认 Hub 到 xAI、所选 Solver 和代理出口的网络连通性。
+5. 使用 Chromium 回退时，运行环境需要可启动 Chrome/Chromium；无头模式无法人工介入挑战。
 
 ## 执行流程
 
 1. 为每个任务生成随机邮箱、本地密码和独立 HTTP Cookie 会话。
-2. 从 xAI 注册页及其 Next.js 静态资源动态发现 Turnstile Site Key 与 Server Action ID。
+2. 从 xAI 注册页及其 Next.js 静态资源动态发现 Turnstile Site Key 与 Server Action ID；协议访问被拦截时使用 Chromium 重新发现。
 3. 请求 xAI 发送邮箱验证码，并在 PhantomDrop 邮件库中轮询本次请求之后到达的目标邮件。
 4. 优先从主题提取 `ABC-123`，再检查纯文本和 HTML，提交前规范化为 `ABC123`。
 5. 按当前配置选择 Turnstile 处理器，验证邮箱验证码后提交注册资料。
@@ -25,7 +26,7 @@
 
 | 参数 | 默认值 | 约束与说明 |
 | --- | --- | --- |
-| `account_domain` | 系统设置值 | 必须是公网可收信域名；工作流参数优先于系统设置。 |
+| `account_domain` | 系统设置值 | 必须是公网可收信域名；解析顺序为工作流参数、系统 `account_domain`、`cloudflare_zone_domain`，空字符串不会阻断回退。 |
 | `batch_size` | `1` | 单次创建数量，范围 `1..=50`。 |
 | `concurrency` | `1` | 同批并发数，范围 `1..=10`，且不会超过批次大小。 |
 | `proxy_url` | 空 | 注册 HTTP 会话使用的代理；YesCaptcha 任务会同步代理信息。 |
@@ -36,7 +37,12 @@
 
 在“自动化中心 -> Grok 注册中心”中保存这些参数，然后启动 `grok_register_default`。Grok 与 OpenAI 使用互斥的一级页面入口，运行记录仍由底部统一监控区展示；任务可从运行列表终止，并在下一次取消检查时退出。
 
-## Turnstile 选择规则
+## 运行前就绪检查
+
+Grok 注册面板会在保存和启动前调用 `GET /api/workflows/grok/readiness`，检查收信域名、`HUB_SECRET`、公网 Hub、Cloudflare Zone、近 30 天邮件、代理与 Solver/Chromium。`fail` 项会阻止启动，`warn` 项允许启动但会降低端到端成功把握；面板同时显示实际采用的域名来源和 Solver 模式。
+
+这项检查验证的是 PhantomDrop 本地配置和已知邮件链路证据，不会为了探测而向 xAI 发起注册，也不会修改 Cloudflare 配置。第三方页面与风控仍可能在运行时变化，因此“已就绪”不等于保证每个外部注册请求成功。
+
 ## 在工作流设计师中编排
 
 “Grok 注册中心”适合保存当前配置并立即运行；需要维护多套配置时，使用“自动化工作流设计师”中的“Grok 自动化注册”卡片。
@@ -48,12 +54,13 @@
 
 所有 Grok 模板继续使用同一个后端工作流类型和参数校验。复制操作只创建工作流定义，不会立即发起外部注册。
 
+## Turnstile 选择规则
 
-处理器按配置确定，而不是在失败时逐级重试：
+处理器按以下顺序选择，并在单个处理器失败时继续回退：
 
-1. `captcha_key` 非空时使用 YesCaptcha。
-2. 未配置 YesCaptcha 且 `turnstile_solver_url` 非空时使用本地 Solver。
-3. 两者都为空时使用 Chromium 回退。
+1. `captcha_key` 非空时优先尝试 YesCaptcha。
+2. `turnstile_solver_url` 非空时尝试本地 Solver。
+3. 前述方式未配置或失败时使用 Chromium 回退。
 
 本地 Solver 需要兼容以下只读接口：
 
