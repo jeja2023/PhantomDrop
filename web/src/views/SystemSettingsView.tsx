@@ -645,7 +645,7 @@ export default function SystemSettingsView() {
 
         {/* 右栏 */}
         <div className="min-w-0 space-y-4">
-          <SettingsSectionCard icon={<UserRound size={14} />} title="账户与登录">
+          <SettingsSectionCard icon={<UserRound size={14} />} title="账户与密码" defaultExpanded={false}>
             <SettingsRow
               title="管理员用户名"
               hint="控制台登录账户"
