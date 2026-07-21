@@ -118,6 +118,7 @@ impl BrowserDriver {
 
         let options = LaunchOptions::default_builder()
             .headless(self.context.headless) // 根据配置决定是否开启无头模式
+            .sandbox(crate::chromium::sandbox_enabled())
             .window_size(Some((1920, 1080)))
             .idle_browser_timeout(Duration::from_secs(300))
             .args(

@@ -8,6 +8,7 @@
     clippy::useless_format
 )]
 
+mod chromium;
 mod cloudflare_automation;
 mod config;
 mod db;

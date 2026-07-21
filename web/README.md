@@ -1,6 +1,6 @@
 # PhantomDrop Web
 
-`web/` 是 PhantomDrop `V0.0.37` 的 React 19 + TypeScript + Vite 管理界面。
+`web/` 是 PhantomDrop `V0.0.38` 的 React 19 + TypeScript + Vite 管理界面。
 
 ## 开发
 

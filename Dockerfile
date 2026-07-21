@@ -116,10 +116,11 @@ ENV BIND_ADDR=0.0.0.0
 ENV PORT=9010
 ENV ENABLE_DEBUG_ASSETS=false
 ENV WRITE_CODEX_AUTH_FILE=false
+ENV PHANTOM_CHROME_SANDBOX=false
 ENV ADMIN_USERNAME=admin
 ENV PHANTOM_GATEWAY_KEYS=
 LABEL org.opencontainers.image.title="PhantomDrop" \
-      org.opencontainers.image.version="0.0.37"
+      org.opencontainers.image.version="0.0.38"
 # 确保在容器内通过 pwsh 运行
 ENV SHELL=/usr/bin/pwsh
 
@@ -136,4 +137,4 @@ RUN useradd --system --uid 10001 --create-home phantom \
 
 # 修正 bind mount 权限后，以 phantom 用户启动虚拟显示和后端
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "/app/phantom-core"]
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp & exec /app/phantom-core"]

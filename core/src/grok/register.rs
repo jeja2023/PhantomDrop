@@ -263,6 +263,7 @@ async fn discover_signup_parameters_browser(
 
         let options = LaunchOptions::default_builder()
             .headless(headless)
+            .sandbox(crate::chromium::sandbox_enabled())
             .window_size(Some((1280, 900)))
             .idle_browser_timeout(Duration::from_secs(timeout_secs + 30))
             .args(args.iter().map(|value| OsStr::new(value)).collect())
@@ -319,8 +320,7 @@ async fn discover_signup_parameters_browser(
         }
         reject_blocked_response(200, &collected, "Chromium 注册页参数发现")?;
         Err(format!(
-            "Chromium 注册页缺少动态参数（site_key={}, action_id={}），页面协议可能已更新",
-            site_key_found, action_id_found
+            "Chromium 注册页缺少动态参数（site_key={site_key_found}, action_id={action_id_found}），页面协议可能已更新"
         ))
     })
     .await
@@ -774,6 +774,7 @@ async fn solve_turnstile_browser(
 
         let options = LaunchOptions::default_builder()
             .headless(headless)
+            .sandbox(crate::chromium::sandbox_enabled())
             .window_size(Some((1280, 900)))
             .idle_browser_timeout(Duration::from_secs(timeout_secs + 30))
             .args(args.iter().map(|value| OsStr::new(value)).collect())
