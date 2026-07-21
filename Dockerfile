@@ -120,7 +120,7 @@ ENV PHANTOM_CHROME_SANDBOX=false
 ENV ADMIN_USERNAME=admin
 ENV PHANTOM_GATEWAY_KEYS=
 LABEL org.opencontainers.image.title="PhantomDrop" \
-      org.opencontainers.image.version="0.0.38"
+      org.opencontainers.image.version="0.0.39"
 # 确保在容器内通过 pwsh 运行
 ENV SHELL=/usr/bin/pwsh
 

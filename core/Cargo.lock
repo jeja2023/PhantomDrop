@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.0.38"
+version = "0.0.39"
 dependencies = [
  "anyhow",
  "argon2",
@@ -316,6 +316,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "headless_chrome",
+ "percent-encoding",
  "rand 0.8.7",
  "regex",
  "reqwest",

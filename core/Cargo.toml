@@ -1,6 +1,6 @@
 [package]
 name = "core"
-version = "0.0.38"
+version = "0.0.39"
 edition = "2024"
 rust-version = "1.88"
 
@@ -25,6 +25,7 @@ anyhow = "1.0"
 url = "2.5.8"
 base64 = "0.22.1"
 argon2 = "0.5.3"
+percent-encoding = "2.3"
 
 [profile.release]
 opt-level = "s"      # 优化代码大小，减少内存占用并缩短编译时间

@@ -1,6 +1,6 @@
 # 本地验证指南
 
-在项目根目录执行以下 `V0.0.38` 质量门禁。
+在项目根目录执行以下 `V0.0.39` 质量门禁。
 
 ## Rust 后端
 
@@ -79,7 +79,7 @@ cargo run --manifest-path .\core\Cargo.toml
 $env:ADMIN_USERNAME = 'verify-admin'
 $env:ADMIN_PASSWORD = 'verify-password-1234'
 docker compose config --quiet
-docker build --tag phantom-drop:0.0.38 .
+docker build --tag phantom-drop:0.0.39 .
 ```
 
 `HUB_SECRET` 在 Docker 验证中是可选项。只有需要验证 Worker 邮件接入时才设置。

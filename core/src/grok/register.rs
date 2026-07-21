@@ -1,6 +1,7 @@
 use crate::db::DataLake;
 use chrono::{Datelike, Utc};
-use headless_chrome::{Browser, LaunchOptions};
+use headless_chrome::{Browser, LaunchOptions, Tab};
+use percent_encoding::percent_decode_str;
 use rand::{Rng, distributions::Alphanumeric};
 use regex::Regex;
 use reqwest::cookie::{CookieStore, Jar};
@@ -65,6 +66,11 @@ struct SignupParameters {
 struct ProtocolSession {
     client: Client,
     jar: Arc<Jar>,
+}
+
+struct ChromiumProxyConfig {
+    server: String,
+    credentials: Option<(String, String)>,
 }
 
 pub async fn execute_registration(
@@ -250,15 +256,12 @@ async fn discover_signup_parameters_browser(
             "--window-size=1280,900".to_string(),
             format!("--user-agent={DEFAULT_USER_AGENT}"),
         ];
-        if !proxy.trim().is_empty() {
-            let parsed = Url::parse(proxy.trim())
-                .map_err(|error| format!("浏览器代理地址无效: {error}"))?;
-            if !parsed.username().is_empty() || parsed.password().is_some() {
-                return Err(
-                    "Chromium 参数发现回退不支持带认证代理，请更换无认证代理".to_string(),
-                );
-            }
-            args.push(format!("--proxy-server={}", proxy.trim()));
+        let proxy_config = chromium_proxy_config(&proxy)?;
+        let proxy_auth = proxy_config
+            .as_ref()
+            .and_then(|config| config.credentials.clone());
+        if let Some(config) = proxy_config {
+            args.push(format!("--proxy-server={}", config.server));
         }
 
         let options = LaunchOptions::default_builder()
@@ -274,6 +277,7 @@ async fn discover_signup_parameters_browser(
         let tab = browser
             .new_tab()
             .map_err(|error| format!("无法创建 Chromium 参数发现页面: {error}"))?;
+        enable_chromium_proxy_auth(&tab, proxy_auth, "Chromium 参数发现")?;
         tab.navigate_to(SIGNUP_URL)
             .map_err(|error| format!("Chromium 无法打开 xAI 注册页: {error}"))?;
         tab.wait_until_navigated()
@@ -729,6 +733,99 @@ fn value_as_id(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn chromium_proxy_config(value: &str) -> Result<Option<ChromiumProxyConfig>, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let mut url = Url::parse(value).map_err(|error| format!("浏览器代理地址无效: {error}"))?;
+    if url.host_str().is_none() {
+        return Err("浏览器代理地址缺少主机名".to_string());
+    }
+
+    let normalized_scheme = match url.scheme() {
+        "http" => "http",
+        "https" => "https",
+        "socks4" | "socks4a" => "socks4",
+        "socks5" | "socks5h" => "socks5",
+        scheme => return Err(format!("Chromium 不支持代理协议: {scheme}")),
+    };
+
+    let credentials = if !url.username().is_empty() || url.password().is_some() {
+        if normalized_scheme.starts_with("socks") {
+            return Err(
+                "Chromium 不支持带用户名和密码的 SOCKS 代理；请改用 HTTP/HTTPS 认证代理或本地无认证转发"
+                    .to_string(),
+            );
+        }
+        Some((
+            percent_decode_str(url.username())
+                .decode_utf8_lossy()
+                .into_owned(),
+            percent_decode_str(url.password().unwrap_or_default())
+                .decode_utf8_lossy()
+                .into_owned(),
+        ))
+    } else {
+        None
+    };
+
+    url.set_username("")
+        .map_err(|_| "无法清理浏览器代理用户名".to_string())?;
+    url.set_password(None)
+        .map_err(|_| "无法清理浏览器代理密码".to_string())?;
+    url.set_scheme(normalized_scheme)
+        .map_err(|_| "无法规范化浏览器代理协议".to_string())?;
+    url.set_path("");
+    url.set_query(None);
+    url.set_fragment(None);
+
+    Ok(Some(ChromiumProxyConfig {
+        server: url.as_str().trim_end_matches('/').to_string(),
+        credentials,
+    }))
+}
+
+fn enable_chromium_proxy_auth(
+    tab: &Arc<Tab>,
+    credentials: Option<(String, String)>,
+    action: &str,
+) -> Result<(), String> {
+    let Some((username, password)) = credentials else {
+        return Ok(());
+    };
+
+    let tab_for_auth = Arc::clone(tab);
+    tab.add_event_listener(Arc::new(
+        move |event: &headless_chrome::protocol::cdp::types::Event| {
+            if let headless_chrome::protocol::cdp::types::Event::FetchAuthRequired(auth_event) =
+                event
+            {
+                let _ = tab_for_auth.call_method(
+                    headless_chrome::protocol::cdp::Fetch::ContinueWithAuth {
+                        request_id: auth_event.params.request_id.clone(),
+                        auth_challenge_response:
+                            headless_chrome::protocol::cdp::Fetch::AuthChallengeResponse {
+                                response: headless_chrome::protocol::cdp::Fetch::AuthChallengeResponseResponse::ProvideCredentials,
+                                username: Some(username.clone()),
+                                password: Some(password.clone()),
+                            },
+                    },
+                );
+            }
+        },
+    ))
+    .map_err(|error| format!("{action}添加代理认证监听器失败: {error}"))?;
+
+    tab.call_method(headless_chrome::protocol::cdp::Fetch::Enable {
+        patterns: None,
+        handle_auth_requests: Some(true),
+    })
+    .map_err(|error| format!("{action}启用代理认证失败: {error}"))?;
+    Ok(())
+}
+
 pub(crate) fn validate_solver_url(value: &str) -> Result<Url, String> {
     let mut url = Url::parse(value).map_err(|error| format!("本地 Solver URL 无效: {error}"))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -763,13 +860,12 @@ async fn solve_turnstile_browser(
             "--window-size=1280,900".to_string(),
             format!("--user-agent={DEFAULT_USER_AGENT}"),
         ];
-        if !proxy.trim().is_empty() {
-            let parsed = Url::parse(proxy.trim())
-                .map_err(|error| format!("浏览器代理地址无效: {error}"))?;
-            if !parsed.username().is_empty() || parsed.password().is_some() {
-                return Err("Chromium Turnstile 回退暂不支持带认证代理，请配置 YesCaptcha 或本地 Solver".to_string());
-            }
-            args.push(format!("--proxy-server={}", proxy.trim()));
+        let proxy_config = chromium_proxy_config(&proxy)?;
+        let proxy_auth = proxy_config
+            .as_ref()
+            .and_then(|config| config.credentials.clone());
+        if let Some(config) = proxy_config {
+            args.push(format!("--proxy-server={}", config.server));
         }
 
         let options = LaunchOptions::default_builder()
@@ -785,6 +881,7 @@ async fn solve_turnstile_browser(
         let tab = browser
             .new_tab()
             .map_err(|error| format!("无法创建 Turnstile 页面: {error}"))?;
+        enable_chromium_proxy_auth(&tab, proxy_auth, "Turnstile Chromium")?;
         tab.navigate_to(SIGNUP_URL)
             .map_err(|error| format!("无法打开 xAI Turnstile 页面: {error}"))?;
         std::thread::sleep(Duration::from_secs(3));
@@ -1131,8 +1228,39 @@ fn log(context: &GrokRegisterContext, level: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_action_id, find_site_key, grpc_message, is_trusted_auth_url, validate_solver_url,
+        chromium_proxy_config, find_action_id, find_site_key, grpc_message, is_trusted_auth_url,
+        validate_solver_url,
     };
+
+    #[test]
+    fn prepares_authenticated_http_proxy_for_chromium() {
+        let config = chromium_proxy_config(
+            "http://user%40example.com:p%40ssword@proxy.example.com:8080/path",
+        )
+        .expect("proxy should be valid")
+        .expect("proxy should be configured");
+
+        assert_eq!(config.server, "http://proxy.example.com:8080");
+        assert_eq!(
+            config.credentials,
+            Some(("user@example.com".to_string(), "p@ssword".to_string()))
+        );
+    }
+
+    #[test]
+    fn normalizes_proxy_scheme_and_rejects_authenticated_socks() {
+        let config = chromium_proxy_config("socks5h://proxy.example.com:1080")
+            .expect("proxy should be valid")
+            .expect("proxy should be configured");
+        assert_eq!(config.server, "socks5://proxy.example.com:1080");
+        assert!(config.credentials.is_none());
+
+        let error = match chromium_proxy_config("socks5://user:pass@proxy.example.com:1080") {
+            Err(error) => error,
+            Ok(_) => panic!("authenticated SOCKS proxy should be rejected"),
+        };
+        assert!(error.contains("SOCKS"));
+    }
 
     #[test]
     fn extracts_dynamic_signup_parameters() {
